@@ -3,9 +3,12 @@ package app.openfy.android
 import app.openfy.android.data.CollectionRules
 import app.openfy.android.lyrics.Lrc
 import app.openfy.android.playback.ListeningClock
+import app.openfy.android.ui.ArtworkUrls
+import app.openfy.android.ui.CoverPalette
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
+import kotlin.math.pow
 
 class ContractTests {
     @Test fun partialAudioRequiresTheSameEncodedResource() {
@@ -18,6 +21,34 @@ class ContractTests {
         assertThrows(java.io.IOException::class.java) { app.openfy.android.playback.AudioResource.requireSame(null,original,true) }
     }
     private fun fixture(name: String)=Json.parseToJsonElement(javaClass.classLoader!!.getResourceAsStream(name)!!.bufferedReader().readText()).jsonObject
+    @Test fun artworkUsesTheSameContractAsWeb() {
+        for(item in fixture("artwork-contract.json").getValue("cases").jsonArray.map { it.jsonObject }) {
+            val input=item.getValue("input").jsonPrimitive.content
+            assertEquals(input,item.getValue("large").jsonPrimitive.content,ArtworkUrls.large(input))
+            assertEquals(input,item.getValue("identity").jsonPrimitive.content,ArtworkUrls.identity(input))
+            for((size,expected) in item.getValue("sized").jsonObject) {
+                assertEquals("$input at $size px",expected.jsonPrimitive.content,ArtworkUrls.sized(input,size.toInt()))
+            }
+        }
+        assertNull(ArtworkUrls.sized(null,128))
+        assertEquals("https://i.ytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg",
+            ArtworkUrls.fallback("https://i.ytimg.com/vi/RGXHqQR9XrQ/maxresdefault.jpg"))
+        assertNull(ArtworkUrls.fallback("https://i.ytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg"))
+        assertNull(ArtworkUrls.fallback("https://notytimg.com/vi/RGXHqQR9XrQ/maxresdefault.jpg"))
+    }
+    @Test fun coverSurfaceMixesTheTintAndMeetsWhiteTextContrast() {
+        assertEquals(0xff263647.toInt(),CoverPalette.surface(0xff6496c8.toInt()))
+        assertEquals(0xff131d1b.toInt(),CoverPalette.surface(null))
+        for(tint in listOf(null,0xff000000.toInt(),0xff6496c8.toInt(),0xffffffff.toInt())) {
+            val surface=CoverPalette.surface(tint)
+            fun channel(shift: Int): Double {
+                val srgb=((surface ushr shift) and 255)/255.0
+                return if(srgb<=0.04045) srgb/12.92 else ((srgb+0.055)/1.055).pow(2.4)
+            }
+            val luminance=0.2126*channel(16)+0.7152*channel(8)+0.0722*channel(0)
+            assertTrue(1.05/(luminance+0.05)>=4.5)
+        }
+    }
     @Test fun mixedPlaylistProjectionPreservesAllLocalSlots() {
         assertEquals(listOf("local-a","youtube:12345678901","local-b","youtube:abcdefghijk","youtube:ABCDEFGHIJK","local-c"),
             CollectionRules.applyPortable(listOf("local-a","youtube:abcdefghijk","local-b","youtube:12345678901","local-c"),listOf("youtube:12345678901","youtube:abcdefghijk","youtube:ABCDEFGHIJK")))

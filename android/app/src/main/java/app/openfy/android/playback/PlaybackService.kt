@@ -143,7 +143,9 @@ class PlaybackService : MediaSessionService() {
             .setCustomCacheKey(song.id)
             .setMediaMetadata(MediaMetadata.Builder().setTitle(song.title).setArtist(song.artist).setAlbumTitle(song.album)
                 .setExtras(android.os.Bundle().apply { putString("openfy.context",Json.encodeToString(RecentContext("song",song.id,song.title,song.artist,song.artwork))) })
-                .setArtworkUri(song.artwork?.let { if(it.startsWith("https:")) Uri.parse(it) else Uri.fromFile(File(it)) }).build()).build()
+                .setArtworkUri(song.artwork?.let {
+                    if(it.startsWith("https:")) Uri.parse(app.openfy.android.ui.ArtworkUrls.large(it)) else Uri.fromFile(File(it))
+                }).build()).build()
         fun withContext(item: MediaItem,context: JsonObject): MediaItem = item.buildUpon()
             .setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(android.os.Bundle().apply { putString("openfy.context",context.toString()) }).build()).build()
     }

@@ -167,7 +167,7 @@ private fun time(ms: Long)="${ms.coerceAtLeast(0)/60000}:${(ms.coerceAtLeast(0)/
     val unmetered=!(context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
     LaunchedEffect(song.id,enabled,unmetered) { uri=if(enabled && unmetered) repository.resolve(song) else null }
     Box(Modifier.fillMaxWidth(.9f).aspectRatio(1f,matchHeightConstraintsFirst=true).clip(RoundedCornerShape(18.dp))) {
-        Cover(song.artwork,Modifier.matchParentSize())
+        Cover(song.artwork,Modifier.matchParentSize(),sizePx=(context.resources.displayMetrics.widthPixels*.9f).toInt().coerceAtLeast(1024))
         uri?.let { address ->
             val video=remember(address) {
                 ExoPlayer.Builder(context).build().apply {

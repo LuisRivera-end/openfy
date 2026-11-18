@@ -15,6 +15,7 @@ export function artworkUrl(source?: string | null, size: ArtworkSize = 128): str
 }
 /** Only strip the verified Google size suffix; preserve crop, identity and query. */
 export function artworkIdentity(value: string): string {
+  if (!value.startsWith('https://')) return value
   return value.replace(/=w\d+-h\d+(?=-|$)/, '=wSIZE-hSIZE').replace(/=s\d+(?=-|$)/, '=sSIZE')
 }
 export const isVideoThumbnail = (value: string) => {
@@ -22,6 +23,7 @@ export const isVideoThumbnail = (value: string) => {
 }
 /** Ask the provider for its largest rendition. Wide images (banners) get 2048 px of width. */
 export function largeArtworkUrl(value: string): string {
+  if (!value.startsWith('https://')) return value
   const url = new URL(value)
   if (/(^|\.)(googleusercontent\.com|ggpht\.com)$/.test(url.hostname)) {
     const box = /=w(\d+)-h(\d+)(?=-|$)/.exec(value)

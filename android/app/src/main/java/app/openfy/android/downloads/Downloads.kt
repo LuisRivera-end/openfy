@@ -1,6 +1,7 @@
 package app.openfy.android.downloads
 
 import android.app.Notification
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.media.MediaDataSource
 import android.media.MediaMetadataRetriever
@@ -12,18 +13,36 @@ import androidx.media3.exoplayer.offline.*
 import androidx.media3.exoplayer.scheduler.Requirements
 import androidx.media3.exoplayer.scheduler.Scheduler
 import androidx.media3.exoplayer.scheduler.PlatformScheduler
+import androidx.room.withTransaction
 import app.openfy.android.OpenfyApplication
 import app.openfy.android.data.*
 import app.openfy.android.provider.readBounded
+import app.openfy.android.ui.ArtworkUrls
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.*
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
+import okhttp3.Response
+import java.io.File
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.security.MessageDigest
 import java.util.concurrent.Executors
+import kotlin.coroutines.resume
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class Downloads(private val app: OpenfyApplication) {
     private val verifyMutex=Mutex()
+    private val artworkWrites=Mutex()
+    private val artworkUpgrade=Mutex()
+    private val artworkDirectory=File(app.filesDir,"artwork")
+    private val artworkHttp by lazy { app.http.newBuilder().followRedirects(false).build() }
     val manager=DownloadManager(app,StandaloneDatabaseProvider(app),app.cache,
         app.upstreamFactory,Executors.newFixedThreadPool(2)).apply {
         maxParallelDownloads=2
@@ -68,19 +87,86 @@ class Downloads(private val app: OpenfyApplication) {
     fun pause(id: String, paused: Boolean) = DownloadService.sendSetStopReason(app,AudioDownloadService::class.java,id,if(paused) 1 else 0,false)
     fun remove(id: String) = DownloadService.sendRemoveDownload(app,AudioDownloadService::class.java,id,false)
     private suspend fun cacheArtwork(song: Song) {
-        val address=song.artwork?.takeIf { it.startsWith("https://") } ?: return
         try {
-            val uri=java.net.URI(address)
-            if(listOf("ytimg.com","googleusercontent.com","ggpht.com").none { uri.host==it || uri.host.endsWith(".$it") }) return
-            val bytes=app.http.newCall(okhttp3.Request.Builder().url(address).build()).execute().use {
-                if(!it.isSuccessful) return
-                it.body!!.byteStream().use { input -> input.readBounded(4*1024*1024) }
+            val original=song.artwork?.takeIf { it.startsWith("https://") } ?: metadataArtwork(song) ?: return
+            val directory=artworkDirectory.canonicalFile
+            val file=File(directory,"${song.id.removePrefix("youtube:")}.jpg").canonicalFile
+            if(file.parentFile!=directory || !downloadArtwork(original,file)) return
+            app.database.withTransaction {
+                val dao=app.database.library()
+                val current=dao.song(song.id) ?: return@withTransaction
+                if(current.artwork!=file.absolutePath) dao.putSong(current.copy(artwork=file.absolutePath))
             }
-            val directory=java.io.File(app.filesDir,"artwork").apply { mkdirs() }
-            val file=java.io.File(directory,"${song.id.removePrefix("youtube:")}.jpg")
-            file.writeBytes(bytes)
-            app.database.library().song(song.id)?.let { app.database.library().putSong(it.copy(artwork=file.absolutePath)) }
         } catch(error: Exception) { if(error is CancellationException) throw error }
+    }
+    suspend fun upgradeArtwork() = withContext(Dispatchers.IO) {
+        artworkUpgrade.withLock {
+            val dao=app.database.library()
+            val key="artwork:upgraded:v1"
+            if(dao.meta(key)!=null) return@withLock
+            val directory=artworkDirectory.canonicalFile.toPath()
+            for(song in dao.songs()) {
+                if(song.source!="youtube") continue
+                currentCoroutineContext().ensureActive()
+                try {
+                    val file=song.artwork?.let(::File)?.takeIf { it.isAbsolute }?.canonicalFile ?: continue
+                    if(!file.toPath().startsWith(directory) || artworkWidth(file) !in 1..511) continue
+                    val original=metadataArtwork(song) ?: continue
+                    downloadArtwork(original,file,upgrade=true)
+                } catch(error: Exception) { if(error is CancellationException) throw error }
+                delay(150)
+            }
+            dao.putMeta(SyncMeta(key,"true"))
+        }
+    }
+    private fun metadataArtwork(song: Song): String? = runCatching {
+        Json.parseToJsonElement(song.metadata).jsonObject["artwork"]?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.startsWith("https://") }
+    }.getOrNull()
+
+    private suspend fun downloadArtwork(original: String, file: File, upgrade: Boolean=false): Boolean {
+        val url=original.toHttpUrlOrNull() ?: return false
+        if(!url.isHttps || listOf("ytimg.com","googleusercontent.com","ggpht.com").none { url.host==it || url.host.endsWith(".$it") }) return false
+        val directory=file.parentFile ?: return false
+        val large=ArtworkUrls.large(original)
+        for(address in listOfNotNull(large,ArtworkUrls.fallback(large),original).distinct()) {
+            val bytes=artworkBytes(address) ?: continue
+            directory.mkdirs()
+            val temporary=File.createTempFile("cover-",".partial",directory)
+            try {
+                temporary.writeBytes(bytes)
+                val width=artworkWidth(temporary)
+                if(width<=0) continue
+                val ready=artworkWrites.withLock {
+                    currentCoroutineContext().ensureActive()
+                    val previous=artworkWidth(file)
+                    if(upgrade && width<=previous) return@withLock false
+                    if(width>=previous) Files.move(temporary.toPath(),file.toPath(),ATOMIC_MOVE,REPLACE_EXISTING)
+                    true
+                }
+                if(ready) return true
+            } finally { temporary.delete() }
+        }
+        return false
+    }
+    private fun artworkWidth(file: File): Int {
+        if(!file.isFile) return 0
+        val options=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+        BitmapFactory.decodeFile(file.absolutePath,options)
+        return options.outWidth
+    }
+    private suspend fun artworkBytes(address: String): ByteArray? = suspendCancellableCoroutine { continuation ->
+        val call=artworkHttp.newCall(Request.Builder().url(address).build())
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call,error: IOException) { continuation.resume(null) }
+            override fun onResponse(call: Call,response: Response) {
+                val bytes=try {
+                    response.use { if(it.isSuccessful) it.body?.byteStream()?.use { input -> input.readBounded(8*1024*1024) } else null }
+                } catch(_: IOException) { null }
+                continuation.resume(bytes)
+            }
+        })
     }
     suspend fun syncCollections() {
         for(playlist in app.database.library().playlists().filter { it.keepDownloaded }) {

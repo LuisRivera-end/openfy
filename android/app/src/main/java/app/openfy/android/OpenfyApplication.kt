@@ -44,5 +44,6 @@ class OpenfyApplication : Application() {
         super.onCreate()
         repository.onChanged = { sync.schedule() }
         scope.launch { downloads.reconcile(); sync.schedule() }
+        scope.launch { downloads.upgradeArtwork() }
     }
 }

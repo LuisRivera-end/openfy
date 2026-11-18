@@ -61,6 +61,7 @@ dependencies {
     implementation(libs.media3.player); implementation(libs.media3.session); implementation(libs.media3.okhttp)
     implementation(libs.media3.hls); implementation(libs.media3.ui)
     implementation(libs.okhttp); implementation(libs.coil); implementation(libs.coil.network)
+    implementation(libs.palette)
     implementation(libs.quickjs); implementation(libs.coroutines); implementation(libs.serialization)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test); androidTestImplementation(libs.test.runner)

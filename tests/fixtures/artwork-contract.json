@@ -1,0 +1,83 @@
+{
+  "cases": [
+    {
+      "input": "https://lh3.googleusercontent.com/cover=w120-h120-l90-rj",
+      "large": "https://lh3.googleusercontent.com/cover=w1024-h1024-l90-rj",
+      "identity": "https://lh3.googleusercontent.com/cover=wSIZE-hSIZE-l90-rj",
+      "sized": {
+        "128": "https://lh3.googleusercontent.com/cover=w128-h128-l90-rj",
+        "129": "https://lh3.googleusercontent.com/cover=w256-h256-l90-rj",
+        "257": "https://lh3.googleusercontent.com/cover=w512-h512-l90-rj",
+        "513": "https://lh3.googleusercontent.com/cover=w1024-h1024-l90-rj",
+        "2048": "https://lh3.googleusercontent.com/cover=w1024-h1024-l90-rj"
+      }
+    },
+    {
+      "input": "https://yt3.ggpht.com/artist=s120",
+      "large": "https://yt3.ggpht.com/artist=s1024",
+      "identity": "https://yt3.ggpht.com/artist=sSIZE",
+      "sized": {
+        "256": "https://yt3.ggpht.com/artist=s256"
+      }
+    },
+    {
+      "input": "https://googleusercontent.com/banner=w2880-h1200-p-l90-rj?crop=1",
+      "large": "https://googleusercontent.com/banner=w2048-h853-p-l90-rj?crop=1",
+      "identity": "https://googleusercontent.com/banner=wSIZE-hSIZE-p-l90-rj?crop=1",
+      "sized": {
+        "512": "https://googleusercontent.com/banner=w512-h512-p-l90-rj?crop=1"
+      }
+    },
+    {
+      "input": "https://i.ytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg?sqp=abc&rs=def",
+      "large": "https://i.ytimg.com/vi/RGXHqQR9XrQ/maxresdefault.jpg",
+      "identity": "https://i.ytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg?sqp=abc&rs=def",
+      "sized": {
+        "256": "https://i.ytimg.com/vi/RGXHqQR9XrQ/mqdefault.jpg",
+        "257": "https://i.ytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg",
+        "512": "https://i.ytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg",
+        "513": "https://i.ytimg.com/vi/RGXHqQR9XrQ/maxresdefault.jpg"
+      }
+    },
+    {
+      "input": "https://ytimg.com/vi/RGXHqQR9XrQ/sddefault.jpg",
+      "large": "https://i.ytimg.com/vi/RGXHqQR9XrQ/maxresdefault.jpg",
+      "identity": "https://ytimg.com/vi/RGXHqQR9XrQ/sddefault.jpg",
+      "sized": {
+        "128": "https://i.ytimg.com/vi/RGXHqQR9XrQ/mqdefault.jpg"
+      }
+    },
+    {
+      "input": "https://i.ytimg.com/vi_webp/a-_45678901/hqdefault.webp",
+      "large": "https://i.ytimg.com/vi/a-_45678901/maxresdefault.jpg",
+      "identity": "https://i.ytimg.com/vi_webp/a-_45678901/hqdefault.webp",
+      "sized": {
+        "512": "https://i.ytimg.com/vi/a-_45678901/hqdefault.jpg"
+      }
+    },
+    {
+      "input": "https://notytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg",
+      "large": "https://notytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg",
+      "identity": "https://notytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg",
+      "sized": {
+        "1024": "https://notytimg.com/vi/RGXHqQR9XrQ/hqdefault.jpg"
+      }
+    },
+    {
+      "input": "/data/user/0/app.openfy.android/files/artwork/cover=s120",
+      "large": "/data/user/0/app.openfy.android/files/artwork/cover=s120",
+      "identity": "/data/user/0/app.openfy.android/files/artwork/cover=s120",
+      "sized": {
+        "1024": "/data/user/0/app.openfy.android/files/artwork/cover=s120"
+      }
+    },
+    {
+      "input": "http://lh3.googleusercontent.com/cover=w120-h120-l90-rj",
+      "large": "http://lh3.googleusercontent.com/cover=w120-h120-l90-rj",
+      "identity": "http://lh3.googleusercontent.com/cover=w120-h120-l90-rj",
+      "sized": {
+        "1024": "http://lh3.googleusercontent.com/cover=w120-h120-l90-rj"
+      }
+    }
+  ]
+}
