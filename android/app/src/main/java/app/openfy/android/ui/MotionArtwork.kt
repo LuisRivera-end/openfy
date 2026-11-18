@@ -39,8 +39,10 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import app.openfy.android.OpenfyApplication
 import app.openfy.android.preferences
 import kotlinx.coroutines.channels.Channel
@@ -69,6 +71,12 @@ internal class MotionPlaybackCoordinator {
         select()
     }
 
+    fun prepareReplacement(key: Any): Boolean {
+        if (owner !== key) return false
+        releasePlayer()
+        return true
+    }
+
     fun attach(key: Any, onRelease: () -> Unit) {
         if (owner !== key) {
             onRelease()
@@ -78,8 +86,8 @@ internal class MotionPlaybackCoordinator {
         release = onRelease
     }
 
-    fun detach(key: Any) {
-        if (owner === key) releasePlayer()
+    fun detach(key: Any, onRelease: () -> Unit) {
+        if (owner === key && release === onRelease) releasePlayer()
     }
 
     private fun select() {
@@ -148,6 +156,7 @@ internal fun MotionArtwork(
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun MotionVideoLayer(
     app: OpenfyApplication,
@@ -178,17 +187,27 @@ private fun MotionVideoLayer(
     val unmetered = networkUnmetered || qaUnmetered
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     key(unmetered) {
-        val errors = remember { Channel<MotionVideo>(Channel.CONFLATED) }
-        val video by produceState<MotionVideo?>(null, lifecycle) {
+        val errors = remember { Channel<MotionVideoFailure>(Channel.CONFLATED) }
+        val attempt by produceState<MotionAttempt?>(null, lifecycle) {
             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var replacement: MotionVideo? = null
                 while (true) {
-                    val result = repository.resolve(artist, album, unmetered)
-                    value = result.video
-                    if (result.video != null) {
-                        val rejected = errors.receive()
+                    val result = replacement?.let { MotionLookup(it) } ?: repository.resolve(artist, album, unmetered)
+                    replacement = null
+                    val current = result.video?.let { MotionAttempt(it, repository.decoderSelector(it.maxEdge)) }
+                    value = current
+                    if (current != null) {
+                        var error = errors.receive()
+                        while (error.attempt !== current) error = errors.receive()
                         value = null
-                        if (!unmetered || (network.isActiveNetworkMetered && !qaUnmetered)) return@repeatOnLifecycle
-                        waitForMotionRetry(repository.videoFailed(artist, album, rejected))
+                        val allowNetwork = unmetered && (!network.isActiveNetworkMetered || qaUnmetered)
+                        if (error.isDecodingError) {
+                            replacement = if (repository.retryWithAnotherDecoder(current.video, current.selector, error.cause)) current.video
+                                else repository.smallerVideo(artist, album, current.video, allowNetwork)
+                            if (replacement != null) continue
+                        }
+                        if (!allowNetwork) return@repeatOnLifecycle
+                        waitForMotionRetry(repository.videoFailed(artist, album, current.video))
                     } else {
                         val retry = result.retryAt ?: return@repeatOnLifecycle
                         waitForMotionRetry(retry)
@@ -196,10 +215,27 @@ private fun MotionVideoLayer(
                 }
             }
         }
-        video?.let { loaded ->
-            MotionTexture(repository, lease, loaded, unmetered, playing, modifier, shape, onError = { errors.trySend(loaded) })
+        attempt?.let { loaded ->
+            key(loaded) {
+                MotionTexture(repository, lease, loaded, unmetered, playing, modifier, shape,
+                    onError = { errors.trySend(MotionVideoFailure(loaded, it)) })
+            }
         }
     }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private class MotionAttempt(val video: MotionVideo, val selector: MediaCodecSelector)
+
+private data class MotionVideoFailure(val attempt: MotionAttempt, val cause: PlaybackException) {
+    val isDecodingError: Boolean
+        get() = when (cause.errorCode) {
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED -> true
+            else -> false
+        }
 }
 
 private suspend fun waitForMotionRetry(at: Long) = delay((at - System.currentTimeMillis()).coerceAtLeast(1_000L))
@@ -209,13 +245,14 @@ private suspend fun waitForMotionRetry(at: Long) = delay((at - System.currentTim
 private fun MotionTexture(
     repository: MotionRepository,
     lease: Any,
-    video: MotionVideo,
+    attempt: MotionAttempt,
     allowNetwork: Boolean,
     playing: Boolean,
     modifier: Modifier,
     shape: Shape,
-    onError: () -> Unit
+    onError: (PlaybackException) -> Unit
 ) {
+    val video = attempt.video
     val context = LocalContext.current
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
@@ -225,24 +262,28 @@ private fun MotionTexture(
     var firstFrame by remember(video) { mutableStateOf(false) }
     var videoSize by remember(video) { mutableStateOf(VideoSize(video.width, video.height)) }
     DisposableEffect(repository, lease, video, allowNetwork) {
-        if (repository.playback.owner !== lease) return@DisposableEffect onDispose {}
-        val engine = ExoPlayer.Builder(context).build()
+        if (!repository.playback.prepareReplacement(lease)) return@DisposableEffect onDispose {}
+        val renderers = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(attempt.selector)
+        val engine = ExoPlayer.Builder(context, renderers).build()
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() { firstFrame = true }
             override fun onVideoSizeChanged(size: VideoSize) { videoSize = size }
             override fun onPlayerError(error: PlaybackException) {
                 firstFrame = false
-                latestOnError()
+                latestOnError(error)
             }
         }
         engine.addListener(listener)
         player = engine
-        repository.playback.attach(lease) {
+        val release = {
             engine.removeListener(listener)
             engine.release()
             firstFrame = false
             player = null
         }
+        repository.playback.attach(lease, release)
         if (repository.playback.owner === lease) {
             engine.volume = 0f
             engine.repeatMode = Player.REPEAT_MODE_ONE
@@ -257,7 +298,7 @@ private fun MotionTexture(
             engine.playWhenReady = latestPlaying
             engine.prepare()
         }
-        onDispose { repository.playback.detach(lease) }
+        onDispose { repository.playback.detach(lease, release) }
     }
     LaunchedEffect(player, playing) { player?.playWhenReady = playing }
 

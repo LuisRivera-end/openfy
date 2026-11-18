@@ -4,8 +4,12 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.AtomicFile
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UriUtil
 import androidx.media3.datasource.DataSourceInputStream
 import androidx.media3.datasource.DataSpec
@@ -15,7 +19,12 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsMultivariantPlaylist
 import androidx.media3.exoplayer.hls.playlist.HlsPlaylistParser
+import androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException
+import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import app.openfy.android.BuildConfig
 import app.openfy.android.OpenfyApplication
+import app.openfy.android.preferences
 import app.openfy.android.provider.readBounded
 import java.io.File
 import java.io.IOException
@@ -25,12 +34,14 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
 import okhttp3.Call
 import okhttp3.Callback
@@ -40,7 +51,32 @@ import okhttp3.Request
 import okhttp3.Response
 
 @Serializable
-internal data class MotionVideo(val url: String, val width: Int, val height: Int)
+internal data class MotionVideo(
+    val url: String,
+    val width: Int,
+    val height: Int,
+    val master: String? = null,
+    // Null denotes a legacy result. An empty list denotes a verified single-variant playlist.
+    val renditions: List<MotionRendition>? = null
+) {
+    val maxEdge: Int get() = maxOf(width, height)
+
+    fun withRendition(rendition: MotionRendition): MotionVideo =
+        copy(url = rendition.url, width = rendition.width, height = rendition.height)
+}
+
+@Serializable
+internal data class MotionRendition(
+    val url: String,
+    val width: Int,
+    val height: Int,
+    val frameRate: Float,
+    val codecs: String,
+    val peakBitrate: Int
+) {
+    val maxEdge: Int get() = maxOf(width, height)
+    val area: Int get() = width * height
+}
 
 @Serializable
 private enum class MotionStatus {
@@ -69,8 +105,56 @@ private const val DayMs = 86_400_000L
 private const val RetryMs = 15 * 60_000L
 private const val MaxCandidates = 3
 private const val MaxPlaylistBytes = 512 * 1024
+private const val MaxVideoEdge = 1080
+private const val MaxVideoRate = 30f
+private val DecoderPolicyKey = stringPreferencesKey("motionDecoderPolicy")
+private val DecoderPolicyVersion = "${BuildConfig.VERSION_CODE}:${BuildConfig.VERSION_NAME}"
 private const val ApplePlayer = "https://music.apple.com"
 private const val UserAgent = "Mozilla/5.0 Openfy/Android"
+
+@Serializable
+private data class MotionDecoderPolicy(
+    val version: String,
+    val maxEdge: Int = MaxVideoEdge,
+    val failedAtEdge: Map<String, Int> = emptyMap()
+)
+
+private fun availableMotionDecoders(names: List<String>, failedAtEdge: Map<String, Int>, edge: Int): List<String> {
+    val unfailed = names.filterNot(failedAtEdge::containsKey)
+    // Once the unfailed decoders are exhausted, a lower rendition may retry failures from larger sizes.
+    return unfailed.ifEmpty { names.filter { edge < failedAtEdge.getValue(it) } }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private fun reportedFailedDecoders(error: PlaybackException): Set<String> = buildSet {
+    for (cause in generateSequence<Throwable>(error) { it.cause }.take(12)) {
+        when (cause) {
+            is MediaCodecDecoderException -> cause.codecInfo?.name?.let { add(it) }
+            is DecoderInitializationException -> {
+                for (failure in generateSequence(cause) { it.fallbackDecoderInitializationException }) {
+                    failure.codecInfo?.name?.let { add(it) }
+                }
+            }
+        }
+    }
+}
+
+private fun largestRendition(renditions: List<MotionRendition>): MotionRendition? {
+    val area = renditions.maxOfOrNull { it.area }
+    val sameSize = renditions.filter { it.area == area }
+    return sameSize.filter { it.peakBitrate in 1..6_000_000 }.maxByOrNull { it.peakBitrate }
+        ?: sameSize.minByOrNull { it.peakBitrate }
+}
+
+private fun preferredRendition(
+    renditions: List<MotionRendition>,
+    maxEdge: Int,
+    supports: (MotionRendition) -> Boolean
+): MotionRendition? {
+    val withinLimit = renditions.filter { it.maxEdge <= maxEdge }
+    return largestRendition(withinLimit.filter(supports)) ?: withinLimit
+        .minWithOrNull(compareBy<MotionRendition> { it.area }.thenBy { it.peakBitrate })
+}
 
 /** Application-scoped catalog results, shared authentication and HLS cache access. */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -78,7 +162,8 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     private val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val http = app.http.newBuilder().followRedirects(false).followSslRedirects(false)
         .addInterceptor { chain ->
-            if (connectivity.isActiveNetworkMetered || !isAppleUrl(chain.request().url)) {
+            val metered = connectivity.isActiveNetworkMetered && !(app.isDebuggable && app.qaUnmetered)
+            if (metered || !isAppleUrl(chain.request().url)) {
                 throw IOException("Motion needs an unmetered Apple connection")
             }
             chain.proceed(chain.request())
@@ -92,6 +177,7 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     private val failures = mutableMapOf<String, Pair<Int, Long>>()
     private var token: String? = null
     private var tokenExpires = 0L
+    @Volatile private var learnedDecoderPolicy: MotionDecoderPolicy? = null
     val playback = MotionPlaybackCoordinator()
 
     private val networkFactory by lazy {
@@ -105,21 +191,49 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     fun videoFactory(allowNetwork: Boolean): CacheDataSource.Factory =
         if (allowNetwork) networkFactory else offlineFactory
 
+    fun decoderSelector(edge: Int): MediaCodecSelector {
+        val failedAtEdge = learnedDecoderPolicy?.failedAtEdge.orEmpty()
+        return MediaCodecSelector { mimeType, secure, tunneling ->
+            val candidates = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, secure, tunneling)
+            if (!MimeTypes.isVideo(mimeType) || failedAtEdge.isEmpty()) candidates
+            else {
+                val allowed = availableMotionDecoders(candidates.map { it.name }, failedAtEdge, edge).toSet()
+                candidates.filter { it.name in allowed }
+            }
+        }
+    }
+
     suspend fun resolve(artist: String, album: String, allowNetwork: Boolean): MotionLookup =
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val key = key(artist, album)
                 val now = System.currentTimeMillis()
                 val cached = results[key]?.takeIf { it.expiresAt > now }
+                val maxEdge = decoderPolicy().maxEdge
                 if (!allowNetwork) {
-                    return@withLock MotionLookup(cached?.video?.takeIf(::fullyCached))
+                    return@withLock MotionLookup(cached?.video?.let { offlineVideo(it, maxEdge) })
                 }
                 failures[key]?.second?.takeIf { it > now }?.let { return@withLock MotionLookup(retryAt = it) }
-                if (cached != null) {
-                    return@withLock MotionLookup(cached.video, cached.expiresAt.takeIf { cached.video == null })
-                }
                 try {
-                    val result = lookup(artist, album)
+                    if (cached != null) {
+                        val video = cached.video ?: return@withLock MotionLookup(retryAt = cached.expiresAt)
+                        val legacyNeedsCheck = video.renditions == null && avcDecoders(decoderSelector(video.maxEdge)).let { decoders ->
+                            decoders.isNotEmpty() && decoders.none { codec ->
+                                runCatching { codec.isVideoSizeAndRateSupportedV21(video.width, video.height, MaxVideoRate.toDouble()) }
+                                    .getOrDefault(true)
+                            }
+                        }
+                        if (video.renditions.isNullOrEmpty() && video.maxEdge <= maxEdge && !legacyNeedsCheck) {
+                            return@withLock MotionLookup(video)
+                        }
+                        val current = refreshLegacyVideo(artist, album, video, maxEdge)
+                        val preferred = preferredRendition(current.renditions.orEmpty(), maxEdge, ::decoderSupports)
+                            ?.let(current::withRendition) ?: current.takeIf { it.maxEdge <= maxEdge }
+                            ?: return@withLock MotionLookup()
+                        if (preferred != video) saveVideo(key, preferred)
+                        return@withLock MotionLookup(preferred)
+                    }
+                    val result = lookup(artist, album, maxEdge)
                     results[key] = result
                     failures.remove(key)
                     saveResults()
@@ -141,6 +255,103 @@ internal class MotionRepository(private val app: OpenfyApplication) {
             }
             scheduleRetry(key)
         }
+    }
+
+    suspend fun retryWithAnotherDecoder(video: MotionVideo, selector: MediaCodecSelector, error: PlaybackException): Boolean =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val current = decoderPolicy()
+                val active = avcDecoders(selector).map { it.name }
+                if (active.isEmpty()) return@withLock false
+                val failed = reportedFailedDecoders(error).intersect(active).ifEmpty { setOf(active.first()) }
+                val newFailures = current.failedAtEdge + failed.associateWith { name ->
+                    minOf(current.failedAtEdge[name] ?: video.maxEdge, video.maxEdge)
+                }
+                if (newFailures != current.failedAtEdge) saveDecoderPolicy(current.copy(failedAtEdge = newFailures))
+                avcDecoders(decoderSelector(video.maxEdge)).isNotEmpty()
+            }
+        }
+
+    suspend fun smallerVideo(artist: String, album: String, rejected: MotionVideo, allowNetwork: Boolean): MotionVideo? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val policy = decoderPolicy()
+                val maxEdge = minOf(policy.maxEdge, rejected.maxEdge - 1)
+                if (maxEdge <= 0) return@withLock null
+                try {
+                    val current = if (allowNetwork) refreshLegacyVideo(artist, album, rejected, maxEdge) else rejected
+                    val candidates = current.renditions.orEmpty().filter { it.url != rejected.url && it.maxEdge <= maxEdge }
+                    val next = if (candidates.isEmpty()) {
+                        current.takeIf { it.url != rejected.url && it.maxEdge <= maxEdge && (allowNetwork || fullyCached(it)) }
+                    } else if (allowNetwork) {
+                        largestRendition(candidates)?.let(current::withRendition)
+                    } else {
+                        cachedRendition(current, candidates)
+                    }
+                    if (next != null) {
+                        if (next.maxEdge < policy.maxEdge) saveDecoderPolicy(policy.copy(maxEdge = next.maxEdge))
+                        saveVideo(key(artist, album), next)
+                    }
+                    next
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+
+    private suspend fun refreshLegacyVideo(artist: String, album: String, video: MotionVideo, maxEdge: Int): MotionVideo {
+        if (video.renditions != null) return video
+        val master = video.master ?: return lookup(artist, album, maxEdge).video ?: video
+        return video.copy(renditions = renditions(readPlaylist(appleUrl(master)) as HlsMultivariantPlaylist))
+    }
+
+    private suspend fun decoderPolicy(): MotionDecoderPolicy {
+        learnedDecoderPolicy?.let { return it }
+        val stored = try {
+            app.preferences.data.first()[DecoderPolicyKey]?.let { Json.decodeFromString<MotionDecoderPolicy>(it) }
+        } catch (_: IOException) {
+            null
+        } catch (_: SerializationException) {
+            null
+        }
+        val current = stored?.takeIf { it.version == DecoderPolicyVersion && it.maxEdge in 1..MaxVideoEdge }
+            ?: MotionDecoderPolicy(DecoderPolicyVersion)
+        learnedDecoderPolicy = current
+        return current
+    }
+
+    private suspend fun saveDecoderPolicy(policy: MotionDecoderPolicy) {
+        learnedDecoderPolicy = policy
+        try {
+            app.preferences.edit { it[DecoderPolicyKey] = Json.encodeToString(policy) }
+        } catch (_: IOException) {
+            // Keep the policy for the rest of this process if storage is unavailable.
+        }
+    }
+
+    private fun saveVideo(key: String, video: MotionVideo) {
+        results[key] = MotionResult(MotionStatus.READY, System.currentTimeMillis(), video)
+        saveResults()
+    }
+
+    private fun offlineVideo(video: MotionVideo, maxEdge: Int): MotionVideo? {
+        if (video.maxEdge <= maxEdge && fullyCached(video)) return video
+        val limit = minOf(maxEdge, video.maxEdge)
+        val alternatives = video.renditions.orEmpty().filter { it.url != video.url && it.maxEdge <= limit }
+        return cachedRendition(video, alternatives)
+    }
+
+    private fun cachedRendition(video: MotionVideo, candidates: List<MotionRendition>): MotionVideo? {
+        val remaining = candidates.toMutableList()
+        while (remaining.isNotEmpty()) {
+            val rendition = largestRendition(remaining) ?: return null
+            val next = video.withRendition(rendition)
+            if (fullyCached(next)) return next
+            remaining.remove(rendition)
+        }
+        return null
     }
 
     private fun scheduleRetry(key: String): Long {
@@ -181,7 +392,7 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         playlist.segments.all { part -> hasPart(part) && part.initializationSegment?.let(::hasPart) != false }
     }.getOrDefault(false)
 
-    private suspend fun lookup(artist: String, album: String): MotionResult {
+    private suspend fun lookup(artist: String, album: String, maxEdge: Int): MotionResult {
         val checked = mutableSetOf<String>()
         val unresolved = mutableSetOf<String>()
         var verified = false
@@ -200,7 +411,7 @@ internal class MotionRepository(private val app: OpenfyApplication) {
                             continue
                         }
                         val editorial = attributes["editorialVideo"]?.takeUnless { it is JsonNull }?.jsonObject
-                        val video = editorial?.let { squareVideo(it) }
+                        val video = editorial?.let { squareVideo(it, maxEdge) }
                         if (video != null) return MotionResult(MotionStatus.READY, System.currentTimeMillis(), video)
                         unresolved.remove(id)
                         verified = true
@@ -221,38 +432,57 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         return MotionResult(status, System.currentTimeMillis())
     }
 
-    private suspend fun squareVideo(editorial: JsonObject): MotionVideo? {
+    private suspend fun squareVideo(editorial: JsonObject, maxEdge: Int): MotionVideo? {
         for (field in listOf("motionDetailSquare", "motionSquareVideo1x1")) {
             val attributes = editorial[field]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
             val address = attributes["video"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank) ?: continue
             val url = appleUrl(address)
-            val uri = Uri.parse(url.toString())
-            val bytes = request(url, limit = MaxPlaylistBytes)
-            return when (val playlist = HlsPlaylistParser().parse(uri, bytes.inputStream())) {
+            return when (val playlist = readPlaylist(url)) {
                 is HlsMultivariantPlaylist -> {
-                    val variants = playlist.variants.filter {
-                        val format = it.format
-                        format.width in 1..1080 && format.height in 1..1080 &&
-                            format.frameRate <= 30f && MimeTypes.getVideoMediaMimeType(format.codecs) == MimeTypes.VIDEO_H264
-                    }
-                    val maxHeight = variants.maxOfOrNull { it.format.height }
-                    val largest = variants.filter { it.format.height == maxHeight }
-                    val variant = largest.filter { it.format.peakBitrate <= 6_000_000 }
-                        .maxByOrNull { it.format.peakBitrate } ?: largest.minByOrNull { it.format.peakBitrate }
+                    val variants = renditions(playlist)
+                    val variant = preferredRendition(variants, maxEdge, ::decoderSupports)
                         ?: error("Motion HLS rendition unavailable")
-                    MotionVideo(appleUrl(variant.url.toString()).toString(), variant.format.width, variant.format.height)
+                    MotionVideo(variant.url, variant.width, variant.height, master = url.toString(), renditions = variants)
                 }
                 is HlsMediaPlaylist -> {
                     val width = attributes.getValue("width").jsonPrimitive.int
                     val height = attributes.getValue("height").jsonPrimitive.int
-                    check(width > 0 && height > 0 && playlist.hasEndTag)
-                    MotionVideo(url.toString(), width, height)
+                    check(width in 1..maxEdge && height in 1..maxEdge && playlist.hasEndTag)
+                    MotionVideo(url.toString(), width, height, renditions = emptyList())
                 }
                 else -> error("Motion playlist unavailable")
             }
         }
         return null
     }
+
+    private suspend fun readPlaylist(url: HttpUrl) = HlsPlaylistParser().parse(
+        Uri.parse(url.toString()), request(url, limit = MaxPlaylistBytes).inputStream()
+    )
+
+    private fun renditions(playlist: HlsMultivariantPlaylist): List<MotionRendition> = playlist.variants.mapNotNull { variant ->
+        val format = variant.format
+        val codecs = MimeTypes.getCodecsCorrespondingToMimeType(format.codecs, MimeTypes.VIDEO_H264)
+        if (format.width !in 1..MaxVideoEdge || format.height !in 1..MaxVideoEdge || format.frameRate > MaxVideoRate || codecs == null) {
+            return@mapNotNull null
+        }
+        val url = runCatching { appleUrl(variant.url.toString()).toString() }.getOrNull() ?: return@mapNotNull null
+        MotionRendition(url, format.width, format.height, format.frameRate, codecs, format.peakBitrate)
+    }
+
+    private fun decoderSupports(rendition: MotionRendition): Boolean {
+        val format = Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).setCodecs(rendition.codecs)
+            .setWidth(rendition.width).setHeight(rendition.height)
+            .setFrameRate(rendition.frameRate.takeIf { it > 0f } ?: MaxVideoRate).build()
+        // Media3 checks both size/rate and the AVC profile and level when CODECS provides them.
+        return avcDecoders(decoderSelector(rendition.maxEdge)).any { codec ->
+            runCatching { codec.isFormatSupported(app, format) }.getOrDefault(false)
+        }
+    }
+
+    private fun avcDecoders(selector: MediaCodecSelector) = runCatching {
+        selector.getDecoderInfos(MimeTypes.VIDEO_H264, false, false)
+    }.getOrDefault(emptyList())
 
     private suspend fun itunesAlbums(artist: String, album: String): List<String> {
         val url = "https://itunes.apple.com/search".toHttpUrl().newBuilder()
@@ -292,7 +522,8 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     private suspend fun playerToken(): String {
         val minimum = System.currentTimeMillis() + 3_600_000L
         token?.takeIf { tokenExpires > minimum }?.let { return it }
-        val html = request("$ApplePlayer/us/browse".toHttpUrl()).decodeToString()
+        // Apple moves this page (it now answers 301 → /us/new); follow up to three Apple-only hops.
+        val html = request("$ApplePlayer/us/browse".toHttpUrl(), redirects = 3).decodeToString()
         val bundles = BundlePattern.findAll(html).take(3).map { it.groupValues[1] }
         for (bundle in bundles) {
             val source = request("$ApplePlayer$bundle".toHttpUrl(), limit = 32 * 1024 * 1024).decodeToString()
@@ -310,7 +541,16 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         error("Motion token unavailable")
     }
 
-    private suspend fun request(url: HttpUrl, headers: Map<String, String> = emptyMap(), limit: Int = 4 * 1024 * 1024): ByteArray =
+    private suspend fun request(url: HttpUrl, headers: Map<String, String> = emptyMap(), limit: Int = 4 * 1024 * 1024,
+        redirects: Int = 0): ByteArray {
+        val (bytes, next) = fetch(url, headers, limit, follow = redirects > 0)
+        if (next == null) return checkNotNull(bytes)
+        // Redirects are followed manually, and only to other HTTPS Apple URLs.
+        check(isAppleUrl(next)) { "Motion redirect rejected" }
+        return request(next, headers, limit, redirects - 1)
+    }
+
+    private suspend fun fetch(url: HttpUrl, headers: Map<String, String>, limit: Int, follow: Boolean): Pair<ByteArray?, HttpUrl?> =
         suspendCancellableCoroutine { continuation ->
             val builder = Request.Builder().url(url).header("User-Agent", UserAgent)
             headers.forEach { (key, value) -> builder.header(key, value) }
@@ -322,8 +562,12 @@ internal class MotionRepository(private val app: OpenfyApplication) {
                 override fun onResponse(call: Call, response: Response) {
                     val result = runCatching {
                         response.use {
-                            if (!it.isSuccessful) throw HttpFailure(it.code)
-                            checkNotNull(it.body).byteStream().readBounded(limit)
+                            if (follow && it.code in RedirectCodes) {
+                                null to (it.header("Location")?.let(url::resolve) ?: throw HttpFailure(it.code))
+                            } else {
+                                if (!it.isSuccessful) throw HttpFailure(it.code)
+                                checkNotNull(it.body).byteStream().readBounded(limit) to null
+                            }
                         }
                     }
                     result.fold(continuation::resume, continuation::resumeWithException)
@@ -334,6 +578,7 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     private class HttpFailure(val code: Int) : IOException("Motion HTTP $code")
 
     private companion object {
+        val RedirectCodes = setOf(301, 302, 303, 307, 308)
         val BundlePattern = Regex("src=\"(/assets/index[^\"]+?\\.js)\"")
         val TokenPattern = Regex("eyJ[\\w-]+\\.eyJ[\\w-]+\\.[\\w-]+")
         val ArtistSeparator = Regex("\\s*(?:,|&|/|\\bx\\b|\\by\\b|\\band\\b|\\bfeat\\.?|\\bft\\.?)\\s*", RegexOption.IGNORE_CASE)

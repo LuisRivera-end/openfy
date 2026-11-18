@@ -46,6 +46,16 @@ Tamaño orientativo: entre 5 y 15 MB por álbum con vídeo.
 - La portada de 56 px del diseño apilado, la tarjeta «A continuación» y el fondo ambiental usan siempre la imagen fija.
 - Las cachés de web y Windows vencen los negativos y los errores; un resultado temporal vuelve a consultarse cuando corresponde si el mismo álbum sigue visible. Ocultar/cerrar la vista detiene el temporizador; volver a abrirlo respeta o reactiva la espera restante.
 - Se desactiva con **Ajustes → Portadas animadas**, con «Movimiento ambiental» apagado o con el movimiento reducido del sistema.
+- Android nativo no usa este servidor. `ui/MotionRepository.kt` resuelve desde el teléfono con la misma secuencia (iTunes Search, catálogo de Apple Music y `editorialVideo`) y la misma coincidencia estricta.
+  - Vive en la aplicación: el token y los resultados sobreviven al cerrar el reproductor.
+  - Los resultados se guardan en disco con los mismos plazos que aquí: `none` 30 días, `unmatched` 1 día, y los errores temporales no cuentan como negativos.
+  - El vídeo pasa por una caché LRU de 300 MB de Media3. Con red medida solo se reproduce lo que ya está en caché; si no hay nada, se queda la portada fija.
+  - `MotionArtwork` lo muestra en el reproductor ampliado y en la cabecera de álbum, con un único decodificador a la vez (el reproductor ampliado tiene prioridad). Se pausa con la música y al ocultarse.
+  - Lo controlan **Ajustes → Portadas animadas con Wi-Fi**, «Movimiento ambiental» y la escala de animación del sistema.
+  - El 17 de noviembre de 2026, `music.apple.com/us/browse` empezó a responder 301 hacia `/us/new`. El cliente Android no sigue redirecciones de forma general, así que no obtenía el token y nunca mostraba vídeos. Ahora sigue manualmente hasta tres redirecciones, y solo hacia URL HTTPS de Apple. Tras el cambio, en el emulador «Un Verano Sin Ti» resolvió un vídeo de 1080 × 1080, y dos álbumes sin Motion quedaron como ausencia verificada.
+  - La variante se elige por la capacidad declarada del decodificador H.264 del dispositivo (hasta 1080 px y 30 FPS).
+  - Si la reproducción falla con un error de decodificación, se marca ese decodificador como fallido para esta versión de la app y se reintenta la misma variante con el siguiente (por ejemplo, el de software). Solo al agotarlos se baja de resolución, y el tope por dispositivo se recuerda en DataStore.
+  - En el emulador API 37, `c2.goldfish.h264.decoder` falló con todas las variantes de Apple (`avc1.64001F`/`avc1.640020`). `c2.android.avc.decoder` reprodujo el vídeo: la cabecera del álbum cambió 121 679 píxeles en 0,7 s (`DesignQaTest#motionPlays`).
 
 El vídeo nativo de `MediaPlayerElement` ignoraba el radio del marco y los recortes de composición con Windows App SDK 2.6.5. El modo de fotogramas de `MediaPlayer` y la superficie Win2D sustituyen esa ruta para conservar las esquinas redondeadas, también al redimensionar y pausar.
 
