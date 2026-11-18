@@ -33,6 +33,18 @@ Antes de completar bytes parciales se compara la identidad del recurso (video, i
 
 La escucha cuenta avance real, excluye saltos/buffering y califica al 90 %. Los días usan America/Mexico_City. Las pruebas Android reutilizan contratos de letras y escucha de Windows/web. El movimiento se limita y se detiene cuando la vista queda oculta; las portadas animadas son opcionales y mantienen respaldo fijo.
 
+## Interfaz
+
+Rediseño del 17 de noviembre de 2026; las decisiones están en `docs/superpowers/specs/2026-11-17-android-ui-redesign-design.md`. Base oscura `#09090B`, verde `#1ED760` y las portadas como fuente de color, con la tipografía del sistema. Los tokens (colores, escala tipográfica, radios y márgenes) viven en `ui/Theme.kt`. Cada pantalla es un archivo `ui/*Screen.kt` que aporta sus elementos al único `LazyColumn` de `OpenfyApp.kt`, y las piezas compartidas están en `Components.kt` y `Sheets.kt`.
+
+- **Inicio:** saludo según la hora de Ciudad de México, acceso rápido de hasta ocho mosaicos (favoritas, contextos recientes y playlists), «Sugerencias para ti» con tarjetas de 260 × 325 dp teñidas con el color de la portada, lanzamientos del año en curso, escuchado recientemente, y favoritas y playlists. Las métricas y los períodos están en «Más reproducidas». Las sugerencias se guardan en DataStore durante una hora, se siembran con hasta tres artistas distintos y excluyen biblioteca e historial. Ver [Inicio centrado en la música](home-design.md#android).
+- **Portadas:** `ArtworkUrls` pide a YouTube cada portada al tamaño en que se muestra (hasta 1024 px en el reproductor, las cabeceras y la sesión multimedia) y vuelve a `hqdefault` si falta `maxresdefault`. El contrato `tests/fixtures/artwork-contract.json` lo comparte con `shared/utils/artwork.ts`. Las descargas guardan la portada grande, y un repaso único mejora las portadas pequeñas guardadas antes, sin tocar el audio. `CoverPalette` extrae el color dominante para tarjetas, minirreproductor y cabeceras, con contraste AA para el texto blanco.
+- **Reproductor:** la iluminación de portada es gemela de `shared/utils/ambient.ts` y está fijada por `ambient-contract.json`. Se dibuja con AGSL en API 33+ y con dos capas suavizadas en API 29–32, a 30 FPS como máximo. Se congela en pausa y se detiene oculta, con movimiento reducido o con «Movimiento ambiental» apagado. Un velo local protege el contraste del texto sobre portadas claras. La posición se publica en un flujo propio para que el resto de la interfaz no se recomponga cada 250 ms.
+- **Portadas animadas:** `MotionRepository` vive en la aplicación y guarda en disco los resultados con los mismos plazos que el servidor. El vídeo pasa por una caché LRU de 300 MB, y con red medida solo se reproduce lo que ya está en caché. `MotionArtwork` se usa en el reproductor y en la cabecera de álbum, con un único decodificador a la vez.
+- **Arranque:** el paquete del proveedor se evalúa en segundo plano al abrir la app para acortar la primera reproducción, sin hacer peticiones a YouTube.
+
+La revisión visual usa datos reales: `scripts/android-design-host.ts` sirve por loopback una copia de una biblioteca, hecha con la API de backup de SQLite sin escribir nunca en el origen, y `DesignQaTest` empareja el paquete debug, importa el historial de esa copia y captura todas las pantallas.
+
 ## Importar desde Spotify
 
 En la [página de privacidad de Spotify](https://www.spotify.com/account/privacy/), abre **Descargar tus datos** y solicita **Datos de la cuenta**. Cuando recibas el correo, guarda `my_spotify_data.zip`. En Openfy para Android, abre **Ajustes → Importar desde Spotify**, elige el ZIP o un JSON individual de la exportación y revisa los recuentos antes de importar.

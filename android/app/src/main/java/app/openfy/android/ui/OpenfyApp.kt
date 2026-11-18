@@ -5,9 +5,17 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -15,9 +23,16 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
@@ -106,6 +121,15 @@ import java.time.ZoneId
         val route=page?.let { "${it.kind}:${it.id}" } ?: "tab:$tab:$libraryMode"
         val scrolls=remember { linkedMapOf<String,LazyListState>() }
         val scroll=scrolls.getOrPut(route) { LazyListState() }
+        val availableRelease=update.release
+        var heroTitleBottomBelowBar by remember(route) { mutableIntStateOf(0) }
+        val showCompactTitle by remember(scroll) {
+            derivedStateOf {
+                // The hero is the first item, including any update notice.
+                scroll.firstVisibleItemIndex>0 || (heroTitleBottomBelowBar>0 &&
+                    scroll.firstVisibleItemScrollOffset>=heroTitleBottomBelowBar)
+            }
+        }
         LaunchedEffect(search.query,search.kind) { if(tab==1) scroll.scrollToItem(0) }
         if(scrolls.size>24) scrolls.remove(scrolls.keys.first())
         LaunchedEffect(route,search.cursor,search.loading) {
@@ -123,32 +147,47 @@ import java.time.ZoneId
                 else -> "Descargas"
             }
             val back: (() -> Unit)?=if(page!=null) ({ vm.back() }) else null
-            OpenfyTopBar(title,back) { settings=true }
+            key(page?.kind,page?.id) {
+                OpenfyTopBar(title,back,back!=null && showCompactTitle) { settings=true }
+            }
         },bottomBar={
             Column(Modifier.navigationBarsPadding()) {
                 current?.let { MiniPlayer(it,player,vm::toggle,vm::next) { expanded=true } }
                 OpenfyBottomBar(tab,vm::selectTab)
             }
         }) { padding ->
-            LazyColumn(state=scroll,modifier=Modifier.fillMaxSize().padding(padding),
+            // The hero consumes the top padding so its background can extend under the toolbar.
+            val heroTopPadding=if(page==null) 0.dp else padding.calculateTopPadding()
+            val heroTopPaddingPx=with(LocalDensity.current) { heroTopPadding.roundToPx() }
+            val layoutDirection=LocalLayoutDirection.current
+            val listPadding=if(page==null) padding else PaddingValues(
+                start=padding.calculateStartPadding(layoutDirection),
+                end=padding.calculateEndPadding(layoutDirection),
+                bottom=padding.calculateBottomPadding()
+            )
+            val release=availableRelease
+            val updateNotice: (@Composable ()->Unit)?=if(release==null) null else {{ UpdateNotice(release.version) { settings=true } }}
+            LazyColumn(state=scroll,modifier=Modifier.fillMaxSize().padding(listPadding),
                 contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(if(page==null && tab==2) 2.dp else 6.dp)) {
-                update.release?.let { release -> gutterItem {
-                    TextButton(onClick={ settings=true }) { Icon(Icons.Default.SystemUpdate,null); Spacer(Modifier.width(8.dp)); Text("Actualización disponible · ${release.version}") }
-                } }
                 if(page!=null) {
                     detailItems(vm,page,playlist,tracks,songMap,current?.id,stats,period,onPeriod={ period=it },
                         query=query,onQuery={ query=it },onFilters={ filterDialog=true },requestNotifications=::requestNotifications,
                         onRename={ rename=it; create=true },onDelete={ deletePlaylist=it },onSongActions={ actions=it },
-                        fullTracks=source,filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,albumYear=page.year,albumArtist=page.artist)
-                } else when(tab) {
-                    0 -> homeItems(vm,library.listening,library.recents,songMap,current?.id,stats,period,onPeriod={ period=it },
-                        suggestions=suggestions,releases=releases,importFiles=::launchFiles,onSongActions={ actions=it })
-                    1 -> searchItems(vm,search,tracks,songMap,current?.id,onSongActions={ actions=it })
-                    2 -> libraryItems(vm,librarySongs,library.playlists,tracks,songMap,current?.id,libraryMode,onMode={ libraryMode=it },
-                        query=query,onQuery={ query=it },onFilters={ filterDialog=true },importFiles=::launchFiles,importFolder=::launchFolder,
-                        createPlaylist=::createPlaylist,onSongActions={ actions=it },filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,
-                        rankingArtwork=rankingArtwork)
-                    3 -> downloadsItems(vm,library.downloads,songMap,current?.id,::download,onRemove={ removeDownload=it },onSongActions={ actions=it })
+                        fullTracks=source,filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,
+                        onHeroTitleMeasured={ heroTitleBottomBelowBar=it-heroTopPaddingPx },
+                        heroTopPadding=heroTopPadding,updateNotice=updateNotice,albumYear=page.year,albumArtist=page.artist)
+                } else {
+                    if(updateNotice!=null) gutterItem(content=updateNotice)
+                    when(tab) {
+                        0 -> homeItems(vm,library.listening,library.recents,songMap,current?.id,stats,period,onPeriod={ period=it },
+                            suggestions=suggestions,releases=releases,importFiles=::launchFiles,onSongActions={ actions=it })
+                        1 -> searchItems(vm,search,tracks,songMap,current?.id,onSongActions={ actions=it })
+                        2 -> libraryItems(vm,librarySongs,library.playlists,tracks,songMap,current?.id,libraryMode,onMode={ libraryMode=it },
+                            query=query,onQuery={ query=it },onFilters={ filterDialog=true },importFiles=::launchFiles,importFolder=::launchFolder,
+                            createPlaylist=::createPlaylist,onSongActions={ actions=it },filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,
+                            rankingArtwork=rankingArtwork)
+                        3 -> downloadsItems(vm,library.downloads,songMap,current?.id,::download,onRemove={ removeDownload=it },onSongActions={ actions=it })
+                    }
                 }
                 if(importing) gutterItem {
                     Row(Modifier.padding(16.dp),horizontalArrangement=Arrangement.spacedBy(16.dp)) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Importando música…") }
@@ -188,21 +227,68 @@ import java.time.ZoneId
     }
 }
 
-@Composable private fun OpenfyTopBar(title: String,back: (() -> Unit)?,settings: ()->Unit) {
-    Row(Modifier.fillMaxWidth().statusBarsPadding().padding(start=if(back==null) Gutter else 12.dp,end=12.dp),verticalAlignment=Alignment.CenterVertically) {
-        if(back!=null) ActionIcon(Icons.Default.ArrowBack,"Volver",action=back)
-        Text(title,Modifier.weight(1f),style=if(back==null) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.titleMedium,
-            maxLines=1,overflow=TextOverflow.Ellipsis)
-        ActionIcon(Icons.Default.Settings,"Ajustes",action=settings)
+@Composable private fun UpdateNotice(version: String,onClick: ()->Unit) {
+    TextButton(onClick=onClick) {
+        Icon(Icons.Default.SystemUpdate,null)
+        Spacer(Modifier.width(8.dp))
+        Text("Actualización disponible · $version")
+    }
+}
+
+@Composable private fun OpenfyTopBar(title: String,back: (() -> Unit)?,showCompactTitle: Boolean,settings: ()->Unit) {
+    val detailBar=if(back==null) Modifier else {
+        val background=animateColorAsState(
+            targetValue=Ink.copy(alpha=if(showCompactTitle) 1f else 0f),
+            animationSpec=tween(150),label="detail toolbar background"
+        )
+        Modifier.drawBehind { drawRect(background.value) }
+    }
+    val height=if(back==null) Modifier else Modifier.height(56.dp)
+    Row(
+        Modifier.fillMaxWidth().then(detailBar).statusBarsPadding().then(height)
+            .padding(start=if(back==null) Gutter else 12.dp,end=12.dp),
+        verticalAlignment=Alignment.CenterVertically
+    ) {
+        if(back==null) {
+            Text(title,Modifier.weight(1f),style=MaterialTheme.typography.headlineMedium,
+                maxLines=1,overflow=TextOverflow.Ellipsis)
+        } else {
+            ActionIcon(Icons.Default.ArrowBack,"Volver",tint=Color.White,action=back)
+            Box(Modifier.weight(1f),contentAlignment=Alignment.CenterStart) {
+                androidx.compose.animation.AnimatedVisibility(visible=showCompactTitle,enter=fadeIn(tween(150)),exit=fadeOut(tween(150))) {
+                    Text(title,color=TextColor,maxLines=1,overflow=TextOverflow.Ellipsis,
+                        style=MaterialTheme.typography.titleMedium.copy(fontSize=18.sp,fontWeight=FontWeight.Medium))
+                }
+            }
+        }
+        ActionIcon(Icons.Default.Settings,"Ajustes",tint=if(back==null) TextColor else Color.White,action=settings)
     }
 }
 
 @Composable private fun OpenfyBottomBar(tab: Int,selectTab: (Int)->Unit) {
-    NavigationBar(containerColor=Ink,tonalElevation=0.dp) {
-        listOf("Inicio" to Icons.Default.Home,"Buscar" to Icons.Default.Search,"Biblioteca" to Icons.Default.LibraryMusic,"Descargas" to Icons.Default.Download).forEachIndexed { index,(label,icon) ->
-            NavigationBarItem(selected=tab==index,onClick={ selectTab(index) },icon={ Icon(icon,label) },
-                label={ Text(label,style=MaterialTheme.typography.labelSmall) },
-                colors=NavigationBarItemDefaults.colors(selectedIconColor=Green,selectedTextColor=Green,indicatorColor=Surface,unselectedIconColor=Muted,unselectedTextColor=Muted))
+    val destinations=listOf(
+        "Inicio" to Icons.Default.Home,
+        "Buscar" to Icons.Default.Search,
+        "Biblioteca" to Icons.Default.LibraryMusic,
+        "Descargas" to Icons.Default.Download
+    )
+    Row(Modifier.fillMaxWidth().background(Ink).selectableGroup()) {
+        destinations.forEachIndexed { index,(label,icon) ->
+            val selected=tab==index
+            val tint=if(selected) TextColor else Muted
+            Column(
+                Modifier.weight(1f).heightIn(min=64.dp).selectable(selected=selected,role=Role.Tab,
+                    onClick={ selectTab(index) }).padding(vertical=6.dp),
+                horizontalAlignment=Alignment.CenterHorizontally,
+                verticalArrangement=Arrangement.spacedBy(2.dp,Alignment.CenterVertically)
+            ) {
+                val indicator=if(selected) Modifier.background(Raised,CircleShape) else Modifier
+                Box(Modifier.size(width=48.dp,height=30.dp).then(indicator),contentAlignment=Alignment.Center) {
+                    Icon(icon,contentDescription=null,modifier=Modifier.size(24.dp),tint=tint)
+                }
+                Text(label,color=tint,style=MaterialTheme.typography.labelSmall,maxLines=1,
+                    overflow=TextOverflow.Ellipsis)
+            }
         }
     }
 }

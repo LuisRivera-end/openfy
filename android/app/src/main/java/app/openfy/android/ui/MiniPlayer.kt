@@ -41,11 +41,11 @@ internal fun MiniPlayer(song: Song, state: PlayerState, toggle: () -> Unit, next
     val surface by animateColorAsState(Color(CoverPalette.surface(dominant)),
         if (reduced) snap() else tween(300), label = "miniplayer cover tint")
     val size = 44.dp
-    Box(Modifier.padding(horizontal = 8.dp).fillMaxWidth().height(56.dp)
+    Box(Modifier.padding(horizontal = 8.dp).fillMaxWidth().heightIn(min = 56.dp)
         .clip(RoundedCornerShape(Radii.card)).background(surface)
         .semantics { contentDescription = "Abrir reproductor" }.clickable(role = Role.Button, onClick = expand)
-        .playerSwipe(down = false, onSwipe = expand)) {
-        Row(Modifier.fillMaxSize().padding(start = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        .playerSwipe(down = false, onSwipe = expand), contentAlignment = Alignment.CenterStart) {
+        Row(Modifier.fillMaxWidth().padding(start = 6.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Cover(song.artwork, Modifier.size(size).clip(RoundedCornerShape(Radii.tile)), size)
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White,

@@ -138,6 +138,7 @@ private fun HomeSuggestions(
     play: (Song) -> Unit,
     onSongActions: (Song) -> Unit,
 ) {
+    val coldLoading = loading && songs.isEmpty()
     Column(Modifier.padding(top = if (followsQuickAccess) SectionGap else 8.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Gutter).heightIn(min = 48.dp),
@@ -145,6 +146,7 @@ private fun HomeSuggestions(
         ) {
             HomeHeading("Sugerencias para ti", Modifier.weight(1f))
             when {
+                coldLoading -> Unit
                 loading -> Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(
                         Modifier.size(20.dp).semantics { contentDescription = "Actualizando sugerencias" },
@@ -155,19 +157,15 @@ private fun HomeSuggestions(
                 else -> ActionIcon(Icons.Default.Refresh, "Actualizar sugerencias", action = refresh)
             }
         }
-        if (songs.isNotEmpty() || loading) {
+        if (songs.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
             HomeRail {
-                if (songs.isNotEmpty()) {
-                    items(songs, key = { it.id }, contentType = { "recommendation" }) { song ->
-                        HomeSuggestionCard(song, song.id == currentId, play = { play(song) }, more = { onSongActions(song) })
-                    }
-                } else {
-                    items(3, key = { "placeholder:$it" }, contentType = { "recommendation-placeholder" }) {
-                        HomeSuggestionPlaceholder()
-                    }
+                items(songs, key = { it.id }, contentType = { "recommendation" }) { song ->
+                    HomeSuggestionCard(song, song.id == currentId, play = { play(song) }, more = { onSongActions(song) })
                 }
             }
+        } else if (coldLoading) {
+            HomeSuggestionsLoading()
         }
     }
 }

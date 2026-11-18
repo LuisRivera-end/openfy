@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,7 +26,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -40,7 +43,7 @@ private val quickTileSize = 56.dp
 private val featureWidth = 260.dp
 private val featureHeight = 325.dp
 private val collectionSize = 156.dp
-private val featureArtistColor = Color(0xffd4d4d8)
+private val secondaryTextColor = Color(0xffd4d4d8)
 
 @Composable
 internal fun HomeRail(content: LazyListScope.() -> Unit) {
@@ -89,8 +92,16 @@ internal fun HomeQuickAccess(tiles: List<RecentContext>, open: (RecentContext) -
 }
 
 @Composable
-internal fun HomeSuggestionPlaceholder() {
-    Box(Modifier.size(featureWidth, featureHeight).clip(RoundedCornerShape(Radii.feature)).background(Raised))
+internal fun HomeSuggestionsLoading() {
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).padding(horizontal = Gutter)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        Text("Buscando sugerencias…", color = secondaryTextColor, style = MaterialTheme.typography.bodyMedium)
+    }
 }
 
 @Composable
@@ -132,7 +143,7 @@ internal fun HomeSuggestionCard(song: Song, current: Boolean, play: () -> Unit, 
         ) {
             Text(song.title, color = TextColor, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(song.artist, color = featureArtistColor, style = MaterialTheme.typography.bodySmall,
+            Text(song.artist, color = secondaryTextColor, style = MaterialTheme.typography.bodySmall,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }

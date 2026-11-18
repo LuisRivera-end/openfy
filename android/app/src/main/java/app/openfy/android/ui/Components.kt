@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -129,6 +130,13 @@ internal fun LazyListScope.skeletons(keyPrefix: String = "loading") {
     AlertDialog(onDismissRequest=dismiss,title={ Text(title) },text={ Text(body) },
         confirmButton={ TextButton(onClick=confirm) { Text("Eliminar") } },dismissButton={ TextButton(onClick=dismiss) { Text("Cancelar") } })
 }
+
+private val PlayCountEndPadding=4.dp
+
+@Composable internal fun PlayCountHeading() {
+    Text("Reprod.",Modifier.padding(end=PlayCountEndPadding),color=Muted,style=MaterialTheme.typography.labelSmall)
+}
+
 @Composable internal fun SongRow(
     song: Song,
     current: String?,
@@ -187,7 +195,7 @@ internal fun LazyListScope.skeletons(keyPrefix: String = "loading") {
         if(plays!=null) {
             Text(
                 "$plays",
-                Modifier.width(48.dp).padding(end=4.dp).clearAndSetSemantics {
+                Modifier.width(48.dp).padding(end=PlayCountEndPadding).clearAndSetSemantics {
                     contentDescription=if(plays==1) "1 reproducción" else "$plays reproducciones"
                 },
                 textAlign=TextAlign.End,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1
@@ -278,9 +286,12 @@ internal val FavoriteArtworkColor=Color(0xff1c3528)
 ) {
     val fieldStyle=MaterialTheme.typography.bodyLarge.copy(color=TextColor,fontSize=16.sp)
     val keyboard=LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
+    val focusBorder=if(focused) Modifier.border(2.dp,Green,CircleShape) else Modifier
     BasicTextField(
         value=query,onValueChange=onQuery,
-        modifier=modifier.heightIn(min=height).clip(CircleShape).background(Raised),
+        modifier=modifier.heightIn(min=height).clip(CircleShape).background(Raised).then(focusBorder)
+            .onFocusChanged { focused=it.isFocused }.semantics { contentDescription=placeholder },
         textStyle=fieldStyle,singleLine=true,cursorBrush=SolidColor(Green),
         keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Search),
         keyboardActions=KeyboardActions(onSearch={ keyboard?.hide() }),

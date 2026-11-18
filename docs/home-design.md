@@ -35,3 +35,14 @@ El resto del inicio muestra lanzamientos del año, «Escuchado recientemente» y
 Las pruebas de `home.spec.ts` cubren una colección de YouTube sin archivos locales, reproducción y cola, navegación a playlists, teclado, desplazamiento horizontal, caché, fallos del proveedor y estado vacío. Se ejecutan con Chromium y WebKit móvil. Las pruebas de telemetría comprueban escucha parcial, deduplicación, límites y archivos eliminados.
 
 La revisión nativa usa `--visual-check <directorio> --visual-home-only` con datos y estado aislados. Genera capturas a 1360, 960 y 780 px y comprueba conservación de foco y desplazamiento tras actualizar el historial. La biblioteca de revisión debe estar poblada. Las capturas no modifican la biblioteca habitual.
+
+## Android
+
+Desde el 17 de noviembre de 2026, el inicio nativo de Android sigue esta jerarquía y añade arriba un acceso rápido al estilo de Spotify. Es exclusivo de Android: Windows y web no lo tienen.
+
+- **Saludo:** «Buenos días», «Buenas tardes» o «Buenas noches» según la hora de America/Mexico_City, como título de la barra superior.
+- **Acceso rápido:** dos columnas con hasta ocho mosaicos de 56 dp, sin duplicados. Muestra «Tus favoritas» (corazón verde sobre `#1C3528`), después los contextos recientes (playlist, álbum o artista) y por último las playlists. Se oculta si queda con menos de dos mosaicos.
+- **Sugerencias para ti:** tarjetas de 260 × 325 dp con la portada completa y una franja de 65 dp. La franja usa el color dominante mezclado al 32 % sobre `#09090B`, oscurecido hasta lograr contraste AA, con el título en `#F4F4F5` y el artista en `#D4D4D8`. Un botón actualiza la selección. Sin caché se muestra «Buscando sugerencias…»; con caché se conservan las tarjetas mientras se actualizan.
+- Le siguen «Lanzamientos de [año]», «Escuchado recientemente» y «Tus favoritas y playlists», con portadas de 156 dp. Los artistas son circulares.
+- **Datos:** el proveedor Android `recommendations` filtra los lanzamientos del año en curso antes de limitar a doce. El ViewModel siembra con hasta tres artistas distintos y excluye biblioteca e historial. La selección se guarda una hora en DataStore.
+- Las métricas, los períodos y el ranking están en «Más reproducidas».

@@ -101,6 +101,36 @@ class DesignQaTest {
         measure("album queue, expanded player, motion off",album[2],album)
     }
 
+    /** Diagnostic: does the on-device Apple Music resolver find motion video for real albums? */
+    @Test fun motionResolves() {
+        assumeTrue(args.getString("designMotionCheck")=="true")
+        for((artist,album) in listOf("Bad Bunny" to "Un Verano Sin Ti","Bad Bunny" to "DeBÍ TiRAR MáS FOToS","Daft Punk" to "Random Access Memories")) {
+            val result=runCatching { runBlocking { app.motion.resolve(artist,album,true) } }
+            android.util.Log.i("OpenfyQA","motion $artist / $album: ${result.fold({ "video=${it.video?.let { v -> "${v.width}x${v.height}" }} retryAt=${it.retryAt}" },{ "error=${it::class.simpleName}: ${it.message?.take(120)}" })}")
+        }
+    }
+
+    /** Diagnostic: the album header must show moving motion video, not the still cover. */
+    @Test fun motionPlays() {
+        assumeTrue(args.getString("designMotionPlays")=="true")
+        app.qaUnmetered=true
+        val song=runBlocking { app.database.library().songs() }.firstOrNull { it.album.equals("Un Verano Sin Ti",ignoreCase=true) && it.albumId!=null }
+        assumeTrue(song!=null)
+        main { model.openRemote("album",song!!.albumId!!,song.album) }; waitDetail(); settle(35000)
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        fun header(): IntArray = automation.takeScreenshot().let { shot ->
+            val w=shot.width; val top=(shot.height*0.08).toInt(); val h=(shot.height*0.22).toInt()
+            IntArray(w*h).also { shot.getPixels(it,0,w,0,top,w,h); shot.recycle() }
+        }
+        fun changedPixels(): Int { val first=header(); Thread.sleep(700); val second=header(); return first.indices.count { first[it]!=second[it] } }
+        var changed=changedPixels()
+        // A decoder fallback to a smaller rendition may still be starting; measure once more.
+        if(changed==0) { settle(25000); changed=changedPixels() }
+        val directory=File(compose.activity.getExternalFilesDir(null),"qa/motion").apply { mkdirs() }
+        automation.takeScreenshot().let { shot -> File(directory,"album-motion.png").outputStream().use { shot.compress(Bitmap.CompressFormat.PNG,100,it) }; shot.recycle() }
+        android.util.Log.i("OpenfyQA","motion header pixels changed: $changed")
+    }
+
     @Test fun captureScreens() {
         val round=args.getString("designRound")
         assumeTrue(round!=null)
@@ -113,7 +143,8 @@ class DesignQaTest {
                 File(directory,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) }; bitmap.recycle()
             }
         }
-        fun scroll() = compose.onRoot().performTouchInput { swipeUp(startY=bottom*0.8f,endY=bottom*0.25f,durationMillis=400) }
+        // API 29 rejects injected gestures that start over the navigation area; stay mid-screen.
+        fun scroll() { runCatching { compose.onRoot().performTouchInput { swipeUp(startY=bottom*0.62f,endY=bottom*0.18f,durationMillis=400) } } }
         val songs=runBlocking { app.database.library().songs() }
         val favorites=songs.filter { it.favorite && it.source=="youtube" }
 
@@ -146,10 +177,12 @@ class DesignQaTest {
             main { model.selectTab(0) }
             play(song,favorites.filter { it.album==song.album }.ifEmpty { listOf(song) })
             compose.waitUntil(20000) { compose.onAllNodesWithContentDescription("Abrir reproductor").fetchSemanticsNodes().isNotEmpty() }
-            settle(4000); capture("12-home-miniplayer")
+            // The first YouTube resolution after a cold start can take ~20 s on the emulator; capture it playing.
+            runCatching { compose.waitUntil(60000) { model.player.value.playing } }
+            settle(3000); capture("12-home-miniplayer")
             compose.onNodeWithContentDescription("Abrir reproductor").performClick()
-            settle(10000); capture("13-player-cover")
-            compose.onNodeWithText("Letras").performClick(); settle(5000); capture("14-player-lyrics")
+            settle(8000); capture("13-player-cover")
+            compose.onNodeWithText("Letras").performClick(); settle(9000); capture("14-player-lyrics")
             compose.onNodeWithText("Cola").performClick(); settle(2000); capture("15-player-queue")
             compose.onNodeWithText("Portada").performClick()
             compose.onNodeWithContentDescription("Cerrar reproductor").performClick(); settle(1000)

@@ -48,10 +48,6 @@ internal fun LazyListScope.libraryItems(vm: OpenfyViewModel,librarySongs: List<S
         }
     }
     val isFiltered=query.isNotEmpty() || filtersActive
-    if(mode=="Canciones") {
-        collectionFilterItem("library:filter",query,onQuery,onFilters,filtersActive,
-            if(isFiltered) tracks.size else null,placeholder="Buscar en tu biblioteca")
-    }
     if(mode=="Playlists" || mode=="Canciones") {
         gutterItem("library:favorites") {
             LibraryCollectionRow("Tus favoritas","Playlist",{ vm.openLocal("favorites","favorites","Tus favoritas",emptyList()) }) {
@@ -63,6 +59,10 @@ internal fun LazyListScope.libraryItems(vm: OpenfyViewModel,librarySongs: List<S
                 ArtworkMosaic(rankingArtwork,Modifier.size(44.dp).clip(RoundedCornerShape(Radii.row)),44.dp)
             }
         }
+    }
+    if(mode=="Canciones") {
+        collectionFilterItem("library:filter",query,onQuery,onFilters,filtersActive,
+            if(isFiltered) tracks.size else null,placeholder="Buscar en tu biblioteca")
     }
     if(mode=="Playlists") {
         gutterItems(playlists,key={ "library:playlist:${it.id}" }) { row ->

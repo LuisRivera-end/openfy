@@ -23,13 +23,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
@@ -54,9 +59,18 @@ import kotlinx.coroutines.withContext
 
 private const val FrameIntervalMs = 34L
 private const val PhoneMotion = 0.7
+private const val MaxPlayerScrim = 0.55f
+internal val PlayerSecondaryText = Color(0xffd4d4d8)
+internal val PlayerProgressTrack = Color(0xffb4b4be)
+internal val InactiveLyricsColor = Color.White.copy(alpha = 0.5f)
 
 @Composable
-internal fun AmbientBackground(source: String?, playing: Boolean, modifier: Modifier = Modifier, enabled: Boolean = true) {
+internal fun AmbientBackground(
+    source: String?,
+    playing: Boolean,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
+) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val reducedMotion = rememberReducedMotion()
@@ -121,11 +135,72 @@ internal fun AmbientBackground(source: String?, playing: Boolean, modifier: Modi
             if (previous !== current) AmbientLayers(previous, animation, fadeIn = false)
             AmbientLayers(current, animation, fadeIn = previous !== current)
         }
-        Canvas(Modifier.fillMaxSize()) {
-            val scrim = previous.scrim + (current.scrim - previous.scrim) * animation.mix
-            drawRect(Color.Black.copy(alpha = scrim))
-        }
+        Box(Modifier.fillMaxSize().ambientScrims(animation))
     }
+}
+
+private fun Modifier.ambientScrims(animation: AmbientAnimation): Modifier = drawWithCache {
+    val clear = Ink.copy(alpha = 0f)
+    val topBand = Brush.verticalGradient(0f to Ink.copy(alpha = 0.50f), 0.65f to Ink.copy(alpha = 0.45f),
+        1f to clear, endY = 190.dp.toPx())
+    val bottomBand = Brush.verticalGradient(listOf(clear, Ink.copy(alpha = 0.60f)),
+        startY = size.height - 320.dp.toPx(), endY = size.height)
+    onDrawBehind {
+        val previous = animation.previous
+        val current = animation.current
+        val mix = animation.mix
+        val mean = previous.meanLuma + (current.meanLuma - previous.meanLuma) * mix
+        val highlightExtra = 0.15f * ((mean - 0.30f) / 0.50f).coerceIn(0f, 1f)
+        val fromMean = ambientScrim(mean.toDouble()).toFloat() + highlightExtra
+        // Blend transmission so the intermediate cover stays within the endpoint contrast bounds.
+        val fromHighlights = 1f - 1f / ((1f - mix) / (1f - previous.contrastScrim) + mix / (1f - current.contrastScrim))
+        drawRect(Ink.copy(alpha = maxOf(fromMean, fromHighlights).coerceAtMost(MaxPlayerScrim)))
+        drawRect(topBand)
+        drawRect(bottomBand)
+    }
+}
+
+// A small margin covers channel rounding in translucent sRGB layers.
+private val PlayerSurfaceLumaLimit = minOf(
+    (PlayerSecondaryText.luminance() + 0.05f) / 4.5f,
+    (PlayerProgressTrack.luminance() + 0.05f) / 3f,
+    (Green.luminance() + 0.05f) / 3f
+) - 0.052f
+
+private fun supportsPlayerContrast(sample: Color, veil: Color): Boolean {
+    val background = veil.compositeOver(sample)
+    val luminance = background.luminance()
+    return luminance <= PlayerSurfaceLumaLimit &&
+        InactiveLyricsColor.compositeOver(background).luminance() + 0.05f >= 3f * (luminance + 0.05f) + 0.006f
+}
+
+// Compress only ambient highlights that would exceed the veil's opacity budget.
+private fun limitAmbientHighlight(sample: Color): Int {
+    val maxVeil = Ink.copy(alpha = MaxPlayerScrim)
+    if (supportsPlayerContrast(sample, maxVeil)) return sample.toArgb()
+    var low = 0f
+    var high = 1f
+    repeat(9) {
+        val middle = (low + high) / 2f
+        val dimmed = Ink.copy(alpha = 1f - middle).compositeOver(sample)
+        if (supportsPlayerContrast(dimmed, maxVeil)) low = middle else high = middle
+    }
+    return Ink.copy(alpha = 1f - low).compositeOver(sample).toArgb()
+}
+
+private fun contrastScrim(vararg mipLevels: IntArray): Float {
+    fun meetsContrast(alpha: Float): Boolean {
+        val veil = Ink.copy(alpha = alpha)
+        return mipLevels.all { level -> level.all { supportsPlayerContrast(Color(it), veil) } }
+    }
+    if (meetsContrast(0f)) return 0f
+    var low = 0f
+    var high = MaxPlayerScrim
+    repeat(9) {
+        val middle = (low + high) / 2f
+        if (meetsContrast(middle)) high = middle else low = middle
+    }
+    return high
 }
 
 private fun Modifier.ambientResolution(): Modifier = layout { measurable, constraints ->
@@ -175,7 +250,7 @@ private class AmbientAnimation(initial: LightTexture) {
     var elapsed = AMBIENT.fadeSeconds
 }
 
-private class LightTexture(val first: Bitmap, val second: Bitmap, val scrim: Float)
+private class LightTexture(val first: Bitmap, val second: Bitmap, val meanLuma: Float, val contrastScrim: Float)
 
 private suspend fun readAmbientArtwork(context: Context, source: String?): LightTexture? {
     val url = ArtworkUrls.sized(source, 128) ?: return null
@@ -211,13 +286,21 @@ private fun lightTexture(rgba: ByteArray): LightTexture {
         )
         android.graphics.Color.rgb((r * 255).roundToInt(), (g * 255).roundToInt(), (b * 255).roundToInt())
     }
-    return LightTexture(mipBitmap(pixels, 4), mipBitmap(pixels, 8), ambientScrim(ambientMeanLuma(rgba)).toFloat())
+    val first = mipPixels(pixels, 4)
+    val second = mipPixels(pixels, 8)
+    val size = AMBIENT.textureSize
+    return LightTexture(
+        Bitmap.createBitmap(first, size / 4, size / 4, Bitmap.Config.ARGB_8888),
+        Bitmap.createBitmap(second, size / 8, size / 8, Bitmap.Config.ARGB_8888),
+        ambientMeanLuma(rgba).toFloat(),
+        contrastScrim(first, second)
+    )
 }
 
 /** The GLSL samples mip levels 2 and 3. Box-filter those levels once per cover. */
-private fun mipBitmap(pixels: IntArray, stride: Int): Bitmap {
+private fun mipPixels(pixels: IntArray, stride: Int): IntArray {
     val width = AMBIENT.textureSize / stride
-    val result = IntArray(width * width) { index ->
+    return IntArray(width * width) { index ->
         val start = index / width * stride * AMBIENT.textureSize + index % width * stride
         var red = 0
         var green = 0
@@ -231,9 +314,8 @@ private fun mipBitmap(pixels: IntArray, stride: Int): Bitmap {
             }
         }
         val count = stride * stride
-        android.graphics.Color.rgb((red + count / 2) / count, (green + count / 2) / count, (blue + count / 2) / count)
+        limitAmbientHighlight(Color((red + count / 2) / count, (green + count / 2) / count, (blue + count / 2) / count))
     }
-    return Bitmap.createBitmap(result, width, width, Bitmap.Config.ARGB_8888)
 }
 
 @Composable

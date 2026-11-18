@@ -13,29 +13,37 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.openfy.android.data.ListeningRow
 import app.openfy.android.data.PlaylistRow
 import app.openfy.android.data.Song
+import kotlin.math.roundToInt
 
 internal fun LazyListScope.detailItems(
     vm: OpenfyViewModel,detail: DetailState,playlist: PlaylistRow?,tracks: List<Song>,
     songMap: Map<String,Song>,currentId: String?,stats: Map<String,List<ListeningRow>>,period: String,onPeriod: (String)->Unit,
     query: String,onQuery: (String)->Unit,onFilters: ()->Unit,requestNotifications: ()->Unit,
     onRename: (PlaylistRow)->Unit,onDelete: (PlaylistRow)->Unit,onSongActions: (Song)->Unit,
-    fullTracks: List<Song>,filtersActive: Boolean,onClearFilters: ()->Unit,
+    fullTracks: List<Song>,filtersActive: Boolean,onClearFilters: ()->Unit,onHeroTitleMeasured: (Int)->Unit,
+    heroTopPadding: Dp,updateNotice: (@Composable ()->Unit)?,
     albumYear: Int? = null,albumArtist: String? = null
 ) {
     val route="detail:${detail.kind}:${detail.id}"
@@ -65,14 +73,32 @@ internal fun LazyListScope.detailItems(
         else -> "Playlist · $trackCount"
     }
     item(key="$route:header") {
+        val rankingArtwork=if(isTop) fullTracks.take(4).mapNotNull { it.artwork } else emptyList()
+        val tint=if(isFavorites) FavoriteArtworkColor else artworkTint(if(isTop) rankingArtwork.firstOrNull() else artwork)
+        val measurement=remember { HeroTitleMeasurement() }
+        val titleModifier=Modifier.onGloballyPositioned {
+            measurement.title=it
+            measurement.bottomPx()?.let(onHeroTitleMeasured)
+        }
         val actions: @Composable ()->Unit = {
             CollectionActions(vm,playlist,tracks,fullTracks,songMap,requestNotifications,onRename,onDelete)
         }
-        if(isTop) {
-            RankingHeader(title,fullTracks.take(4).mapNotNull { it.artwork },period,onPeriod,listenedMs,plays,actions)
-        } else {
-            CollectionHeader(title,subtitle,artwork,isArtist,isRemoteArtist,isFavorites,isAlbum,artist,
-                description=detail.subtitle.takeIf { isArtist && !isRemoteArtist }.orEmpty(),actions=actions)
+        Box(Modifier.fillMaxWidth().collectionBackdrop(tint,heroTopPadding).onGloballyPositioned {
+            measurement.hero=it
+            measurement.bottomPx()?.let(onHeroTitleMeasured)
+        }) {
+            Column(Modifier.fillMaxWidth().padding(top=heroTopPadding)) {
+                if(updateNotice!=null) {
+                    Box(Modifier.padding(horizontal=Gutter)) { updateNotice() }
+                    Spacer(Modifier.height(6.dp))
+                }
+                if(isTop) {
+                    RankingHeader(title,rankingArtwork,period,onPeriod,listenedMs,plays,titleModifier,actions)
+                } else {
+                    CollectionHeader(title,subtitle,artwork,isArtist,isFavorites,isAlbum,artist,titleModifier,
+                        description=detail.subtitle.takeIf { isArtist && !isRemoteArtist }.orEmpty(),actions=actions)
+                }
+            }
         }
     }
 
@@ -97,6 +123,11 @@ internal fun LazyListScope.detailItems(
         }
     }
 
+    if(isTop && tracks.isNotEmpty()) {
+        gutterItem("$route:plays-heading") {
+            Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.CenterEnd) { PlayCountHeading() }
+        }
+    }
     val trackNumbers=if(isAlbum) fullTracks.mapIndexed { index,song -> song.id to (index+1) }.toMap() else emptyMap()
     songItems(tracks,songMap,currentId,{ vm.play(it,tracks) },onSongActions,if(isTop) stats else emptyMap(),
         keyPrefix="$route:song",trackNumbers=trackNumbers,showFavorite=!isFavorites)
@@ -125,16 +156,26 @@ internal fun LazyListScope.detailItems(
     }
 }
 
+private class HeroTitleMeasurement {
+    var hero: LayoutCoordinates? = null
+    var title: LayoutCoordinates? = null
+
+    fun bottomPx(): Int? {
+        val container=hero?.takeIf { it.isAttached } ?: return null
+        val heading=title?.takeIf { it.isAttached } ?: return null
+        return container.localPositionOf(heading,Offset(0f,heading.size.height.toFloat())).y.roundToInt()
+    }
+}
+
 @Composable private fun CollectionHeader(
-    title: String,subtitle: String,artwork: String?,isArtist: Boolean,isRemoteArtist: Boolean,isFavorites: Boolean,
-    isAlbum: Boolean,albumArtist: String?,description: String,actions: @Composable ()->Unit
+    title: String,subtitle: String,artwork: String?,isArtist: Boolean,isFavorites: Boolean,
+    isAlbum: Boolean,albumArtist: String?,titleModifier: Modifier,description: String,actions: @Composable ()->Unit
 ) {
-    val tint=if(isFavorites) FavoriteArtworkColor else artworkTint(artwork)
     Column(
-        Modifier.fillMaxWidth().collectionBackdrop(tint).padding(horizontal=Gutter).padding(top=16.dp,bottom=8.dp),
+        Modifier.fillMaxWidth().padding(horizontal=Gutter).padding(top=16.dp,bottom=8.dp),
         horizontalAlignment=Alignment.CenterHorizontally
     ) {
-        val size=if(isRemoteArtist) 152.dp else 224.dp
+        val size=if(isArtist) 152.dp else 176.dp
         val shape=if(isArtist) CircleShape else RoundedCornerShape(Radii.feature)
         val artworkModifier=Modifier.size(size).shadow(12.dp,shape)
         when {
@@ -144,7 +185,7 @@ internal fun LazyListScope.detailItems(
             else -> Cover(artwork,artworkModifier,1024)
         }
         Text(
-            title,Modifier.padding(top=16.dp),color=TextColor,textAlign=TextAlign.Center,maxLines=2,
+            title,Modifier.padding(top=16.dp).then(titleModifier),color=TextColor,textAlign=TextAlign.Center,maxLines=2,
             overflow=TextOverflow.Ellipsis,style=collectionTitleStyle()
         )
         Text(
@@ -162,13 +203,13 @@ internal fun LazyListScope.detailItems(
 
 @Composable private fun RankingHeader(
     title: String,artwork: List<String>,period: String,onPeriod: (String)->Unit,listenedMs: Long,plays: Long,
-    actions: @Composable ()->Unit
+    titleModifier: Modifier,actions: @Composable ()->Unit
 ) {
-    val tint=artworkTint(artwork.firstOrNull())
-    Column(Modifier.fillMaxWidth().collectionBackdrop(tint).padding(horizontal=Gutter).padding(top=12.dp,bottom=8.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal=Gutter).padding(top=12.dp,bottom=8.dp)) {
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,
             horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-            Text(title,Modifier.weight(1f),color=Color.White,style=collectionTitleStyle(),maxLines=2,overflow=TextOverflow.Ellipsis)
+            Text(title,Modifier.weight(1f).then(titleModifier),color=Color.White,style=collectionTitleStyle(),
+                maxLines=2,overflow=TextOverflow.Ellipsis)
             if(artwork.isNotEmpty()) ArtworkMosaic(artwork,Modifier.size(64.dp).clip(RoundedCornerShape(Radii.card)),64.dp)
         }
         Spacer(Modifier.height(6.dp))
@@ -190,13 +231,23 @@ internal fun LazyListScope.detailItems(
     return dominant?.let { Color(it) } ?: Raised
 }
 
-private fun Modifier.collectionBackdrop(tint: Color) = drawBehind {
-    drawRect(Brush.verticalGradient(
-        0f to tint.copy(alpha=0.55f).compositeOver(Ink),
+private fun Modifier.collectionBackdrop(tint: Color,heroTopPadding: Dp) = drawWithCache {
+    val startColor=tint.copy(alpha=0.55f).compositeOver(Ink)
+    val backdrop=Brush.verticalGradient(
+        0f to startColor,
         0.45f to tint.copy(alpha=0.18f).compositeOver(Ink),
         1f to Ink,
-        endY=360.dp.toPx().coerceAtMost(size.height)
-    ))
+        endY=(heroTopPadding+360.dp).toPx().coerceAtMost(size.height)
+    )
+    val barHeight=heroTopPadding.toPx().coerceAtMost(size.height)
+    val whiteContrast=1.05f/(startColor.luminance()+0.05f)
+    val scrim=if(barHeight>0f && whiteContrast<4.5f) {
+        Brush.verticalGradient(listOf(Ink.copy(alpha=0.35f),Ink.copy(alpha=0f)),endY=barHeight)
+    } else null
+    onDrawBehind {
+        drawRect(backdrop)
+        if(scrim!=null) drawRect(scrim,size=Size(size.width,barHeight))
+    }
 }
 
 @Composable private fun collectionTitleStyle() = MaterialTheme.typography.headlineMedium.copy(
@@ -207,9 +258,15 @@ private fun Modifier.collectionBackdrop(tint: Color) = drawBehind {
     vm: OpenfyViewModel,playlist: PlaylistRow?,tracks: List<Song>,fullTracks: List<Song>,songMap: Map<String,Song>,
     requestNotifications: ()->Unit,onRename: (PlaylistRow)->Unit,onDelete: (PlaylistRow)->Unit
 ) {
-    val downloadable=remember(fullTracks,songMap) {
-        fullTracks.distinctBy { it.id }.filter { song ->
-            song.source=="youtube" && !(songMap[song.id]?.offlineReady ?: song.offlineReady)
+    fun isDownloadable(song: Song) = song.source=="youtube" && !(songMap[song.id]?.offlineReady ?: song.offlineReady)
+
+    val downloadable=remember(tracks,songMap) { tracks.distinctBy { it.id }.filter(::isDownloadable) }
+    var pendingDownload by remember { mutableStateOf<List<Song>?>(null) }
+    fun downloadSongs(songs: List<Song>) {
+        val remaining=songs.filter(::isDownloadable)
+        if(remaining.isNotEmpty()) {
+            requestNotifications()
+            remaining.forEach { vm.download(it) }
         }
     }
     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
@@ -218,13 +275,16 @@ private fun Modifier.collectionBackdrop(tint: Color) = drawBehind {
             enabled=tracks.isNotEmpty(),modifier=Modifier.size(48.dp)
         ) { Icon(Icons.Default.Shuffle,"Aleatorio",Modifier.size(24.dp)) }
         IconButton(
-            onClick={ requestNotifications(); downloadable.forEach { vm.download(it) } },
+            onClick={
+                if(downloadable.size>10) pendingDownload=downloadable
+                else downloadSongs(downloadable)
+            },
             enabled=downloadable.isNotEmpty(),modifier=Modifier.size(48.dp)
         ) { Icon(Icons.Default.Download,"Descargar") }
         if(playlist!=null) {
             PlaylistActions(playlist,{ onRename(playlist) },{ onDelete(playlist) }) {
                 val keep=!playlist.keepDownloaded
-                if(keep && downloadable.isNotEmpty()) requestNotifications()
+                if(keep && fullTracks.any(::isDownloadable)) requestNotifications()
                 vm.run {
                     vm.app.repository.savePlaylist(playlist.copy(keepDownloaded=keep))
                     if(keep) vm.app.downloads.syncCollections()
@@ -238,6 +298,16 @@ private fun Modifier.collectionBackdrop(tint: Color) = drawBehind {
             modifier=Modifier.size(56.dp).background(if(tracks.isEmpty()) Raised else Green,CircleShape),
             colors=IconButtonDefaults.iconButtonColors(contentColor=Color.Black,disabledContentColor=Muted)
         ) { Icon(Icons.Default.PlayArrow,"Reproducir",Modifier.size(32.dp)) }
+    }
+    pendingDownload?.let { songs ->
+        AlertDialog(
+            onDismissRequest={ pendingDownload=null },
+            title={ Text("Descargar ${songCount(songs.size)}") },
+            confirmButton={
+                TextButton(onClick={ pendingDownload=null; downloadSongs(songs) }) { Text("Descargar") }
+            },
+            dismissButton={ TextButton(onClick={ pendingDownload=null }) { Text("Cancelar") } }
+        )
     }
 }
 
