@@ -52,3 +52,30 @@ Los ensayos de sincronización usan exclusivamente la fixture aislada `scripts/a
 - TalkBack físico, Atrás predictivo mediante gestos y disponibilidad real de portadas animadas para distintos álbumes.
 
 Consulta [arquitectura y distribución](android-native.md) para reproducir compilaciones y preparar las siguientes releases. Estas pruebas no acreditan que YouTube mantenga su API privada o la disponibilidad futura de una canción.
+
+## Rediseño visual (17 de noviembre de 2026, noche)
+
+Rediseño de la interfaz Android y portadas animadas, descrito en [Openfy nativo para Android](android-native.md#interfaz). Commits locales `04640fa`, `9bb0f80`, `bc236c3` y `b851709` sobre la base `e411245`, sin publicar.
+
+APK de producción: `output/android/0.5.3-1794978869-release-a4deb691/Openfy-0.5.3-1794978869-release.apk`.
+
+- Versión **0.5.3+1794978869**, `app.openfy.android`, Android 10+, ARM64 y x86_64; **8 053 225 bytes**.
+- SHA-256 `e86b953a22378b6f6ba60811b47b4f6c3127ee3c9e4cf52cbfeac8fd2ad2cef8`.
+- Firma APK v2 verificada, con el mismo certificado `6f57ea7b…69da`, así que se instala sobre la versión anterior conservando datos.
+- Empaquetado con `-SkipTests` porque las comprobaciones se ejecutaron justo antes con `test-android.ps1`.
+
+| Área | Evidencia y resultado |
+|---|---|
+| JVM | 20 pruebas correctas: contratos (escucha, letras, portadas, iluminación), modelo del inicio, lector del export de Spotify, actualizaciones y búsqueda. |
+| Instrumentadas API 37 | `test-android.ps1 -Serial emulator-5554`: 14 pruebas correctas, incluidas `UiSmokeTest`, `NativeSmokeTest` y `ProviderThreadingTest`. Las de sincronización, GitHub y diseño se omiten sin sus argumentos. |
+| Lint | 0 errores, 37 advertencias (antes 30). |
+| Vitest | 250 casos, incluidos los contratos nuevos de portadas y la coincidencia de Spotify. `motion-art.test.ts` falló de forma intermitente una vez de cuatro con «Motion storage», un error de escritura de archivos temporales del servidor; las otras tres ejecuciones pasaron. El código de ese test y de la caché del servidor no cambió. |
+| Revisión visual | `DesignQaTest` sobre una copia consistente de la biblioteca real (560 canciones, 502 favoritas, una playlist, historial real), servida por `scripts/android-design-host.ts`. Cinco rondas de capturas en API 37 y dos en API 29 (respaldo de iluminación sin AGSL), en `output/android-design/`. La copia se borró al terminar. |
+| Portadas animadas | `music.apple.com/us/browse` redirige a `/us/new`; con las redirecciones Apple-only, «Un Verano Sin Ti» resuelve 1080 × 1080. `c2.goldfish.h264.decoder` falla con los streams de Apple; el respaldo a `c2.android.avc.decoder` reproduce el vídeo y la cabecera del álbum cambió 121 679 píxeles en 0,7 s. |
+| Arranque | `DesignQaTest#playbackLatency`: la primera canción tras un arranque en frío tarda unos 22 s en el emulador; las siguientes, entre 1,5 y 3 s. El tiempo está en la primera resolución de YouTube; evaluar antes el paquete del proveedor no lo redujo de forma apreciable. |
+
+Pendiente de aceptación:
+
+- **Teléfono físico:** portadas animadas con el decodificador por hardware, latencia de la primera canción, contraste del reproductor con portadas claras y gestos del minirreproductor.
+- **Spotify:** importación con un export real de la cuenta.
+- **Pantalla de bloqueo:** prototipo del fondo animado propuesto en [Pantalla de bloqueo animada](android-lock-screen.md).
