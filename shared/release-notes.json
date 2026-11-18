@@ -1,0 +1,105 @@
+{
+  "releases": [
+    {
+      "version": "0.5.3",
+      "date": "2026-11-17",
+      "items": [
+        { "type": "fixed", "text": "En Android, buscar canciones ya no cierra la aplicación al aparecer los resultados." }
+      ]
+    },
+    {
+      "version": "0.5.2",
+      "date": "2026-11-17",
+      "items": [
+        { "type": "fixed", "text": "En Android, buscar canciones, artistas o álbumes ya no bloquea la aplicación ni muestra el aviso de que la aplicación no responde." }
+      ]
+    },
+    {
+      "version": "0.5.1",
+      "date": "2026-11-16",
+      "items": [
+        { "type": "improved", "text": "En Big Picture, las canciones sin letra sincronizada ya no muestran un bloque de texto fijo: la portada, el título y los artistas se deslizan al centro, sobre la barra de reproducción." }
+      ]
+    },
+    {
+      "version": "0.5.0",
+      "date": "2026-11-16",
+      "summary": "Las portadas cobran vida en el reproductor ampliado del escritorio.",
+      "items": [
+        { "type": "improved", "text": "En Big Picture, las letras se desvanecen con desenfoque por arriba. Al ocultarse los controles, la portada y el contenido crecen suavemente un 20 %." },
+        { "type": "improved", "text": "Busca directamente desde el campo superior, con Todo, Canciones, Artistas y Álbumes. Los resultados de cada categoría continúan al desplazarte, sin pulsar cargar más." },
+        { "type": "new", "text": "En Windows y en la web de escritorio, el reproductor ampliado muestra la portada animada del álbum cuando existe. En el iPhone no se descarga ni se muestra." },
+        { "type": "new", "text": "La música de tu biblioteca y la que descargas al PC guarda también su portada animada, para verla sin conexión." },
+        { "type": "new", "text": "Ajustes incluye «Portadas animadas» para desactivarlas." },
+        { "type": "fixed", "text": "En Windows, las portadas animadas conservan las esquinas redondeadas, también al pausar y cambiar el tamaño de la ventana." },
+        { "type": "fixed", "text": "La búsqueda de portadas animadas también admite nombres de álbumes y artistas formados por símbolos, como «?» y «¥$»." },
+        { "type": "fixed", "text": "Si iTunes no encuentra la portada animada, Openfy busca también en Apple Music. Los álbumes descargados que antes quedaron sin vídeo se revisan automáticamente, sin repetir los vídeos existentes." },
+        { "type": "fixed", "text": "Una búsqueda sin coincidencia o un fallo temporal ya no se guardan como si el álbum no tuviera portada animada. Los reintentos respetan su espera y pueden recuperar el vídeo sin cambiar de álbum." }
+      ]
+    },
+    {
+      "version": "0.4.2",
+      "date": "2026-11-15",
+      "items": [
+        { "type": "improved", "text": "En Windows, volver entre Tu biblioteca y Tus favoritas reutiliza las canciones y las vistas para que el cambio sea más rápido." },
+        { "type": "improved", "text": "Las secciones muestran una vista de carga mientras se preparan. Los álbumes y artistas de bibliotecas grandes cargan sus tarjetas conforme aparecen en pantalla." },
+        { "type": "improved", "text": "La búsqueda muestra primero las canciones disponibles mientras termina de cargar artistas y álbumes." },
+        { "type": "fixed", "text": "Cambiar de sección o de filtros descarta las respuestas anteriores para que no sustituyan el contenido que acabas de abrir." }
+      ]
+    },
+    {
+      "version": "0.4.1",
+      "date": "2026-11-15",
+      "items": [
+        { "type": "improved", "text": "En el iPhone, el fondo del reproductor ampliado se mueve a 30 fotogramas por segundo, más despacio y con menos píxeles: se ve igual de fluido y el teléfono se calienta menos." },
+        { "type": "fixed", "text": "En el iPhone, la pantalla de bloqueo y el Centro de control vuelven a mostrar canción anterior y siguiente en lugar de los saltos de 10 segundos." },
+        { "type": "fixed", "text": "Con la letra abierta en el iPhone, «Seguir reproducción» y la fuente de la letra ya no se montan sobre los controles." },
+        { "type": "fixed", "text": "El corazón de una canción guardada se ve relleno en la PWA, como en la app de Windows." }
+      ]
+    },
+    {
+      "version": "0.4.0",
+      "date": "2026-11-15",
+      "summary": "La PWA se siente como una app del iPhone: hojas que suben desde abajo, un reproductor con la portada primero y una barra de pestañas flotante.",
+      "items": [
+        { "type": "new", "text": "En Windows, Discord muestra la canción que escuchas, su portada y el progreso. Al pausar conserva la canción con «En pausa»; puedes desactivarlo en Ajustes." },
+        { "type": "new", "text": "En el iPhone, el reproductor ampliado abre con la portada grande. El botón de letra cambia a la letra y Openfy recuerda tu elección." },
+        { "type": "new", "text": "Las opciones de una canción, ordenar y los demás menús suben desde abajo; desliza hacia abajo para cerrarlos. Mantén pulsada una canción para abrir sus opciones." },
+        { "type": "new", "text": "Ir al álbum e Ir al artista en las opciones de cada canción, también desde el reproductor ampliado." },
+        { "type": "new", "text": "Tu biblioteca muestra Playlists, Tus favoritas y Más reproducidas, y permite ordenar las canciones desde el teléfono." },
+        { "type": "improved", "text": "Barra de pestañas flotante con el mini reproductor encima; al desplazarte se reduce y vuelve al subir." },
+        { "type": "improved", "text": "Las páginas de detalle tienen botón Atrás, y el gesto Atrás del iPhone cierra el reproductor ampliado." },
+        { "type": "improved", "text": "Buscar muestra primero las canciones; artistas y álbumes se recorren deslizando." },
+        { "type": "improved", "text": "Más espacio para los títulos: márgenes únicos, filas que se reproducen con un toque y carruseles de borde a borde." },
+        { "type": "fixed", "text": "El iPhone ya no amplía la pantalla al tocar un campo de texto." },
+        { "type": "fixed", "text": "La cabecera queda debajo de la isla dinámica, y la barra de estado tiene un fondo sólido en la app instalada." },
+        { "type": "fixed", "text": "El mini reproductor solo aparece cuando hay música en la cola, y Ajustes empieza por lo que más se usa." },
+        { "type": "fixed", "text": "Borrar una descarga pide confirmación, y los recuentos dicen «1 canción» en lugar de «1 canciones»." }
+      ]
+    },
+    {
+      "version": "0.3.1",
+      "date": "2026-11-15",
+      "items": [
+        { "type": "fixed", "text": "En el iPhone, la pantalla de bloqueo y el Centro de control muestran los botones de canción anterior y siguiente en lugar de los saltos de 10 segundos." },
+        { "type": "fixed", "text": "El botón Actualizar y reiniciar funciona en la PWA aunque haya música sonando o una pestaña de Safari abierta en segundo plano." }
+      ]
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-11-14",
+      "summary": "Una sola apariencia en Windows y en la PWA, una cola más flexible y actualizaciones más seguras.",
+      "items": [
+        { "type": "fixed", "text": "Las descargas antiguas completan sus letras en segundo plano y el botón Reintentar letras vuelve a consultarlas con conexión." },
+        { "type": "fixed", "text": "Las portadas con fondos negros conservan su centro al recortarse, incluso si tienen logos en las esquinas." },
+        { "type": "new", "text": "Windows y la PWA comparten una sola apariencia; el movimiento ambiental conserva su propia preferencia." },
+        { "type": "new", "text": "La cola muestra las canciones pendientes y se puede reordenar con el agarre, desde las opciones o con Alt y las flechas." },
+        { "type": "new", "text": "Buscar actualizaciones, Actualizar y reiniciar y Posponer: la actualización espera a que la app esté en reposo y guarda tu sesión." },
+        { "type": "improved", "text": "La sesión conserva por separado la selección, la posición y el orden original de la cola." },
+        { "type": "improved", "text": "Cada actualización de Windows respalda la biblioteca y vuelve a la versión anterior si algo falla." },
+        { "type": "fixed", "text": "Las ventanas mini y widget ya no se acoplan a media pantalla al arrastrarlas con el dedo." },
+        { "type": "fixed", "text": "Las ventanas mantienen su tamaño al reiniciar con escalas de Windows distintas de 100 %." }
+      ]
+    }
+  ]
+}

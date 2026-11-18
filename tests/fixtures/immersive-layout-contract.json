@@ -1,0 +1,35 @@
+{
+  "parameters": { "splitMinWidth": 900, "splitMinAspect": 1.1 },
+  "presentation": { "compactScale": 1.2, "compactMs": 320, "layoutMs": 600, "lyricsTop": 0.2, "lyricsEdge": 0.18, "sideMargin": 48, "cardWidth": 420, "cardHeight": 120, "cornerHeight": 160, "cornerMargin": 32, "cornerWidth": 0.38, "cornerMaxWidth": 640 },
+  "cards": [
+    { "viewport": [1920, 1080], "contentRight": 1840, "contentWidth": 1760, "dockTop": 950, "idle": false, "bounds": [1420, 814, 420, 120, 1] },
+    { "viewport": [1920, 1080], "contentRight": 1840, "contentWidth": 1760, "dockTop": 950, "idle": true, "bounds": [1248, 888, 640, 160, 1.3333333333] },
+    { "viewport": [1538, 750], "contentRight": 1478, "contentWidth": 1418, "dockTop": 640, "idle": true, "bounds": [921.56, 558, 584.44, 160, 1.3333333333] },
+    { "viewport": [1280, 800], "contentRight": 1220, "contentWidth": 1160, "dockTop": 690, "idle": false, "bounds": [800, 554, 420, 120, 1] },
+    { "viewport": [1280, 800], "contentRight": 1220, "contentWidth": 1160, "dockTop": 690, "idle": true, "bounds": [761.6, 608, 486.4, 160, 1.3333333333] },
+    { "viewport": [700, 900], "contentRight": 660, "contentWidth": 620, "dockTop": 800, "idle": true, "bounds": [248, 708, 420, 160, 1.3333333333] },
+    { "viewport": [400, 300], "contentRight": 380, "contentWidth": 300, "dockTop": 150, "idle": false, "bounds": [80, 68, 300, 120, 1] },
+    { "viewport": [400, 300], "contentRight": 380, "contentWidth": 300, "dockTop": 150, "idle": true, "bounds": [32, 108, 336, 160, 1.3333333333] }
+  ],
+  "lyricsCases": [
+    { "status": "synced", "pending": false, "previous": false, "lyrics": true },
+    { "status": "synced", "pending": true, "previous": false, "lyrics": true },
+    { "status": "plain", "pending": false, "previous": true, "lyrics": false },
+    { "status": "instrumental", "pending": false, "previous": true, "lyrics": false },
+    { "status": "not_found", "pending": false, "previous": true, "lyrics": false },
+    { "status": null, "pending": false, "previous": true, "lyrics": false },
+    { "status": null, "pending": true, "previous": true, "lyrics": true },
+    { "status": null, "pending": true, "previous": false, "lyrics": false }
+  ],
+  "cases": [
+    { "width": 1920, "height": 1080, "lyrics": false, "layout": "cover" },
+    { "width": 390, "height": 844, "lyrics": false, "layout": "cover" },
+    { "width": 1920, "height": 1080, "lyrics": true, "layout": "split" },
+    { "width": 900, "height": 818, "lyrics": true, "layout": "split" },
+    { "width": 899, "height": 600, "lyrics": true, "layout": "stacked" },
+    { "width": 1024, "height": 1366, "lyrics": true, "layout": "stacked" },
+    { "width": 1000, "height": 910, "lyrics": true, "layout": "stacked" },
+    { "width": 390, "height": 844, "lyrics": true, "layout": "stacked" },
+    { "width": 0, "height": 0, "lyrics": true, "layout": "stacked" }
+  ]
+}

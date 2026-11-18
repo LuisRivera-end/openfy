@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <OpenfyProjectMetadata>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)package.json'))</OpenfyProjectMetadata>
+    <Version>$([System.Text.RegularExpressions.Regex]::Replace('$(OpenfyProjectMetadata)', '(?s)^.*?&quot;version&quot;\s*:\s*&quot;([^&quot;]+)&quot;.*$', '$1'))</Version>
+    <OpenfyBuild Condition="'$(OpenfyBuild)' == ''">1</OpenfyBuild>
+    <InformationalVersion>$(Version)+$(OpenfyBuild)</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+</Project>

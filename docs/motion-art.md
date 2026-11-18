@@ -1,0 +1,95 @@
+# Portadas animadas (motion art)
+
+En el Big Picture de escritorio, la portada se sustituye por el vídeo corto en bucle del álbum cuando Apple Music tiene uno. Aplica a la web fuera de PWA y a la ventana `fullscreen` de Windows. El teléfono y la PWA instalada no hacen la petición ni muestran el vídeo.
+
+## Origen y riesgo
+
+Apple no ofrece una API pública para estas portadas. Openfy usa lo mismo que recibe el reproductor web de Apple Music:
+
+1. Busca el álbum en la iTunes Search API pública (`entity=album`).
+2. Si iTunes no produce un Motion válido, busca también en el catálogo de Apple Music (`/v1/catalog/<tienda>/search?types=albums`). Ambas búsquedas reciben el artista y el álbum, con hasta 25 resultados y tres candidatos coincidentes por método. No se repiten consultas de detalle para un mismo ID.
+3. Lee el token de desarrollador que el reproductor web incluye en su script principal. Se comparte entre la búsqueda de Apple y las fichas, con una renovación si se rechaza.
+4. Pide la ficha del álbum a `amp-api.music.apple.com` con `extend=editorialVideo` y toma `motionDetailSquare` (o `motionSquareVideo1x1`). Un resultado válido del respaldo puede recuperar un fallo del primer método.
+5. Descarga la variante H.264 más grande hasta 1080 px desde el HLS, que no está cifrado. El ID se obtiene del resultado real, sin excepciones fijadas para álbumes concretos.
+
+El endpoint del catálogo y el token no tienen contrato para terceros. Pueden cambiar o cerrarse sin aviso, y su uso probablemente no está contemplado en los términos de Apple. Los vídeos son contenido con licencia: esta función está pensada para una biblioteca personal, no para redistribuir.
+
+Si algo cambia, Openfy deja de encontrar vídeos y sigue con la portada estática. No muestra errores. Solo salen del servidor el nombre del artista y el del álbum.
+
+## Coincidencia
+
+Solo se acepta un álbum con el mismo título y uno de los mismos artistas, comparados sin mayúsculas, acentos ni puntuación (`metadataKey`). Se ignoran los sufijos ` - Single` y ` - EP`. Una edición distinta, como «(Deluxe)», no coincide. Con duda no se muestra nada. Las canciones sin álbum o sin artista no se consultan.
+
+Los nombres compuestos únicamente por símbolos conservan esos símbolos como clave: el álbum «?» y el artista «¥$» también se consultan y no se confunden con otros nombres de puntuación. Las claves de los demás álbumes se conservan para reutilizar los vídeos existentes.
+
+## Almacenamiento
+
+Todo ocurre en el servidor (`server/utils/apple-motion.ts`, `server/utils/motion-art.ts`). No hay cambios en SQLite.
+
+- `motion-cache/<clave>/motion.mp4` y `metadata.json`, dentro del directorio de datos. La clave es el SHA-256 del artista principal y el álbum normalizados.
+- El HLS se guarda como MP4 normal, sin audio, con FFmpeg (`-c:v copy -movflags +faststart`).
+- `none` es una ausencia verificada de vídeo cuadrado después de completar ambas búsquedas; se recuerda 30 días. `unmatched` significa que no pudo resolverse el álbum o quedaron candidatos sin verificar; se recuerda un día. Un fallo en una consulta necesaria impide guardar una ausencia.
+- Los errores temporales no se convierten en negativos: aplican esperas de 15 minutos que crecen hasta seis horas. La cola conserva un temporizador para el próximo vencimiento aunque no cambie la biblioteca.
+- Los negativos nuevos incluyen `resolverRevision: 2`. Los negativos antiguos se revisan automáticamente de nuevo. Los MP4 válidos se reutilizan aunque sean de una revisión anterior; no se borra la caché para migrar. Una carpeta vacía o un MP4 faltante no se consideran un álbum resuelto.
+- **Permanentes:** los álbumes de la biblioteca local y de las canciones descargadas al PC. Un paso de fondo de mínima prioridad los completa de uno en uno, con unos segundos entre peticiones y esperas crecientes ante fallos. Espera a que termine la consulta de géneros de las canciones guardadas, porque ambas usan la iTunes Search API y comparten su límite de peticiones.
+- **Caché:** lo que solo se ve en streaming. Al superar 1 GB se eliminan los vídeos mostrados hace más tiempo.
+- La copia de seguridad de las actualizaciones no incluye esta carpeta: se puede regenerar.
+
+Tamaño orientativo: entre 5 y 15 MB por álbum con vídeo.
+
+## Clientes
+
+- `POST /api/motion/resolve` con la entrada en reproducción devuelve `{ status: 'ready', url, width, height }`, `{ status: 'none', retryAfterMs }` o `{ status: 'unmatched', retryAfterMs }`. Los clientes siguen admitiendo `none` sin tiempo de espera para compatibilidad. Si el proveedor no responde, devuelve 503 con `Retry-After` y `data.retryAfterMs`; se conserva la portada fija.
+- `GET /api/motion/<clave>.mp4` sirve el archivo con Range.
+- Web: `useMotionArt.ts` y `MotionArt.vue`. El vídeo aparece con un fundido cuando empieza a reproducirse y se detiene con la música o al ocultar la pestaña.
+- Windows: `Views/PlayerWindow.Motion.cs`, con `MediaPlayer` en bucle, silenciado y fuera de los controles multimedia del sistema. Win2D dibuja los fotogramas en una superficie XAML con el mismo radio que la portada; los fotogramas permanecen en la GPU y solo se solicita dibujo al recibir uno nuevo o al cambiar de tamaño. En pausa se conserva el último fotograma sin un bucle de renderizado.
+- La portada de 56 px del diseño apilado, la tarjeta «A continuación» y el fondo ambiental usan siempre la imagen fija.
+- Las cachés de web y Windows vencen los negativos y los errores; un resultado temporal vuelve a consultarse cuando corresponde si el mismo álbum sigue visible. Ocultar/cerrar la vista detiene el temporizador; volver a abrirlo respeta o reactiva la espera restante.
+- Se desactiva con **Ajustes → Portadas animadas**, con «Movimiento ambiental» apagado o con el movimiento reducido del sistema.
+
+El vídeo nativo de `MediaPlayerElement` ignoraba el radio del marco y los recortes de composición con Windows App SDK 2.6.5. El modo de fotogramas de `MediaPlayer` y la superficie Win2D sustituyen esa ruta para conservar las esquinas redondeadas, también al redimensionar y pausar.
+
+## Configuración
+
+| Variable | Efecto |
+| --- | --- |
+| `OPENFY_MOTION_ART=off` | No se contacta nunca con el proveedor. Los vídeos ya guardados se siguen sirviendo. |
+| `OPENFY_MOTION_STOREFRONT=mx` | Tienda de Apple Music para la búsqueda (dos letras; por defecto `us`). |
+
+Playwright y las comprobaciones autoejecutables de Windows arrancan el servidor con `OPENFY_MOTION_ART=off`.
+
+## Verificación
+
+- `tests/unit/motion-art.test.ts`: elección de variante, rangos de bytes, medios cifrados u hosts ajenos, coincidencia estricta, renovación del token, caché, fijados, expulsión y paso de fondo. Doce canciones descargadas previamente del mismo álbum, con invitados distintos, se completan con un solo archivo y no vuelven a descargarlo al reiniciar. Todo con `fetch` simulado.
+- `tests/e2e/motion-art.spec.ts`: respuestas simuladas. En `chromium` el vídeo sustituye a la portada, sigue a la pausa y al cambio de canción, y respeta el interruptor y el movimiento reducido. En `mobile-webkit` no hay ninguna petición a `/api/motion`.
+- Windows, con datos y estado aislados y el vídeo de al menos un álbum de prueba ya presente en `motion-cache`:
+
+```powershell
+Openfy.exe --workspace E:\openfy --state-dir <estado-aislado> --data-dir <datos-aislados> --port <puerto-libre> --visual-players <informe> --visual-fixtures <audios-de-prueba> --motion-check
+```
+
+Las pruebas automáticas no contactan con Apple. La estabilidad del token en el tiempo y el comportamiento en un iPhone físico no están comprobados.
+
+La comprobación nativa guarda capturas del vídeo en reproducción y redimensionado en pausa. Lee los píxeles del mismo dibujo Win2D en ambos tamaños y exige cuatro esquinas transparentes y un centro opaco; también exige fotogramas nuevos en reproducción y ningún fotograma nuevo en pausa, además del cambio a portada fija y los ajustes de movimiento.
+
+Para comprobar el bucle, las canciones de prueba deben durar más que el clip de vídeo. La prueba exige nuevos fotogramas después de esperar una duración completa del clip; no usa `PlaybackSession.Position`, que permaneció en cero en la reproducción de vídeo silenciado por fotogramas de este equipo. El empaquetado verifica que incluya las dos DLL de Win2D (`Microsoft.Graphics.Canvas.dll` y `Microsoft.Graphics.Canvas.Interop.dll`).
+
+## Revisión del 16 de noviembre de 2026
+
+La corrección quedó instalada como **0.5.0+1794822143**, confirmada por `/api/status` y la versión del ensamblado nativo. El paquete aislado **0.5.0+1794821866** pasó la prueba visual a 1080 × 1080: entregó fotogramas después de una duración completa del clip, conservó el último al pausar, dejó de procesarlos en pausa y volvió a la imagen fija al cambiar de álbum. Las cuatro esquinas dieron alfa cero tanto a 520 × 520 como a 325 × 325 tras redimensionar. Pasaron 212 pruebas Vitest, 98 de lógica/contratos .NET y la comprobación de tipos. Las dos DLL de Win2D instaladas coinciden por hash con las del paquete de prueba. La revisión automática bloqueó abrir una segunda instancia del ejecutable instalado para repetir la prueba visual; la comprobación visual procede del paquete aislado.
+
+La comparación anterior/posterior conserva sin cambios canciones, favoritas, asociaciones y hashes de audio, assets y playlists: 560 canciones guardadas y descargadas, una playlist. Tras consultar también los dos álbumes con nombres de símbolos, la biblioteca contiene 27 vídeos (310.506.304 bytes) compartidos por 46 canciones y no tiene duplicados por ID de álbum de Apple. Los otros 349 álbumes terminaron sin vídeo compatible; no quedan consultas pendientes. Eso describe la respuesta del proveedor y la coincidencia estricta en esta consulta, no una garantía de que Apple nunca tenga un vídeo para esos álbumes.
+
+Las evidencias están en `output/motion-review-20261116`: logs anteriores al reinicio, capturas, informe de prueba del paquete, comparación de biblioteca, binarios instalados y `canciones-con-motion.md` con la lista por álbum. Se conservan las salidas de otras conversaciones.
+
+Esa lista contaba vídeos ya guardados. Sus 349 resultados negativos procedían de iTunes como único buscador y no demostraban ausencia de Motion en Apple Music: la búsqueda de Apple sí devuelve `1622045624` para «Un Verano Sin Ti». La revisión 2 recupera automáticamente esos casos y distingue ausencias verificadas, álbumes sin resolver y errores.
+
+## Verificación del respaldo de búsqueda
+
+La revisión 2 quedó instalada como **0.5.0+1794849028**, confirmada por su backend. Pasaron 220 pruebas Vitest, 99 de contratos/lógica .NET, la comprobación de tipos y ocho pruebas de navegador (los casos de reintento de escritorio se omiten en el teléfono). Las comprobaciones nativas del workspace, del paquete aislado y del ejecutable instalado pasaron vídeo a 1080 px, bucle, pausa, esquinas transparentes, ajustes, cierre y recuperación de un negativo vencido sin cambiar de álbum. El cliente nativo conserva `Retry-After` al recibir errores HTTP.
+
+En la instalación real, una solicitud con solo artista y álbum obtuvo «Un Verano Sin Ti» mediante el respaldo de Apple Music, ID **1622045624**, y guardó un único MP4 de **9.345.760 bytes**. Doce peticiones concurrentes, con cambios de mayúsculas e invitados, devolvieron la misma URL local. Las 21 canciones descargadas de ese álbum comparten ese archivo. Los logs acreditan cero candidatos de iTunes y el éxito de `apple-music`; el ID no está fijado en el código del servidor.
+
+La comparación anterior/posterior conserva las 560 canciones guardadas y descargadas, favoritos, asociaciones de audio, assets y playlists. Los hashes de los 27 MP4 anteriores coinciden. A las 11:14 del 16 de noviembre de 2026 (America/Mexico_City), había 28 vídeos compartidos por 67 canciones, 19 ausencias verificadas, un álbum sin resolver y 328 álbumes pendientes del repaso automático. Es una instantánea, no el resultado final de la cola: el servidor continúa trabajando de uno en uno mientras Openfy permanezca abierto y conserva los resultados al reiniciar.
+
+`output/motion-fallback-20261116` conserva el código anterior, logs previos al reinicio, resultados de pruebas, capturas del ejecutable instalado, evidencia de la búsqueda por ambos métodos, comparación de biblioteca/hashes y la lista `canciones-con-motion.md`. Los artefactos grandes de las pruebas se retiran después de conservar los informes; no se eliminan salidas de otras conversaciones.

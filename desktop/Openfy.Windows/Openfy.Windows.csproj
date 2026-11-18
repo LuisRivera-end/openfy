@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22000.0</TargetPlatformMinVersion><UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType><WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained><RuntimeIdentifier>win-x64</RuntimeIdentifier><PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest><AssemblyName>Openfy</AssemblyName>
+    <ApplicationIcon>Assets\Openfy.ico</ApplicationIcon>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="DiscordRichPresence" Version="1.6.1.70" />
+    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.6.5" />
+    <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <ProjectReference Include="..\Openfy.Core\Openfy.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup><Content Include="Assets\Openfy.ico" CopyToOutputDirectory="PreserveNewest"/><Content Include="Assets\Openfy.png" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <Target Name="IncludeWinUIResourcesInPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <Error Condition="!Exists('$(TargetDir)App.xbf')" Text="Falta el XAML compilado App.xbf. Compila Openfy antes de publicar." />
+    <Error Condition="!Exists('$(TargetDir)$(AssemblyName).pri')" Text="Falta el índice de recursos de Openfy. Compila Openfy antes de publicar." />
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(TargetDir)App.xbf" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>App.xbf</RelativePath><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(TargetDir)$(AssemblyName).pri" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>$(AssemblyName).pri</RelativePath><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+</Project>

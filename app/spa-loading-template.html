@@ -1,0 +1,14 @@
+<div class="openfy-boot" role="status" aria-label="Abriendo Openfy">
+  <img src="/icons/openfy.svg" width="80" height="80" alt="Openfy">
+  <p>Abriendo tu música…</p>
+  <noscript>Activa JavaScript y vuelve a abrir Openfy.</noscript>
+</div>
+<style>
+  html, body { margin: 0; background: #09090b; }
+  .openfy-boot { position: fixed; inset: 0; z-index: 10000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; padding: 28px; background: #09090b; color: #a1a1aa; font: 14px/1.6 "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; }
+  .openfy-boot p { margin: 0; }
+  .openfy-boot img { animation: openfy-boot-pulse 1.4s ease-in-out infinite; }
+  @keyframes openfy-boot-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+  .reduce-motion .openfy-boot img { animation: none; }
+  @media (prefers-reduced-motion: reduce) { .openfy-boot img { animation: none; } }
+</style>

@@ -1,0 +1,47 @@
+{
+  "parse": [
+    {
+      "name": "enhanced LRC with an explicit end",
+      "lrc": "[00:10.00]<00:10.00>Hola <00:10.50>mundo <00:11.25>bonito<00:12.00>\n[00:15.00]Siguiente",
+      "lines": [
+        { "time": 10, "text": "Hola mundo bonito", "words": [{ "time": 10, "text": "Hola " }, { "time": 10.5, "text": "mundo " }, { "time": 11.25, "text": "bonito" }], "end": 12 },
+        { "time": 15, "text": "Siguiente" }
+      ]
+    },
+    {
+      "name": "offset applies to word stamps",
+      "lrc": "[offset:+500]\n[00:01.00]<00:01.00>A <00:01.50>B",
+      "lines": [{ "time": 1.5, "text": "A B", "words": [{ "time": 1.5, "text": "A " }, { "time": 2, "text": "B" }] }]
+    },
+    {
+      "name": "text before the first word stamp starts at the line time",
+      "lrc": "[00:20.00]Ya <00:20.50>casi",
+      "lines": [{ "time": 20, "text": "Ya casi", "words": [{ "time": 20, "text": "Ya " }, { "time": 20.5, "text": "casi" }] }]
+    },
+    {
+      "name": "decreasing word stamps are dropped but the text stays clean",
+      "lrc": "[00:05.00]<00:05.00>Uno <00:04.00>dos\n[00:08.00]Tres",
+      "lines": [{ "time": 5, "text": "Uno dos" }, { "time": 8, "text": "Tres" }]
+    },
+    {
+      "name": "word stamps beyond the next line are dropped",
+      "lrc": "[00:05.00]<00:05.00>Uno <00:09.00>dos\n[00:06.00]Tres",
+      "lines": [{ "time": 5, "text": "Uno dos" }, { "time": 6, "text": "Tres" }]
+    }
+  ],
+  "active": [
+    { "line": "timed", "next": 15, "position": 9.75, "expected": { "index": -1, "progress": 0 } },
+    { "line": "timed", "next": 15, "position": 10, "expected": { "index": 0, "progress": 0 } },
+    { "line": "timed", "next": 15, "position": 10.25, "expected": { "index": 0, "progress": 0.5 } },
+    { "line": "timed", "next": 15, "position": 11.625, "expected": { "index": 2, "progress": 0.5 } },
+    { "line": "timed", "next": 15, "position": 13, "expected": { "index": 2, "progress": 1 } },
+    { "line": "open", "next": 15, "position": 13.125, "expected": { "index": 2, "progress": 0.5 } },
+    { "line": "open", "next": null, "position": 11.75, "expected": { "index": 2, "progress": 0.5 } },
+    { "line": "plain", "next": 15, "position": 11, "expected": null }
+  ],
+  "lines": {
+    "timed": { "time": 10, "text": "Hola mundo bonito", "words": [{ "time": 10, "text": "Hola " }, { "time": 10.5, "text": "mundo " }, { "time": 11.25, "text": "bonito" }], "end": 12 },
+    "open": { "time": 10, "text": "Hola mundo bonito", "words": [{ "time": 10, "text": "Hola " }, { "time": 10.5, "text": "mundo " }, { "time": 11.25, "text": "bonito" }] },
+    "plain": { "time": 10, "text": "Hola mundo bonito" }
+  }
+}

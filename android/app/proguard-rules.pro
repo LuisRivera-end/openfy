@@ -1,0 +1,2 @@
+-keep class com.dokar.quickjs.** { *; }
+-keepclasseswithmembernames class * { native <methods>; }

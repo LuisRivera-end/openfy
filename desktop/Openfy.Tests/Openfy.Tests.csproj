@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1"/><PackageReference Include="xunit" Version="2.9.3"/><PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all"/><ProjectReference Include="..\Openfy.Core\Openfy.Core.csproj"/></ItemGroup>
+  <ItemGroup><None Include="..\..\tests\fixtures\desktop-contract.json" Link="desktop-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/desktop-catalog-contract.json" Link="desktop-catalog-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/listening-contract.json" Link="listening-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/ambient-contract.json" Link="ambient-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/immersive-layout-contract.json" Link="immersive-layout-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/lyrics-contract.json" Link="lyrics-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/release-notes-contract.json" Link="release-notes-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+</Project>

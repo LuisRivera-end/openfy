@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="trace15">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/output/legacy-removal-plan/baseline/playwright/home-retains-cached-sugges-1bfed-collection-after-disconnect-chromium-new/trace.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

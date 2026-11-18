@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="source-before">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/output/legacy-removal/source-before.zip!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

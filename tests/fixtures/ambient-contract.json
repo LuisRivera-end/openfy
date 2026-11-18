@@ -1,0 +1,141 @@
+{
+  "parameters": {
+    "textureSize": 64,
+    "lumaFloor": 0.04,
+    "lumaCeiling": 0.74,
+    "saturation": 1.4,
+    "scrimMin": 0.08,
+    "scrimMax": 0.4,
+    "scrimPivot": 0.38,
+    "scrimSlope": 0.8,
+    "lyricsScrim": 0.18,
+    "motionSpeed": 2.4,
+    "fadeSeconds": 1.2
+  },
+  "grade": [
+    {
+      "rgb": [
+        0,
+        0,
+        0
+      ],
+      "expected": [
+        0.04,
+        0.04,
+        0.04
+      ]
+    },
+    {
+      "rgb": [
+        1,
+        1,
+        1
+      ],
+      "expected": [
+        0.74,
+        0.74,
+        0.74
+      ]
+    },
+    {
+      "rgb": [
+        1,
+        0,
+        0
+      ],
+      "expected": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "rgb": [
+        0.2,
+        0.6,
+        0.4
+      ],
+      "expected": [
+        0,
+        0.529636,
+        0.249636
+      ]
+    }
+  ],
+  "scrim": [
+    {
+      "luma": 0,
+      "expected": 0.08
+    },
+    {
+      "luma": 0.38,
+      "expected": 0.08
+    },
+    {
+      "luma": 0.5,
+      "expected": 0.176
+    },
+    {
+      "luma": 1,
+      "expected": 0.4
+    }
+  ],
+  "fade": [
+    {
+      "elapsed": -1,
+      "expected": 0
+    },
+    {
+      "elapsed": 0,
+      "expected": 0
+    },
+    {
+      "elapsed": 0.6,
+      "expected": 0.5
+    },
+    {
+      "elapsed": 1.2,
+      "expected": 1
+    },
+    {
+      "elapsed": 5,
+      "expected": 1
+    }
+  ],
+  "palette": {
+    "colors": [
+      "#ff0000",
+      "#00ff00",
+      "#0000ff"
+    ],
+    "samples": [
+      {
+        "x": 0,
+        "y": 0,
+        "rgb": [
+          255,
+          0,
+          0
+        ]
+      },
+      {
+        "x": 63,
+        "y": 0,
+        "rgb": [
+          0,
+          255,
+          0
+        ]
+      },
+      {
+        "x": 0,
+        "y": 63,
+        "rgb": [
+          0,
+          0,
+          255
+        ]
+      }
+    ]
+  }
+}

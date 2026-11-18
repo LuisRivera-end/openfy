@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "preferences": { "effects": false },
+  "playback": {
+    "version": 3,
+    "queue": [
+      { "source": "youtube", "song": { "videoId": "abcdefghijk", "title": "Actual", "artists": ["Openfy"], "album": null, "artwork": null, "duration": 120 }, "queueId": "appearance-0" },
+      { "source": "youtube", "song": { "videoId": "12345678901", "title": "Seleccionada", "artists": ["Openfy"], "album": null, "artwork": null, "duration": 120 }, "queueId": "appearance-1" },
+      { "source": "youtube", "song": { "videoId": "abcdefghijk", "title": "Actual", "artists": ["Openfy"], "album": null, "artwork": null, "duration": 120 }, "queueId": "appearance-2" }
+    ],
+    "originalOrder": ["appearance-2", "appearance-1", "appearance-0"],
+    "index": 1,
+    "position": 27.25,
+    "volume": 0.42,
+    "repeat": "all",
+    "shuffle": true
+  }
+}

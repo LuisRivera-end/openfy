@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "queue": [
+    { "source": "local", "trackId": "8fd62298-b966-4395-84ba-53a55d000004" },
+    { "source": "youtube", "song": { "videoId": "abcdefghijk", "title": "Prueba de contrato", "artists": ["Openfy"], "album": null, "artwork": null, "duration": 123.5, "artistRefs": [], "albumId": null } }
+  ],
+  "index": 1,
+  "position": 27.25,
+  "repeat": "all",
+  "shuffle": false,
+  "volume": 0.75
+}

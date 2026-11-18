@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="Openfy.Audio.Tests/Openfy.Audio.Tests.csproj" />
+  <Project Path="Openfy.Core/Openfy.Core.csproj" />
+  <Project Path="Openfy.Setup/Openfy.Setup.csproj" />
+  <Project Path="Openfy.Tests/Openfy.Tests.csproj" />
+  <Project Path="Openfy.Windows/Openfy.Windows.csproj" />
+</Solution>
