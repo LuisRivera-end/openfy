@@ -76,9 +76,13 @@ import java.time.ZoneId
         }
         fun download(song: Song) { requestNotifications(); vm.download(song) }
         fun createPlaylist() { rename=null; create=true }
+        fun clearFilters() {
+            query=""; val cleared=filters.clearFilters(); filters=cleared
+            vm.run { vm.app.preferences.edit { it[stringPreferencesKey("filters:$filterKey")]=Json.encodeToString(cleared) } }
+        }
 
         LaunchedEffect(notice) { notice?.let { snack.showSnackbar(it); vm.notice.value=null } }
-        LaunchedEffect(tab,library.listening.isNotEmpty()) { if(tab==0 && library.listening.isNotEmpty()) vm.discover() }
+        LaunchedEffect(tab,page?.id,library.listening.isNotEmpty()) { if(tab==0 && page==null && library.listening.isNotEmpty()) vm.discover(force=false) }
         BackHandler(page!=null && !expanded && !settings) { vm.back() }
         val threshold=when(period) { "7d" -> LocalDate.now(ZoneId.of("America/Mexico_City")).minusDays(6).toString()
             "30d" -> LocalDate.now(ZoneId.of("America/Mexico_City")).minusDays(29).toString()
@@ -98,6 +102,7 @@ import java.time.ZoneId
             else -> page.songs
         }
         val tracks=filters.apply(source,query,stats)
+        val rankingArtwork=remember(stats,songMap) { stats.entries.sortedByDescending { (_,rows) -> rows.sumOf { it.plays } }.mapNotNull { songMap[it.key]?.artwork }.distinct().take(4) }
         val route=page?.let { "${it.kind}:${it.id}" } ?: "tab:$tab:$libraryMode"
         val scrolls=remember { linkedMapOf<String,LazyListState>() }
         val scroll=scrolls.getOrPut(route) { LazyListState() }
@@ -126,21 +131,23 @@ import java.time.ZoneId
             }
         }) { padding ->
             LazyColumn(state=scroll,modifier=Modifier.fillMaxSize().padding(padding),
-                contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(if(page==null && tab==2) 2.dp else 6.dp)) {
                 update.release?.let { release -> gutterItem {
                     TextButton(onClick={ settings=true }) { Icon(Icons.Default.SystemUpdate,null); Spacer(Modifier.width(8.dp)); Text("Actualización disponible · ${release.version}") }
                 } }
                 if(page!=null) {
                     detailItems(vm,page,playlist,tracks,songMap,current?.id,stats,period,onPeriod={ period=it },
                         query=query,onQuery={ query=it },onFilters={ filterDialog=true },requestNotifications=::requestNotifications,
-                        onRename={ rename=it; create=true },onDelete={ deletePlaylist=it },onSongActions={ actions=it })
+                        onRename={ rename=it; create=true },onDelete={ deletePlaylist=it },onSongActions={ actions=it },
+                        fullTracks=source,filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,albumYear=page.year,albumArtist=page.artist)
                 } else when(tab) {
                     0 -> homeItems(vm,library.listening,library.recents,songMap,current?.id,stats,period,onPeriod={ period=it },
                         suggestions=suggestions,releases=releases,importFiles=::launchFiles,onSongActions={ actions=it })
                     1 -> searchItems(vm,search,tracks,songMap,current?.id,onSongActions={ actions=it })
                     2 -> libraryItems(vm,librarySongs,library.playlists,tracks,songMap,current?.id,libraryMode,onMode={ libraryMode=it },
                         query=query,onQuery={ query=it },onFilters={ filterDialog=true },importFiles=::launchFiles,importFolder=::launchFolder,
-                        createPlaylist=::createPlaylist,onSongActions={ actions=it })
+                        createPlaylist=::createPlaylist,onSongActions={ actions=it },filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,
+                        rankingArtwork=rankingArtwork)
                     3 -> downloadsItems(vm,library.downloads,songMap,current?.id,::download,onRemove={ removeDownload=it },onSongActions={ actions=it })
                 }
                 if(importing) gutterItem {
@@ -156,7 +163,8 @@ import java.time.ZoneId
             val status by sync.status.collectAsStateWithLifecycle()
             SettingsScreen(vm,update,status,sync.linked,sync.origin,effects,motion,{ settings=false },::launchFiles,::launchFolder,notice)
         }
-        if(expanded && current!=null) FullPlayer(vm,current,player,library,effects,motion,{ expanded=false },{ actions=current })
+        if(expanded && current!=null) FullPlayer(vm,current,player,library,effects,motion,{ expanded=false },{ actions=current },
+            contextTitle=player.context,upcomingIndices=player.upcoming)
         actions?.let { selected ->
             SongActionsSheet(vm,songMap[selected.id] ?: selected,playlist,dismiss={ actions=null },onDownload=::download,
                 onRemoveDownload={ removeDownload=it },onOpenRemote={ kind,id,title -> expanded=false; vm.openRemote(kind,id,title) },

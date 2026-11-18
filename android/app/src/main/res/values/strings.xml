@@ -1,1 +1,5 @@
-<resources><string name="download_channel_name">Descargas de música</string></resources>
+<resources>
+    <string name="download_channel_name">Descargas de música</string>
+    <string name="spotify_import_channel_name">Importación de Spotify</string>
+    <string name="spotify_import_notification_progress">%1$d de %2$d canciones procesadas</string>
+</resources>

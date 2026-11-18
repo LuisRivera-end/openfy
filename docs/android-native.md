@@ -33,6 +33,14 @@ Antes de completar bytes parciales se compara la identidad del recurso (video, i
 
 La escucha cuenta avance real, excluye saltos/buffering y califica al 90 %. Los días usan America/Mexico_City. Las pruebas Android reutilizan contratos de letras y escucha de Windows/web. El movimiento se limita y se detiene cuando la vista queda oculta; las portadas animadas son opcionales y mantienen respaldo fijo.
 
+## Importar desde Spotify
+
+En la [página de privacidad de Spotify](https://www.spotify.com/account/privacy/), abre **Descargar tus datos** y solicita **Datos de la cuenta**. Cuando recibas el correo, guarda `my_spotify_data.zip`. En Openfy para Android, abre **Ajustes → Importar desde Spotify**, elige el ZIP o un JSON individual de la exportación y revisa los recuentos antes de importar.
+
+Openfy busca las canciones en YouTube Music. Las guardadas en Spotify pasan a favoritas y las playlists conservan el orden de las coincidencias. Se omiten los episodios, las pistas locales, los álbumes guardados y el historial. En **Por revisar** puedes elegir una coincidencia u omitirla. Desde **No encontradas** puedes abrir la búsqueda de Openfy con el título y el artista.
+
+Puedes cerrar la pantalla mientras avanza la importación. Si Android la interrumpe, se conservan las coincidencias ya procesadas. Con Windows vinculado, los favoritos y las playlists se sincronizan por el canal habitual.
+
 ## Sincronización privada
 
 Windows: Ajustes → Android → Generar código. Android: Ajustes → Vincular con Windows. Introducir el origen HTTPS de Tailscale y el código de un solo uso, válido cinco minutos. Ambos necesitan acceso a la misma red privada para sincronizar; buscar y reproducir son independientes. Las credenciales se cifran mediante Android Keystore y se revocan desde Windows.

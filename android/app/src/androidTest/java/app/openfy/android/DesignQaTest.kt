@@ -78,10 +78,35 @@ class DesignQaTest {
         main { model.toggle() }
     }
 
+    /** Diagnostic: time from play() to audible playback through the same UI path the captures use. */
+    @Test fun playbackLatency() {
+        assumeTrue(args.getString("designLatency")=="true")
+        app.qaUnmetered=args.getString("designMotion")!="off"
+        val favorites=runBlocking { app.database.library().songs() }.filter { it.favorite && it.source=="youtube" }
+        fun measure(label: String,song: Song,queue: List<Song>) {
+            val start=android.os.SystemClock.elapsedRealtime()
+            play(song,queue)
+            val ok=runCatching { compose.waitUntil(60000) { model.player.value.playing && model.player.value.id==song.id } }.isSuccess
+            android.util.Log.i("OpenfyQA","$label: ${if(ok) "${android.os.SystemClock.elapsedRealtime()-start} ms" else "no audio after 60 s"} (queue ${queue.size})")
+            main { model.toggle() }; settle(1000)
+        }
+        main { model.selectTab(2) }; settle(args.getString("designWarmWait")?.toLongOrNull() ?: 3000)
+        measure("single, library",favorites[3],listOf(favorites[3]))
+        val album=favorites.filter { it.album.equals("Un Verano Sin Ti",ignoreCase=true) }
+        measure("album queue, library",album.first(),album)
+        compose.waitUntil(20000) { compose.onAllNodesWithContentDescription("Abrir reproductor").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithContentDescription("Abrir reproductor").performClick(); settle(1500)
+        measure("album queue, expanded player",album[1],album)
+        app.qaUnmetered=false
+        measure("album queue, expanded player, motion off",album[2],album)
+    }
+
     @Test fun captureScreens() {
         val round=args.getString("designRound")
         assumeTrue(round!=null)
         val directory=File(compose.activity.getExternalFilesDir(null),"qa/$round").apply { deleteRecursively(); mkdirs() }
+        // The emulator's cellular link is metered; let motion covers load as they would on Wi-Fi.
+        app.qaUnmetered=args.getString("designMotion")!="off"
         fun capture(name: String) {
             compose.waitForIdle()
             InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().let { bitmap ->
@@ -92,6 +117,8 @@ class DesignQaTest {
         val songs=runBlocking { app.database.library().songs() }
         val favorites=songs.filter { it.favorite && it.source=="youtube" }
 
+        val playerOnly=args.getString("designOnly")=="player"
+        if(!playerOnly) {
         main { model.selectTab(0) }; settle(9000); capture("01-home")
         scroll(); settle(1500); capture("02-home-scrolled")
         scroll(); settle(1500); capture("03-home-bottom")
@@ -113,7 +140,8 @@ class DesignQaTest {
         }
         main { model.openLocal("top","top","Más reproducidas",emptyList()) }; settle(2500); capture("10-top")
         main { model.selectTab(3) }; settle(2000); capture("11-downloads")
-
+        }
+        val motionSong=favorites.firstOrNull { it.album.equals("Un Verano Sin Ti",ignoreCase=true) } ?: favorites.firstOrNull()
         motionSong?.let { song ->
             main { model.selectTab(0) }
             play(song,favorites.filter { it.album==song.album }.ifEmpty { listOf(song) })

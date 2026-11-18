@@ -2,8 +2,9 @@ package app.openfy.android.ui
 
 import android.app.Application
 import android.content.ComponentName
-import android.net.Uri
 import androidx.core.content.ContextCompat
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.*
@@ -13,60 +14,153 @@ import androidx.room.withTransaction
 import app.openfy.android.OpenfyApplication
 import app.openfy.android.data.*
 import app.openfy.android.playback.PlaybackService
+import app.openfy.android.preferences
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
+import java.io.IOException
 
 data class LibraryState(val songs: List<Song> = emptyList(),val playlists: List<PlaylistRow> = emptyList(),
-    val downloads: List<DownloadRow> = emptyList(),val listening: List<ListeningRow> = emptyList(),val recents: List<RecentContext> = emptyList())
+    val downloads: List<DownloadRow> = emptyList(),val listening: List<ListeningRow> = emptyList(),val recents: List<RecentContext> = emptyList(),
+    internal val ready: Boolean = false,internal val recentSongs: List<Song> = emptyList(),
+    internal val homePlaylists: List<RecentContext> = emptyList())
 data class PlayerState(val id: String? = null,val playing: Boolean = false,val position: Long = 0,val duration: Long = 0,
-    val queue: List<String> = emptyList(),val index: Int = 0,val shuffle: Boolean = false,val repeat: Int = Player.REPEAT_MODE_OFF)
+    val queue: List<String> = emptyList(),val index: Int = 0,val shuffle: Boolean = false,val repeat: Int = Player.REPEAT_MODE_OFF,
+    val context: String? = null,val upcoming: List<Int>? = null)
 data class SearchState(val query: String = "",val kind: String = "songs",val songs: List<Song> = emptyList(),
-    val cards: List<JsonObject> = emptyList(),val cursor: String? = null,val loading: Boolean = false,val error: String? = null)
+    val cards: List<JsonObject> = emptyList(),val cursor: String? = null,val loading: Boolean = false,val error: String? = null,
+    val pending: Boolean = false)
 data class DetailState(val kind: String,val id: String,val title: String,val subtitle: String = "",val artwork: String? = null,
     val songs: List<Song> = emptyList(),val albums: List<JsonObject> = emptyList(),val artists: List<JsonObject> = emptyList(),
     val loading: Boolean = false,val error: String? = null,val cursor: String? = null,val moreSongs: Boolean = false,
-    val moreAlbums: Boolean = false,val moreSingles: Boolean = false,val releaseCursors: Map<String,String> = emptyMap())
+    val moreAlbums: Boolean = false,val moreSingles: Boolean = false,val releaseCursors: Map<String,String> = emptyMap(),
+    val year: Int? = null,val artist: String? = null)
+
+@Serializable
+private data class DiscoveryCache(val songs: List<Song>, val albums: List<JsonObject>, val fetchedAt: Long)
+
+private val discoveryCacheKey = stringPreferencesKey("home-discovery-v1")
+private const val discoveryCacheTtl = 60 * 60 * 1000L
+
+private data class DiscoveryInputs(val songs: List<Song>, val playlists: List<PlaylistRow>, val listenedIds: Set<String>) {
+    constructor(library: LibraryState) : this(library.songs, library.playlists, library.listening.mapTo(hashSetOf()) { it.songId })
+
+    fun collectionIds(): Set<String> = buildSet {
+        playlists.forEach { addAll(CollectionRules.entries(it.entries)) }
+        songs.forEach { if (it.saved || it.favorite || it.source == "local" || it.offlineReady) add(it.id) }
+    }
+}
+
+private class DiscoveryExclusions(inputs: DiscoveryInputs) {
+    private val collectionIds = inputs.collectionIds()
+    private val knownIds = collectionIds + inputs.listenedIds
+    private val songsByKey = buildMap<String, MutableSet<String>> {
+        inputs.songs.filter { it.id in knownIds }.forEach { song ->
+            discoverySongKeys(song).forEach { key -> getOrPut(key) { mutableSetOf() }.add(song.id) }
+        }
+    }
+    val albumIds = inputs.songs.filter { it.id in knownIds }.mapNotNull { it.albumId }.toHashSet()
+
+    fun permits(song: Song, activeId: String? = null): Boolean {
+        // Keep the current card in place while its first listen is recorded.
+        val allowedId = activeId?.takeIf { it == song.id && it !in collectionIds }
+        return (song.id == allowedId || song.id !in knownIds) &&
+            discoverySongKeys(song).none { key -> songsByKey[key]?.any { it != allowedId } == true }
+    }
+}
 
 class OpenfyViewModel(application: Application) : AndroidViewModel(application) {
     val app=application as OpenfyApplication
-    val library=combine(app.database.library().observeSongs(),app.database.library().observePlaylists(),
-        app.database.library().observeDownloads(),app.database.library().observeListening(),app.database.library().observeRecents().distinctUntilChanged()) { songs,playlists,downloads,listening,recents ->
-        LibraryState(songs,playlists,downloads,listening,recents.mapNotNull { runCatching { Json.decodeFromString<RecentContext>(it) }.getOrNull() }.sortedByDescending { it.lastPlayedAt }.take(10))
-    }.stateIn(viewModelScope,SharingStarted.WhileSubscribed(5000),LibraryState())
+    private val dao = app.database.library()
+    private val collections = combine(dao.observeSongs().distinctUntilChanged(), dao.observePlaylists().distinctUntilChanged()) { songs, playlists ->
+        val songMap = songs.associateBy { it.id }
+        val homePlaylists = playlists.map { playlist ->
+            val first = CollectionRules.entries(playlist.entries).firstOrNull()?.let(songMap::get)
+            RecentContext("playlist", playlist.id, playlist.name, artwork = first?.artwork)
+        }
+        LibraryState(songs = songs, playlists = playlists, homePlaylists = homePlaylists)
+    }
+    val library=combine(collections, dao.observeDownloads(), dao.observeListening(), dao.observeRecents().distinctUntilChanged()) { contents,downloads,listening,recents ->
+        val contexts = recents.mapNotNull { runCatching { Json.decodeFromString<RecentContext>(it) }.getOrNull() }
+            .sortedByDescending { it.lastPlayedAt }.take(10)
+        contents.copy(downloads = downloads, listening = listening, recents = contexts, ready = true,
+            recentSongs = if (contexts.isEmpty()) recentHomeSongs(listening, contents.songs) else emptyList())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope,SharingStarted.Eagerly,LibraryState())
     val player=MutableStateFlow(PlayerState())
+    private val positionClock = MutableStateFlow(0L)
+    val position: StateFlow<Long> = positionClock.asStateFlow()
     val search=MutableStateFlow(SearchState())
     val detail=MutableStateFlow<DetailState?>(null)
     val notice=MutableStateFlow<String?>(null)
     val lyrics=MutableStateFlow<LyricsRow?>(null)
-    val recommendations=MutableStateFlow<List<Song>>(emptyList())
-    val releases=MutableStateFlow<List<JsonObject>>(emptyList())
+    private val discoveryCache = MutableStateFlow<DiscoveryCache?>(null)
+    private val discoveryLoading = MutableStateFlow(false)
+    val recommendationsLoading: StateFlow<Boolean> = discoveryLoading.asStateFlow()
+    private val discoveryFailed = MutableStateFlow(false)
+    val recommendationsFailed: StateFlow<Boolean> = discoveryFailed.asStateFlow()
+    private val knownMusic = library.filter { it.ready }.map { DiscoveryInputs(it) }.distinctUntilChanged()
+        .map { DiscoveryExclusions(it) }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val recommendations: StateFlow<List<Song>> = combine(
+        discoveryCache, knownMusic, player.map { it.id }.distinctUntilChanged(),
+    ) { cache, exclusions, activeId ->
+        if (cache == null || exclusions == null) emptyList()
+        else cache.songs.filter { exclusions.permits(it, activeId) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val releases: StateFlow<List<JsonObject>> = combine(discoveryCache, knownMusic) { cache, exclusions ->
+        if (cache == null || exclusions == null) emptyList()
+        else cache.albums.filter { it.homeAlbumId !in exclusions.albumIds }
+    }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val tab=MutableStateFlow(0)
     private var searchJob: Job?=null
     private var detailJob: Job?=null
     private var lyricsJob: Job?=null
+    private var discoveryJob: Job? = null
     private var generation=0L
     private val history=mutableListOf<DetailState>()
     private var controller: MediaController?=null
     private val controllerFuture=MediaController.Builder(application,SessionToken(application,ComponentName(application,PlaybackService::class.java))).buildAsync()
+    private val loadDiscoveryCache = viewModelScope.launch {
+        try {
+            val saved = app.preferences.data.first()[discoveryCacheKey]
+            discoveryCache.value = saved?.let { Json.decodeFromString<DiscoveryCache>(it) }
+        } catch (_: IOException) {
+            // Discovery can still run when local storage is unavailable.
+        } catch (_: SerializationException) {
+            // A malformed cache is replaced after the next successful refresh.
+        }
+    }
 
     init {
         controllerFuture.addListener({
             runCatching {
                 controller=controllerFuture.get()
                 controller!!.addListener(object : Player.Listener {
-                    override fun onEvents(player: Player, events: Player.Events) { updatePlayer() }
+                    override fun onEvents(player: Player, events: Player.Events) { updatePlayer(events) }
                     override fun onPlayerError(error: PlaybackException) { notice.value="No se pudo reproducir la canción. Reintenta o elige otra." }
                 })
                 updatePlayer()
             }.onFailure { notice.value="No se pudo iniciar el reproductor." }
         },ContextCompat.getMainExecutor(application))
         viewModelScope.launch {
-            var last: String?=null
-            while(isActive) {
-                if(player.subscriptionCount.value>0) updatePlayer()
-                if(player.value.id!=last) { last=player.value.id; loadLyrics() }
-                delay(if(player.subscriptionCount.value>0) 250 else 1000)
+            positionClock.subscriptionCount.map { it > 0 }.distinctUntilChanged().collectLatest { subscribed ->
+                if (subscribed) while (isActive) {
+                    controller?.let { positionClock.value = it.currentPosition }
+                    delay(250)
+                }
+            }
+        }
+        viewModelScope.launch { player.map { it.id }.distinctUntilChanged().collect { loadLyrics() } }
+        viewModelScope.launch {
+            library.collect { snapshot ->
+                val current = player.value
+                if (controller?.duration?.let { it <= 0 } == true && current.id != null) {
+                    val duration = snapshot.songs.find { it.id == current.id }?.duration ?: 0
+                    if (duration != current.duration) player.value = current.copy(duration = duration)
+                }
             }
         }
     }
@@ -76,11 +170,34 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
             notice.value=error.message?.takeIf { !it.contains("https://") }?.take(200) ?: "No se pudo completar la acción. Reintenta."
         }
     }
-    private fun updatePlayer() {
-        val c=controller ?: return
-        val duration=c.duration.takeIf { it>0 } ?: library.value.songs.find { it.id==c.currentMediaItem?.mediaId }?.duration ?: 0
-        player.value=PlayerState(c.currentMediaItem?.mediaId,c.isPlaying,c.currentPosition,duration,
-            (0 until c.mediaItemCount).map { c.getMediaItemAt(it).mediaId },c.currentMediaItemIndex,c.shuffleModeEnabled,c.repeatMode)
+    private fun updatePlayer(events: Player.Events? = null) {
+        val c = controller ?: return
+        val previous = player.value
+        val id = c.currentMediaItem?.mediaId
+        val duration = c.duration.takeIf { it > 0 } ?: library.value.songs.find { it.id == id }?.duration ?: 0
+        val queue = if (events == null || events.contains(Player.EVENT_TIMELINE_CHANGED)) {
+            (0 until c.mediaItemCount).map { c.getMediaItemAt(it).mediaId }
+        } else previous.queue
+        val context = c.currentMediaItem?.mediaMetadata?.extras?.getString("openfy.context")
+            ?.let { runCatching { Json.decodeFromString<RecentContext>(it) }.getOrNull() }?.takeIf { it.kind != "song" }?.title
+        // With shuffle on, "A continuación" follows Media3's real order instead of the list order.
+        val upcoming = if (!c.shuffleModeEnabled) null
+            else if (events != null && !events.containsAny(Player.EVENT_TIMELINE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                    Player.EVENT_MEDIA_ITEM_TRANSITION) && previous.upcoming != null) previous.upcoming
+            else buildList {
+                val timeline = c.currentTimeline
+                var index = c.currentMediaItemIndex
+                while (size < timeline.windowCount) {
+                    index = timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, true)
+                    if (index == C.INDEX_UNSET) break
+                    add(index)
+                }
+            }
+        val updated = PlayerState(id, c.isPlaying, previous.position, duration,
+            queue, c.currentMediaItemIndex, c.shuffleModeEnabled, c.repeatMode, context, upcoming)
+        val now = c.currentPosition
+        if (updated != previous) player.value = updated.copy(position = now)
+        positionClock.value = now
     }
     fun selectTab(value: Int) { tab.value=value; detailJob?.cancel(); detail.value=null; history.clear() }
     fun back(): Boolean {
@@ -144,30 +261,44 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun query(value: String, kind: String = search.value.kind) {
+        val before = search.value
+        if (value == before.query && kind == before.kind) return
         searchJob?.cancel()
-        search.value=SearchState(query=value,kind=kind)
-        if(value.trim().length<2) return
-        searchJob=run { delay(350); fetchSearch(false) }
+        if (value.trim().length < 2) {
+            search.value = SearchState(query = value, kind = kind)
+            return
+        }
+        val retained = before.takeIf { it.kind == kind } ?: SearchState()
+        search.value = retained.copy(query = value, kind = kind, cursor = null, loading = false, error = null, pending = true)
+        searchJob = run { delay(350); fetchSearch(false) }
     }
     fun moreSearch() {
-        if(search.value.loading || search.value.cursor==null) return
+        if(search.value.pending || search.value.loading || search.value.cursor==null) return
         searchJob=run { fetchSearch(true) }
     }
-    fun retrySearch() { searchJob?.cancel(); searchJob=run { fetchSearch(search.value.cursor!=null && (search.value.songs.isNotEmpty() || search.value.cards.isNotEmpty())) } }
+    fun retrySearch() {
+        val before = search.value
+        if (before.query.trim().length < 2) return
+        searchJob?.cancel()
+        searchJob = run { fetchSearch(before.cursor != null && (before.songs.isNotEmpty() || before.cards.isNotEmpty())) }
+    }
     private suspend fun fetchSearch(more: Boolean) {
         val before=search.value
-        search.value=before.copy(loading=true,error=null)
+        search.value=before.copy(loading=true,error=null,pending=!more)
         try {
             val result=app.provider.call("search",buildJsonObject { put("query",before.query); put("kind",before.kind); if(more && before.cursor!=null) put("cursor",before.cursor) })
             val songs=result["songs"]?.jsonArray?.map { remoteSong(it.jsonObject) }.orEmpty()
             val cards=searchCards(before.kind,result)
+            currentCoroutineContext().ensureActive()
             search.value=before.copy(songs=((if(more) before.songs else emptyList())+songs).distinctBy { it.id },
                 cards=((if(more) before.cards else emptyList())+cards).distinctBy { it["id"] },
-                cursor=result["nextCursor"]?.jsonPrimitive?.contentOrNull,loading=false)
+                cursor=result["nextCursor"]?.jsonPrimitive?.contentOrNull,loading=false,pending=false,error=null)
         } catch(error: Exception) {
-            if(error is CancellationException) throw error
+            currentCoroutineContext().ensureActive()
             val expired=Regex("caduc|expired",RegexOption.IGNORE_CASE).containsMatchIn(error.message.orEmpty())
-            search.value=before.copy(loading=false,cursor=if(expired) null else before.cursor,
+            // A failed first page must not leave the previous query's results under the new one.
+            search.value=before.copy(loading=false,pending=false,cursor=if(expired) null else before.cursor,
+                songs=if(more) before.songs else emptyList(),cards=if(more) before.cards else emptyList(),
                 error=if(expired) "La búsqueda caducó. Pulsa Reintentar para actualizarla." else "No se pudo cargar la búsqueda. Puedes reintentar.")
         }
     }
@@ -189,7 +320,9 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                     value["similar"]?.jsonArray?.map { it.jsonObject }.orEmpty(),
                     moreSongs=value["expandable"]?.jsonObject?.get("songs")?.jsonPrimitive?.booleanOrNull ?: false,
                     moreAlbums=value["expandable"]?.jsonObject?.get("albums")?.jsonPrimitive?.booleanOrNull ?: false,
-                    moreSingles=value["expandable"]?.jsonObject?.get("singles")?.jsonPrimitive?.booleanOrNull ?: false)
+                    moreSingles=value["expandable"]?.jsonObject?.get("singles")?.jsonPrimitive?.booleanOrNull ?: false,
+                    year=value["year"]?.jsonPrimitive?.intOrNull,
+                    artist=value["artists"]?.jsonArray?.mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull ?: (it as? JsonPrimitive)?.contentOrNull }?.joinToString(", ")?.ifBlank { null })
             } catch(error: Exception) {
                 if(error is CancellationException) throw error
                 if(token==generation) detail.value=detail.value?.copy(loading=false,error="No se pudo abrir esta página. Reintenta.")
@@ -224,14 +357,59 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
             } catch(error: Exception) { if(error is CancellationException) throw error; if(token==generation) detail.value=old.copy(error="No se pudieron cargar más lanzamientos.") }
         }
     }
-    fun discover() = run {
-        val rows=library.value.listening.groupBy { it.songId }.toList().sortedByDescending { it.second.sumOf { row -> row.listenedMs } }
-        val seed=rows.mapNotNull { (id,_) -> library.value.songs.find { it.id==id && it.source=="youtube" } }.firstOrNull() ?: return@run
-        val data=app.provider.call("recommendations",buildJsonObject {
-            put("seed",Json.parseToJsonElement(seed.metadata)); put("excluded",JsonArray(library.value.listening.map { JsonPrimitive(it.songId.removePrefix("youtube:")) }.distinct()))
-        })
-        recommendations.value=data["songs"]?.jsonArray?.map { remoteSong(it.jsonObject) }.orEmpty()
-        releases.value=data["albums"]?.jsonArray?.map { it.jsonObject }.orEmpty()
+    fun discover(force: Boolean = false) {
+        if (discoveryJob?.isActive == true) return
+        discoveryJob = viewModelScope.launch {
+            loadDiscoveryCache.join()
+            val now = System.currentTimeMillis()
+            val cacheAge = discoveryCache.value?.let { now - it.fetchedAt }
+            if (!force && cacheAge != null && cacheAge in 0..discoveryCacheTtl) return@launch
+
+            val snapshot = library.first { it.ready }
+            val seeds = withContext(Dispatchers.Default) { discoverySeeds(snapshot) }
+            if (seeds.isEmpty()) return@launch
+            discoveryLoading.value = true
+            discoveryFailed.value = false
+            try {
+                val year = homeYear()
+                val excluded = withContext(Dispatchers.Default) {
+                    val inputs = DiscoveryInputs(snapshot)
+                    JsonArray((inputs.collectionIds() + inputs.listenedIds).mapNotNull { id ->
+                        id.takeIf { it.startsWith("youtube:") }?.removePrefix("youtube:")?.let(::JsonPrimitive)
+                    })
+                }
+                val songGroups = mutableListOf<List<Song>>()
+                val albumGroups = mutableListOf<List<JsonObject>>()
+                for (seed in seeds) {
+                    val data = app.provider.call("recommendations", buildJsonObject {
+                        put("seed", Json.parseToJsonElement(seed.metadata))
+                        put("excluded", excluded)
+                        put("year", year)
+                    })
+                    songGroups.add(data["songs"]?.jsonArray?.map { remoteSong(it.jsonObject) }.orEmpty())
+                    albumGroups.add(data["albums"]?.jsonArray?.map { it.jsonObject }.orEmpty())
+                }
+                val latest = library.value
+                val result = withContext(Dispatchers.Default) {
+                    val exclusions = DiscoveryExclusions(DiscoveryInputs(latest))
+                    val songs = interleaveDiscovery(songGroups) { it.id }.filter { exclusions.permits(it) }.take(12).toList()
+                    val albums = interleaveDiscovery(albumGroups) { it.homeAlbumId to it["year"] }
+                        .filter { it.homeAlbumId !in exclusions.albumIds }.toList()
+                    DiscoveryCache(songs, currentYearReleases(albums, year), System.currentTimeMillis())
+                }
+                discoveryCache.value = result
+                try {
+                    app.preferences.edit { it[discoveryCacheKey] = Json.encodeToString(result) }
+                } catch (_: IOException) {
+                    // The refreshed selection is still available in memory.
+                }
+            } catch (_: Exception) {
+                currentCoroutineContext().ensureActive()
+                discoveryFailed.value = true
+            } finally {
+                discoveryLoading.value = false
+            }
+        }
     }
     override fun onCleared() { MediaController.releaseFuture(controllerFuture); super.onCleared() }
 

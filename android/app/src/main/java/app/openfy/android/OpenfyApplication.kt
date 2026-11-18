@@ -5,6 +5,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.room.Room
@@ -14,6 +15,7 @@ import app.openfy.android.playback.YouTubeDataSource
 import app.openfy.android.downloads.Downloads
 import app.openfy.android.lyrics.LyricsRepository
 import app.openfy.android.sync.SyncClient
+import app.openfy.android.ui.MotionRepository
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import java.io.File
@@ -33,6 +35,13 @@ class OpenfyApplication : Application() {
     val audioProvider by lazy { YouTubeRuntime(::providerSources) }
     val http by lazy { OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(15,java.util.concurrent.TimeUnit.SECONDS).build() }
     val cache by lazy { SimpleCache(File(filesDir,"downloads/audio"),NoOpCacheEvictor(),StandaloneDatabaseProvider(this)) }
+    internal val motion by lazy { MotionRepository(this) }
+    /** Set only by debug design QA (DesignQaTest); release builds ignore it. */
+    @Volatile internal var qaUnmetered = false
+    internal val isDebuggable get() = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+    internal val motionVideoCache by lazy {
+        SimpleCache(File(cacheDir, "motion-video"), LeastRecentlyUsedCacheEvictor(300L * 1024 * 1024), StandaloneDatabaseProvider(this))
+    }
     val upstreamFactory by lazy { DefaultDataSource.Factory(this,YouTubeDataSource.Factory(audioProvider,http,cache)) }
     // Playback may read explicit downloads, but streaming must never create persistent downloads.
     val audioFactory by lazy { CacheDataSource.Factory().setCache(cache).setCacheWriteDataSinkFactory(null).setUpstreamDataSourceFactory(upstreamFactory) }
@@ -45,5 +54,8 @@ class OpenfyApplication : Application() {
         repository.onChanged = { sync.schedule() }
         scope.launch { downloads.reconcile(); sync.schedule() }
         scope.launch { downloads.upgradeArtwork() }
+        // Parsing the ~2 MB provider bundle dominated the first tap-to-play; do it before the user asks.
+        // It stays local: YouTube is still contacted only when playback is requested.
+        scope.launch { delay(1500); runCatching { audioProvider.warm() } }
     }
 }

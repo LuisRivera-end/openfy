@@ -85,8 +85,11 @@ class YouTubeRuntime(private val sources: () -> Pair<String,String>) {
         } catch (error: Throwable) { next.close(); throw error }
     }
 
+    /** Evaluates the bundle ahead of the first call so the first song starts sooner. Makes no network request. */
+    suspend fun warm() = withContext(thread) { mutex.withLock { machine(); Unit } }
+
     suspend fun call(method: String, params: JsonObject): JsonObject {
-        require(method in setOf("probe","probeAudio","search","resolve","artist","album","artistSongs","artistReleases","lyrics","recommendations"))
+        require(method in setOf("probe","probeAudio","search","resolve","artist","album","artistSongs","artistReleases","lyrics","recommendations","spotifyMatch"))
         return withContext(thread) { mutex.withLock {
             try { withTimeout(60_000) {
                     returned = ""

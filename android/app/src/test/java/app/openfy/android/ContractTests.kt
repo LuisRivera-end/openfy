@@ -5,6 +5,12 @@ import app.openfy.android.lyrics.Lrc
 import app.openfy.android.playback.ListeningClock
 import app.openfy.android.ui.ArtworkUrls
 import app.openfy.android.ui.CoverPalette
+import app.openfy.android.ui.AMBIENT
+import app.openfy.android.ui.ambientFade
+import app.openfy.android.ui.ambientMeanLuma
+import app.openfy.android.ui.ambientPaletteTexture
+import app.openfy.android.ui.ambientScrim
+import app.openfy.android.ui.gradeAmbient
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -21,6 +27,47 @@ class ContractTests {
         assertThrows(java.io.IOException::class.java) { app.openfy.android.playback.AudioResource.requireSame(null,original,true) }
     }
     private fun fixture(name: String)=Json.parseToJsonElement(javaClass.classLoader!!.getResourceAsStream(name)!!.bufferedReader().readText()).jsonObject
+    @Test fun ambientLightingUsesTheSameContractAsWindowsAndWeb() {
+        val contract = fixture("ambient-contract.json")
+        val parameters = buildJsonObject {
+            put("textureSize", AMBIENT.textureSize)
+            put("lumaFloor", AMBIENT.lumaFloor)
+            put("lumaCeiling", AMBIENT.lumaCeiling)
+            put("saturation", AMBIENT.saturation)
+            put("scrimMin", AMBIENT.scrimMin)
+            put("scrimMax", AMBIENT.scrimMax)
+            put("scrimPivot", AMBIENT.scrimPivot)
+            put("scrimSlope", AMBIENT.scrimSlope)
+            put("lyricsScrim", AMBIENT.lyricsScrim)
+            put("motionSpeed", AMBIENT.motionSpeed)
+            put("fadeSeconds", AMBIENT.fadeSeconds)
+        }
+        assertEquals(contract.getValue("parameters"), parameters)
+        fun JsonObject.number(key: String) = getValue(key).jsonPrimitive.double
+        for (example in contract.getValue("grade").jsonArray.map { it.jsonObject }) {
+            val (r, g, b) = example.getValue("rgb").jsonArray.map { it.jsonPrimitive.double }
+            val expected = example.getValue("expected").jsonArray.map { it.jsonPrimitive.double }
+            gradeAmbient(r, g, b).forEachIndexed { index, value ->
+                assertEquals(expected[index], value, 0.00005)
+            }
+        }
+        for (example in contract.getValue("scrim").jsonArray.map { it.jsonObject }) {
+            assertEquals(example.number("expected"), ambientScrim(example.number("luma")), 0.0000005)
+        }
+        for (example in contract.getValue("fade").jsonArray.map { it.jsonObject }) {
+            assertEquals(example.number("expected"), ambientFade(example.number("elapsed")), 0.0000005)
+        }
+        val palette = contract.getValue("palette").jsonObject
+        val pixels = ambientPaletteTexture(palette.getValue("colors").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(AMBIENT.textureSize * AMBIENT.textureSize * 4, pixels.size)
+        for (sample in palette.getValue("samples").jsonArray.map { it.jsonObject }) {
+            val offset = (sample.number("y").toInt() * AMBIENT.textureSize + sample.number("x").toInt()) * 4
+            assertEquals(sample.getValue("rgb").jsonArray.map { it.jsonPrimitive.int }, pixels.drop(offset).take(3).map { it.toInt() and 255 })
+        }
+        assertEquals(0.5, ambientMeanLuma(byteArrayOf(-1, -1, -1, -1, 0, 0, 0, -1)), 0.0000005)
+        assertEquals(listOf(0x28, 0x48, 0x3e),
+            ambientPaletteTexture(listOf("nope", "", "#zzzzzz"), 2).take(3).map { it.toInt() and 255 })
+    }
     @Test fun artworkUsesTheSameContractAsWeb() {
         for(item in fixture("artwork-contract.json").getValue("cases").jsonArray.map { it.jsonObject }) {
             val input=item.getValue("input").jsonPrimitive.content

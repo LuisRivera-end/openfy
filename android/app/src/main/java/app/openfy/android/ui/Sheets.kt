@@ -54,6 +54,19 @@ import java.util.Collections
         modifier=Modifier.fillMaxWidth().heightIn(min=52.dp).clickable(onClick=action),colors=ListItemDefaults.colors(containerColor=Surface))
 }
 
+@Composable internal fun LibraryAddSheet(
+    dismiss: ()->Unit,importFiles: ()->Unit,importFolder: ()->Unit,createPlaylist: ()->Unit
+) {
+    ModalBottomSheet(onDismissRequest=dismiss,containerColor=Surface, sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
+        Text("Añadir a tu biblioteca",style=MaterialTheme.typography.titleLarge,
+            modifier=Modifier.padding(start=Gutter,end=Gutter,bottom=8.dp))
+        SheetAction(Icons.Default.UploadFile,"Importar archivos") { dismiss(); importFiles() }
+        SheetAction(Icons.Default.FolderOpen,"Importar carpeta") { dismiss(); importFolder() }
+        SheetAction(Icons.Default.PlaylistAdd,"Crear playlist") { dismiss(); createPlaylist() }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
 @Composable internal fun PlaylistPickerSheet(playlists: List<PlaylistRow>,dismiss: ()->Unit,onSelect: (PlaylistRow)->Unit,onCreate: ()->Unit) {
     ModalBottomSheet(onDismissRequest=dismiss) {
         Text("Añadir a playlist",style=MaterialTheme.typography.titleLarge,modifier=Modifier.padding(24.dp))
@@ -77,6 +90,11 @@ import java.util.Collections
 @kotlinx.serialization.Serializable
 internal data class Filters(val source: String = "all",val downloaded: Boolean = false,val favorite: Boolean = false,
     val artist: String = "",val album: String = "",val genre: String = "",val sort: String = "default",val descending: Boolean = false) {
+    val hasActiveFilters: Boolean
+        get()=source!="all" || downloaded || favorite || artist.isNotEmpty() || album.isNotEmpty() || genre.isNotBlank()
+
+    fun clearFilters() = Filters(sort=sort,descending=descending)
+
     fun apply(songs: List<Song>,query: String,stats: Map<String,List<ListeningRow>>): List<Song> {
         val filtered=songs.filter { song ->
             (source=="all" || song.source==source) && (!downloaded || song.offlineReady) && (!favorite || song.favorite) &&

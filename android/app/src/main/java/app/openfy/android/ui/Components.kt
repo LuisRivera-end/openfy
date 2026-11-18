@@ -6,8 +6,13 @@ import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -16,12 +21,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.openfy.android.data.ListeningRow
 import app.openfy.android.data.Song
 import coil3.compose.AsyncImage
@@ -30,8 +46,10 @@ import java.io.File
 
 private fun Modifier.withGutter()=padding(horizontal=Gutter)
 
-internal fun LazyListScope.gutterItem(content: @Composable ()->Unit) {
-    item { Column(Modifier.fillMaxWidth().withGutter()) { content() } }
+internal fun songCount(count: Int) = if(count==1) "1 canción" else "$count canciones"
+
+internal fun LazyListScope.gutterItem(key: String? = null,content: @Composable ()->Unit) {
+    item(key=key) { Column(Modifier.fillMaxWidth().withGutter()) { content() } }
 }
 
 internal fun <T> LazyListScope.gutterItems(values: List<T>,key: (T)->Any,content: @Composable (T)->Unit) {
@@ -48,12 +66,15 @@ internal fun <T> LazyListScope.gutterItems(values: List<T>,key: (T)->Any,content
     Text(title,style=MaterialTheme.typography.titleLarge,modifier=Modifier.padding(top=SectionGap,bottom=12.dp))
 }
 @Composable internal fun Stat(value: String,label: String) {
-    Column { Text(value,style=MaterialTheme.typography.headlineMedium); Text(label,color=Muted,style=MaterialTheme.typography.bodySmall) }
+    Column(verticalArrangement=Arrangement.spacedBy(2.dp)) {
+        Text(value,style=MaterialTheme.typography.headlineMedium.copy(fontSize=28.sp,fontWeight=FontWeight.Bold))
+        Text(label,color=Muted,style=MaterialTheme.typography.bodySmall)
+    }
 }
 @Composable internal fun Periods(current: String,select: (String)->Unit) {
-    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.horizontalScroll(rememberScrollState()).selectableGroup(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
         listOf("7d" to "7 días","30d" to "30 días","year" to "Este año","all" to "Todo").forEach { (id,label) ->
-            FilterChip(current==id,{ select(id) },label={ Text(label) })
+            PillChip(label,current==id) { select(id) }
         }
     }
 }
@@ -66,16 +87,22 @@ internal fun <T> LazyListScope.gutterItems(values: List<T>,key: (T)->Any,content
 @Composable internal fun Retry(message: String,retry: ()->Unit) {
     Column { Text(message,color=Muted,style=MaterialTheme.typography.bodyMedium); TextButton(onClick=retry) { Text("Reintentar") } }
 }
-internal fun LazyListScope.skeletons() {
-    repeat(7) { gutterItem {
-        Row(Modifier.padding(vertical=10.dp),horizontalArrangement=Arrangement.spacedBy(16.dp)) {
-            Box(Modifier.size(56.dp).clip(RoundedCornerShape(Radii.row)).background(Surface))
-            Column {
-                Box(Modifier.padding(top=5.dp).width(180.dp).height(16.dp).background(Surface))
-                Box(Modifier.padding(top=10.dp).width(110.dp).height(12.dp).background(Surface))
+internal fun LazyListScope.skeletons(keyPrefix: String = "loading") {
+    repeat(7) { index ->
+        gutterItem("$keyPrefix:$index") {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min=64.dp),
+                horizontalArrangement=Arrangement.spacedBy(12.dp),
+                verticalAlignment=Alignment.CenterVertically
+            ) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(Radii.row)).background(Raised))
+                Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.width(148.dp).height(14.dp).background(Raised,CircleShape))
+                    Box(Modifier.width(88.dp).height(10.dp).background(Raised,CircleShape))
+                }
             }
         }
-    } }
+    }
 }
 
 @Composable internal fun Cover(source: String?,modifier: Modifier,size: Dp,background: Color = Surface) {
@@ -102,19 +129,70 @@ internal fun LazyListScope.skeletons() {
     AlertDialog(onDismissRequest=dismiss,title={ Text(title) },text={ Text(body) },
         confirmButton={ TextButton(onClick=confirm) { Text("Eliminar") } },dismissButton={ TextButton(onClick=dismiss) { Text("Cancelar") } })
 }
-@Composable internal fun SongRow(song: Song,current: String?,play: ()->Unit,more: ()->Unit,plays: Int? = null) {
-    val size=52.dp
-    Row(Modifier.fillMaxWidth().heightIn(min=76.dp).combinedClickable(onClick=play,onLongClick=more),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-        Cover(song.artwork,Modifier.size(size).clip(RoundedCornerShape(Radii.row)),size)
-        Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)) {
-            Text(song.title,color=if(current==song.id) Green else TextColor,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
-            Row(verticalAlignment=Alignment.CenterVertically) {
-                if(song.offlineReady) { Icon(Icons.Default.Download,"Disponible sin conexión",Modifier.size(13.dp),tint=Green); Spacer(Modifier.width(4.dp)) }
-                Text(if(plays!=null) "${song.artist} · $plays reproducciones" else song.artist,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1,overflow=TextOverflow.Ellipsis)
-            }
+@Composable internal fun SongRow(
+    song: Song,
+    current: String?,
+    play: ()->Unit,
+    more: ()->Unit,
+    plays: Int? = null,
+    trackNumber: Int? = null,
+    showFavorite: Boolean = true,
+    artworkSize: Dp = 48.dp,
+    status: (@Composable ()->Unit)? = null,
+    actions: (@Composable ()->Unit)? = null,
+    menu: (@Composable ()->Unit)? = null
+) {
+    val isCurrent=current==song.id
+    Row(
+        Modifier.fillMaxWidth().heightIn(min=64.dp).clip(RoundedCornerShape(Radii.row))
+            .combinedClickable(onClickLabel="Reproducir",onLongClickLabel="Abrir opciones",
+                onClick=play,onLongClick=more)
+            .semantics { if(isCurrent) stateDescription="Canción actual" },
+        verticalAlignment=Alignment.CenterVertically
+    ) {
+        if(trackNumber==null) {
+            Cover(song.artwork,Modifier.size(artworkSize).clip(RoundedCornerShape(Radii.row)),artworkSize)
+        } else {
+            Text("$trackNumber",Modifier.width(24.dp),color=Muted,style=MaterialTheme.typography.bodySmall,
+                textAlign=TextAlign.Center,maxLines=1)
         }
-        if(song.favorite) Icon(Icons.Default.Favorite,"Favorita",Modifier.size(16.dp),tint=Green)
-        ActionIcon(Icons.Default.MoreVert,"Opciones de ${song.title}",action=more)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f).padding(vertical=6.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                if(isCurrent) Box(Modifier.size(5.dp).background(Green,CircleShape))
+                Text(song.title,color=if(isCurrent) Green else TextColor,style=MaterialTheme.typography.titleSmall,
+                    maxLines=1,overflow=TextOverflow.Ellipsis)
+            }
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                if(song.offlineReady) {
+                    Icon(Icons.Default.Download,"Disponible sin conexión",Modifier.size(12.dp),tint=Green)
+                    Spacer(Modifier.width(4.dp))
+                }
+                if(song.artist.isNotBlank()) {
+                    Text(song.artist,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1,
+                        overflow=TextOverflow.Ellipsis)
+                }
+            }
+            status?.invoke()
+        }
+        if(showFavorite && song.favorite) {
+            Spacer(Modifier.width(8.dp))
+            Icon(Icons.Default.Favorite,"Favorita",Modifier.size(14.dp),tint=Green)
+        }
+        actions?.invoke()
+        Box {
+            ActionIcon(Icons.Default.MoreVert,"Opciones de ${song.title}",action=more)
+            menu?.invoke()
+        }
+        if(plays!=null) {
+            Text(
+                "$plays",
+                Modifier.width(48.dp).padding(end=4.dp).clearAndSetSemantics {
+                    contentDescription=if(plays==1) "1 reproducción" else "$plays reproducciones"
+                },
+                textAlign=TextAlign.End,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1
+            )
+        }
     }
 }
 @Composable internal fun SongCard(song: Song,play: ()->Unit,more: ()->Unit) {
@@ -139,20 +217,128 @@ internal fun LazyListScope.skeletons() {
     }
 }
 
-internal fun LazyListScope.collectionFilterItem(query: String,onQuery: (String)->Unit,onFilters: ()->Unit) {
-    gutterItem {
+internal val FavoriteArtworkColor=Color(0xff1c3528)
+
+@Composable internal fun FavoritesCover(modifier: Modifier,size: Dp) {
+    Box(modifier.background(FavoriteArtworkColor),contentAlignment=Alignment.Center) {
+        Icon(Icons.Default.Favorite,null,Modifier.size(size*0.42f),tint=Green)
+    }
+}
+
+@Composable internal fun ArtworkMosaic(artwork: List<String>,modifier: Modifier,size: Dp) {
+    if(artwork.isEmpty()) {
+        Box(modifier.background(Raised),contentAlignment=Alignment.Center) {
+            Icon(Icons.Default.BarChart,null,Modifier.size(size*0.55f),tint=Muted)
+        }
+        return
+    }
+    Column(modifier.background(Ink),verticalArrangement=Arrangement.spacedBy(1.dp)) {
+        repeat(2) { row ->
+            Row(Modifier.weight(1f),horizontalArrangement=Arrangement.spacedBy(1.dp)) {
+                repeat(2) { column ->
+                    val index=row*2+column
+                    val source=artwork.getOrNull(index)
+                    val tile=Modifier.weight(1f).fillMaxHeight()
+                    if(source!=null) Cover(source,tile,size/2)
+                    else Box(tile.background(Raised))
+                }
+            }
+        }
+    }
+}
+
+@Composable internal fun PillChip(label: String,selected: Boolean,greenSelection: Boolean = false,onClick: ()->Unit) {
+    val background=when {
+        !selected -> Raised
+        greenSelection -> FavoriteArtworkColor
+        else -> Color.White
+    }
+    val foreground=when {
+        !selected -> TextColor
+        greenSelection -> Green
+        else -> Color.Black
+    }
+    Box(
+        Modifier.heightIn(min=48.dp).widthIn(min=48.dp).clip(CircleShape)
+            .selectable(selected=selected,onClick=onClick,role=Role.Tab),
+        contentAlignment=Alignment.Center
+    ) {
+        Text(label,Modifier.heightIn(min=32.dp).background(background,CircleShape)
+            .padding(horizontal=12.dp,vertical=7.dp),color=foreground,style=MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable internal fun SearchPill(
+    query: String,
+    onQuery: (String)->Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    height: Dp = 48.dp,
+    clearLabel: String = "Borrar"
+) {
+    val fieldStyle=MaterialTheme.typography.bodyLarge.copy(color=TextColor,fontSize=16.sp)
+    val keyboard=LocalSoftwareKeyboardController.current
+    BasicTextField(
+        value=query,onValueChange=onQuery,
+        modifier=modifier.heightIn(min=height).clip(CircleShape).background(Raised),
+        textStyle=fieldStyle,singleLine=true,cursorBrush=SolidColor(Green),
+        keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Search),
+        keyboardActions=KeyboardActions(onSearch={ keyboard?.hide() }),
+        decorationBox={ input ->
+            Row(Modifier.padding(start=14.dp,end=if(query.isEmpty()) 14.dp else 0.dp),
+                verticalAlignment=Alignment.CenterVertically) {
+                Icon(Icons.Default.Search,null,Modifier.size(20.dp),tint=Muted)
+                Spacer(Modifier.width(10.dp))
+                Box(Modifier.weight(1f).padding(vertical=8.dp)) {
+                    if(query.isEmpty()) Text(placeholder,style=fieldStyle,color=Muted,maxLines=1,
+                        overflow=TextOverflow.Ellipsis)
+                    input()
+                }
+                if(query.isNotEmpty()) ActionIcon(Icons.Default.Close,clearLabel,tint=Muted) { onQuery("") }
+            }
+        }
+    )
+}
+
+internal fun LazyListScope.collectionFilterItem(
+    key: String,query: String,onQuery: (String)->Unit,onFilters: ()->Unit,
+    filtersActive: Boolean,filteredCount: Int? = null,placeholder: String = "Buscar en esta colección"
+) {
+    gutterItem(key) {
         Row(verticalAlignment=Alignment.CenterVertically) {
-            OutlinedTextField(query,onQuery,Modifier.weight(1f),singleLine=true,label={ Text("Buscar en esta colección") })
-            ActionIcon(Icons.Default.Tune,"Filtros y orden",action=onFilters)
+            SearchPill(query,onQuery,placeholder,Modifier.weight(1f))
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick=onFilters,modifier=Modifier.size(48.dp)) {
+                Box {
+                    Icon(Icons.Default.Tune,if(filtersActive) "Filtros y orden, filtros activos" else "Filtros y orden")
+                    if(filtersActive) Box(Modifier.align(Alignment.TopEnd).size(7.dp).background(Green,CircleShape))
+                }
+            }
+        }
+        if(filteredCount!=null) {
+            Text(if(filteredCount==1) "1 coincidencia" else "$filteredCount coincidencias",
+                Modifier.padding(start=14.dp,top=8.dp,bottom=4.dp),color=Muted,
+                style=MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 internal fun LazyListScope.songItems(tracks: List<Song>,songMap: Map<String,Song>,currentId: String?,play: (Song)->Unit,
-    onSongActions: (Song)->Unit,stats: Map<String,List<ListeningRow>> = emptyMap()) {
-    gutterItems(tracks,key={ it.id }) { song ->
+    onSongActions: (Song)->Unit,stats: Map<String,List<ListeningRow>> = emptyMap(),
+    keyPrefix: String = "songs",trackNumbers: Map<String,Int> = emptyMap(),showFavorite: Boolean = true,
+    artworkSize: Dp = 48.dp) {
+    val occurrences=mutableMapOf<String,Int>()
+    val rows=tracks.map { song ->
+        val occurrence=(occurrences[song.id] ?: 0)+1
+        occurrences[song.id]=occurrence
+        "$keyPrefix:${song.id}:$occurrence" to song
+    }
+    gutterItems(rows,key={ it.first }) { (_,song) ->
         val saved=songMap[song.id]
-        SongRow(song.copy(favorite=saved?.favorite ?: song.favorite,offlineReady=saved?.offlineReady ?: song.offlineReady),currentId,
-            { play(song) },{ onSongActions(song) },stats[song.id]?.sumOf { it.plays })
+        SongRow(
+            song.copy(favorite=saved?.favorite ?: song.favorite,offlineReady=saved?.offlineReady ?: song.offlineReady),
+            currentId,{ play(song) },{ onSongActions(song) },stats[song.id]?.sumOf { it.plays },
+            trackNumber=trackNumbers[song.id],showFavorite=showFavorite,artworkSize=artworkSize
+        )
     }
 }

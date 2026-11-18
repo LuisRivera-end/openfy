@@ -30,6 +30,7 @@ internal val Motion=booleanPreferencesKey("motionArt")
     var code by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var licenses by remember { mutableStateOf(false) }
+    var spotify by remember { mutableStateOf(false) }
     val typography=MaterialTheme.typography
     Dialog(onDismissRequest=dismiss,properties=DialogProperties(usePlatformDefaultWidth=false)) {
         Surface(Modifier.fillMaxSize(),color=Ink) {
@@ -49,6 +50,7 @@ internal val Motion=booleanPreferencesKey("motionArt")
                 Text("El teléfono mantiene su biblioteca, descargas e historial.",color=Muted,style=typography.bodyMedium)
                 OutlinedButton(onClick=importFiles) { Text("Importar archivos") }
                 OutlinedButton(onClick=importFolder) { Text("Importar carpeta") }
+                OutlinedButton(onClick={ spotify=true }) { Text("Importar desde Spotify") }
                 SectionTitle("Apariencia")
                 Row(verticalAlignment=Alignment.CenterVertically) { Text("Movimiento ambiental",Modifier.weight(1f),style=typography.bodyMedium); Switch(effects,{ vm.run { vm.app.preferences.edit { prefs -> prefs[Effects]=it } } }) }
                 Row(verticalAlignment=Alignment.CenterVertically) { Text("Portadas animadas con Wi-Fi",Modifier.weight(1f),style=typography.bodyMedium); Switch(motion,{ vm.run { vm.app.preferences.edit { prefs -> prefs[Motion]=it } } }) }
@@ -71,6 +73,11 @@ internal val Motion=booleanPreferencesKey("motionArt")
                 TextButton(onClick={ licenses=true }) { Text("Licencias de código abierto") }
             }
         }
+    }
+    if(spotify) {
+        // A manual search from the review list switches to Buscar, so Settings closes with it.
+        val query=remember { vm.search.value.query }
+        SpotifyImportScreen(vm) { spotify=false; if(vm.search.value.query!=query) dismiss() }
     }
     if(licenses) AlertDialog(onDismissRequest={ licenses=false },title={ Text("Licencias") },text={
         val text=remember { vm.app.assets.open("provider/NOTICE.txt").bufferedReader().use { it.readText() } }

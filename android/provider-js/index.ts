@@ -1,4 +1,5 @@
 import { searchYouTubeMusic, resolveYouTubeAudio, youtubeSession } from '../../server/utils/youtube-music'
+import { spotifyMatch } from './spotify'
 import { searchYouTubeArtists, searchYouTubeAlbums, getYouTubeArtist, getYouTubeAlbum, getYouTubeArtistSongs, getYouTubeArtistReleases, getYouTubeDiscoveryArtist } from '../../server/utils/youtube-catalog'
 
 globalThis.openfy = {
@@ -24,12 +25,16 @@ globalThis.openfy = {
     const groups=await Promise.all(seed.similar.slice(0,2).map(getYouTubeDiscoveryArtist))
     const excluded=new Set(p.excluded || [])
     const songs=[...new Map(groups.flatMap(group=>group.songs).filter(song=>!excluded.has(song.videoId)).map(song=>[song.videoId,song])).values()].slice(0,12)
-    const year=new Date().getFullYear()
-    const albums=[...new Map([seed,...groups].flatMap(group=>group.releases).filter(album=>album.year && album.year>=year-1).map(album=>[album.id,album])).values()].slice(0,12)
+    const year=Number.isInteger(p.year) ? Number(p.year) : new Date().getFullYear()
+    const albums=[...new Map([seed,...groups].flatMap(group=>group.releases)
+      .filter(album=>album.year !== null && album.year >= year-1 && album.year <= year)
+      .map(album=>[album.id,album])).values()]
+      .sort((left,right)=>(right.year ?? 0)-(left.year ?? 0)).slice(0,24)
     return { songs,albums }
   },
   lyrics: async (p: any) => {
     const result = await (await youtubeSession()).music.getLyrics(p.id)
     return { plainText:result?.description.toString().trim() || '', attribution:result?.footer?.toString() || 'YouTube Music' }
   },
+  spotifyMatch,
 }

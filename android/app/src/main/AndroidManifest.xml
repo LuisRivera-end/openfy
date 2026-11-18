@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
@@ -25,6 +26,8 @@
         <service android:name=".downloads.AudioDownloadService" android:exported="false" android:foregroundServiceType="dataSync">
             <intent-filter><action android:name="androidx.media3.exoplayer.downloadService.action.RESTART"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
         </service>
+        <service android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync" tools:node="merge"/>
         <service android:name="androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService"
             android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE"/>
     </application>

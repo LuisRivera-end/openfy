@@ -5,13 +5,19 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.openfy.android.data.CollectionRules
 import app.openfy.android.data.PlaylistRow
@@ -20,48 +26,93 @@ import app.openfy.android.data.Song
 internal fun LazyListScope.libraryItems(vm: OpenfyViewModel,librarySongs: List<Song>,playlists: List<PlaylistRow>,
     tracks: List<Song>,songMap: Map<String,Song>,currentId: String?,mode: String,onMode: (String)->Unit,
     query: String,onQuery: (String)->Unit,onFilters: ()->Unit,importFiles: ()->Unit,importFolder: ()->Unit,
-    createPlaylist: ()->Unit,onSongActions: (Song)->Unit) {
-    gutterItem {
-        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            AssistChip({ vm.openLocal("favorites","favorites","Tus favoritas",emptyList()) },label={ Text("Favoritas") },leadingIcon={ Icon(Icons.Default.Favorite,null,Modifier.size(18.dp),tint=Green) })
-            AssistChip({ vm.openLocal("top","top","Más reproducidas",emptyList()) },label={ Text("Más reproducidas") })
+    createPlaylist: ()->Unit,onSongActions: (Song)->Unit,filtersActive: Boolean,onClearFilters: ()->Unit,
+    rankingArtwork: List<String>) {
+    gutterItem("library:categories") {
+        var showAdd by rememberSaveable { mutableStateOf(false) }
+        Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()).selectableGroup(),
+                horizontalArrangement=Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("Canciones","Álbumes","Artistas","Playlists").forEach { label ->
+                    PillChip(label,mode==label,greenSelection=true) { onMode(label) }
+                }
+            }
+            Spacer(Modifier.width(4.dp))
+            ActionIcon(Icons.Default.Add,"Añadir") { showAdd=true }
         }
-        Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            listOf("Canciones","Álbumes","Artistas","Playlists").forEach { label -> FilterChip(mode==label,{ onMode(label) },label={ Text(label) }) }
+        if(showAdd) {
+            LibraryAddSheet(dismiss={ showAdd=false },importFiles=importFiles,importFolder=importFolder,
+                createPlaylist=createPlaylist)
         }
-        Row {
-            TextButton(onClick=importFiles) { Icon(Icons.Default.Add,null); Text("Importar") }
-            TextButton(onClick=importFolder) { Icon(Icons.Default.FolderOpen,null); Text("Carpeta") }
-            if(mode=="Playlists") TextButton(onClick=createPlaylist) { Text("Crear playlist") }
+    }
+    val isFiltered=query.isNotEmpty() || filtersActive
+    if(mode=="Canciones") {
+        collectionFilterItem("library:filter",query,onQuery,onFilters,filtersActive,
+            if(isFiltered) tracks.size else null,placeholder="Buscar en tu biblioteca")
+    }
+    if(mode=="Playlists" || mode=="Canciones") {
+        gutterItem("library:favorites") {
+            LibraryCollectionRow("Tus favoritas","Playlist",{ vm.openLocal("favorites","favorites","Tus favoritas",emptyList()) }) {
+                FavoritesCover(Modifier.size(44.dp).clip(RoundedCornerShape(Radii.row)),44.dp)
+            }
+        }
+        gutterItem("library:ranking") {
+            LibraryCollectionRow("Más reproducidas","Historial",{ vm.openLocal("top","top","Más reproducidas",emptyList()) }) {
+                ArtworkMosaic(rankingArtwork,Modifier.size(44.dp).clip(RoundedCornerShape(Radii.row)),44.dp)
+            }
         }
     }
     if(mode=="Playlists") {
-        gutterItems(playlists,key={ it.id }) { row ->
+        gutterItems(playlists,key={ "library:playlist:${it.id}" }) { row ->
             val entries=CollectionRules.entries(row.entries)
-            val size=56.dp
-            ListItem(headlineContent={ Text(row.name,style=MaterialTheme.typography.titleSmall) },
-                supportingContent={ Text("${entries.size} canciones",style=MaterialTheme.typography.bodySmall) },
-                leadingContent={ Cover(entries.firstNotNullOfOrNull { songMap[it]?.artwork },Modifier.size(size).clip(RoundedCornerShape(Radii.row)),size) },
-                modifier=Modifier.clickable { vm.openLocal("playlist",row.id,row.name,emptyList()) },colors=ListItemDefaults.colors(containerColor=Ink))
+            LibraryCollectionRow(row.name,"Playlist · ${songCount(entries.size)}",{
+                vm.openLocal("playlist",row.id,row.name,emptyList())
+            }) {
+                Cover(entries.firstNotNullOfOrNull { songMap[it]?.artwork },
+                    Modifier.size(44.dp).clip(RoundedCornerShape(Radii.row)),44.dp)
+            }
         }
     }
     if(mode=="Álbumes" || mode=="Artistas") {
         val albums=mode=="Álbumes"
-        val shape=if(albums) RoundedCornerShape(Radii.card) else CircleShape
-        val groups=librarySongs.groupBy { if(albums) it.album.ifBlank { "Sin álbum" } else it.artist.ifBlank { "Artista desconocido" } }.toSortedMap()
-        gutterItems(groups.entries.toList(),key={ it.key }) { (name,songs) ->
-            val size=64.dp
-            val artwork=songs.firstOrNull()?.artwork
-            ListItem(headlineContent={ Text(name,style=MaterialTheme.typography.titleSmall) },
-                supportingContent={ Text("${songs.size} canciones",style=MaterialTheme.typography.bodySmall) },
-                leadingContent={ Cover(artwork,Modifier.size(size).clip(shape),size) },
-                modifier=Modifier.clickable { vm.openLocal(if(albums) "localalbum" else "localartist",if(name in setOf("Sin álbum","Artista desconocido")) "" else name,name,songs,artwork) },
-                colors=ListItemDefaults.colors(containerColor=Ink))
+        val kind=if(albums) "localalbum" else "localartist"
+        val shape=if(albums) RoundedCornerShape(Radii.row) else CircleShape
+        val type=if(albums) "Álbum" else "Artista"
+        val untitled=if(albums) "Sin álbum" else "Artista desconocido"
+        val groups=librarySongs.groupBy { if(albums) it.album else it.artist }
+            .entries.sortedBy { it.key.ifBlank { untitled } }
+        gutterItems(groups,key={ "library:$kind:${it.key}" }) { (id,songs) ->
+            val artwork=songs.firstNotNullOfOrNull { it.artwork }
+            val name=id.ifBlank { untitled }
+            LibraryCollectionRow(name,"$type · ${songCount(songs.size)}",{
+                vm.openLocal(kind,id,name,songs,artwork)
+            }) {
+                Cover(artwork,Modifier.size(44.dp).clip(shape),44.dp)
+            }
         }
     }
-    if(librarySongs.isEmpty() && mode!="Playlists") gutterItem { Empty("Tu biblioteca está lista para empezar.","Marca favoritas, crea una playlist o importa tus archivos.") }
+    if(librarySongs.isEmpty() && mode!="Playlists" && (mode!="Canciones" || !isFiltered)) {
+        gutterItem("library:empty") { Empty("Tu biblioteca está vacía","Guarda canciones o importa tus archivos.") }
+    }
     if(mode=="Canciones") {
-        collectionFilterItem(query,onQuery,onFilters)
-        songItems(tracks,songMap,currentId,{ vm.play(it,tracks) },onSongActions)
+        if(isFiltered && tracks.isEmpty()) noCollectionMatches("library:no-matches",onClearFilters)
+        songItems(tracks,songMap,currentId,{ vm.play(it,tracks) },onSongActions,artworkSize=44.dp)
+    }
+}
+
+@Composable private fun LibraryCollectionRow(title: String,subtitle: String,onClick: ()->Unit,artwork: @Composable ()->Unit) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min=64.dp).clip(RoundedCornerShape(Radii.row))
+            .clickable(role=Role.Button,onClick=onClick),
+        verticalAlignment=Alignment.CenterVertically,
+        horizontalArrangement=Arrangement.spacedBy(12.dp)
+    ) {
+        artwork()
+        Column(verticalArrangement=Arrangement.spacedBy(2.dp)) {
+            Text(title,style=MaterialTheme.typography.titleSmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+            Text(subtitle,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1,overflow=TextOverflow.Ellipsis)
+        }
     }
 }
