@@ -180,3 +180,6 @@
     transform: none !important;
   }
 }
+
+/* Fade the shelf ends so partially visible cards (and their badges) do not end in a hard cut. */
+.library-shelves { -webkit-mask-image: linear-gradient(90deg, #0000, #000 48px, #000 calc(100% - 48px), #0000); mask-image: linear-gradient(90deg, #0000, #000 48px, #000 calc(100% - 48px), #0000); }
