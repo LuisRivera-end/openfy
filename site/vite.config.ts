@@ -5,6 +5,8 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   root: import.meta.dirname,
   base: './',
+  // Shared imports also use this config, so the site can build before Nuxt generates .nuxt/.
+  tsconfig: './tsconfig.json',
   server: { port: 5180, fs: { allow: [resolve(import.meta.dirname, '..')] } },
   preview: { port: 5181 },
   build: {
