@@ -1,0 +1,2 @@
+.statement { padding-block: clamp(120px, 26vh, 260px); }
+.statement-text { max-width: 18ch; margin-inline: auto; text-align: center; font-size: clamp(40px, 6.6vw, 96px); }

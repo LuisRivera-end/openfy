@@ -1,0 +1,220 @@
+{
+  "meta": {
+    "title": "Openfy · Your personal music library",
+    "description": "A personal music library for Windows, Android, and iPhone. Local files and YouTube Music together, with synced lyrics and offline downloads."
+  },
+  "nav": {
+    "features": "Features",
+    "how": "How it works",
+    "download": "Download",
+    "faq": "FAQ",
+    "news": "Updates",
+    "cta": "Get Openfy",
+    "langLabel": "Español"
+  },
+  "hero": {
+    "eyebrow": "Personal music library",
+    "titleLine1": "All your music.",
+    "titleLine2": "Truly your own.",
+    "subtitle": "Combine your local tracks and YouTube Music into one private library with zero accounts or tracking. Enjoy synced lyrics, dynamic visuals, and verified offline playback across Windows, Android, and iPhone.",
+    "ctaPrimary": "Download free",
+    "ctaSecondary": "How it works",
+    "scrollHint": "Scroll to explore"
+  },
+  "statement": {
+    "line": "A private music library where your collection always belongs to you."
+  },
+  "sequence": {
+    "steps": [
+      {
+        "kicker": "01 · Home",
+        "title": "Your music upfront",
+        "body": "Jump straight back into your favorites, albums, and top playlists. A clean, responsive home screen designed exclusively for enjoying your collection."
+      },
+      {
+        "kicker": "02 · Player",
+        "title": "Color that follows every note",
+        "body": "The expanded player turns the cover itself into slowly moving light, darkened only as much as the text needs to stay readable."
+      },
+      {
+        "kicker": "03 · Lyrics",
+        "title": "Follow every line in time",
+        "body": "Real-time synced lyrics for both local tracks and YouTube Music. Tap any line to instantly jump to that exact beat."
+      },
+      {
+        "kicker": "04 · Big Picture",
+        "title": "The ultimate fullscreen view",
+        "body": "Take Openfy fullscreen on Windows with Direct3D 11 hardware acceleration. Looping motion covers, elegant fading lyrics, and an immersive visual presence."
+      }
+    ]
+  },
+  "library": {
+    "kicker": "Your Collection",
+    "title": "Local files meet YouTube Music",
+    "body": "Import your collection without modifying original files. Search and stream public YouTube Music tracks via an unofficial interface, combining both sources into your unified playlists.",
+    "chips": [
+      "FLAC",
+      "MP3",
+      "AAC",
+      "YouTube Music"
+    ]
+  },
+  "lyrics": {
+    "kicker": "Synced Timing",
+    "title": "Word by word, in rhythm",
+    "body": "Follow along with real-time highlighted verses. Openfy prioritizes embedded lyrics and LRCLIB, saving them with your downloads so you can sing along offline.",
+    "credit": "{song} · {artist} — lyrics via LRCLIB",
+    "sample": [
+      "Streetlights flicker down the quiet avenue",
+      "A distant bassline warms the dark",
+      "Neon reflections drift on wet asphalt",
+      "The rhythm carries midnight forward",
+      "Footsteps echoing through empty halls",
+      "City skyline humming a sweet tune",
+      "Every corner remembers your song",
+      "Morning waits beyond the last verse"
+    ]
+  },
+  "offline": {
+    "kicker": "Real Downloads",
+    "title": "Your music travels with you",
+    "body": "Download whole albums or playlists. Every file is checked by size and SHA-256 before it is marked ready, so it plays in airplane mode without your PC.",
+    "stat1Value": "SHA-256",
+    "stat1Label": "Verified integrity",
+    "stat2Value": "256 kbps",
+    "stat2Label": "AAC copies for iPhone from your FLAC files",
+    "stat3Value": "0",
+    "stat3Label": "Accounts needed"
+  },
+  "bigPicture": {
+    "kicker": "Big Picture Mode",
+    "title": "The stage your music deserves",
+    "body": "Built for Windows with Direct3D 11. Color-reactive ambient lighting, looping motion album covers, and auto-hiding controls turn your screen into a breathtaking visual stage."
+  },
+  "privacy": {
+    "kicker": "Privacy by Design",
+    "title": "Your listening habits are yours",
+    "body": "Openfy requires no accounts, no signups, and zero third-party telemetry. Your listening stats and playback history are stored strictly on your personal hardware.",
+    "points": [
+      "No accounts, logins, or cloud passwords.",
+      "Listening stats are saved exclusively on your PC.",
+      "Plays are counted accurately upon reaching 90% listened.",
+      "Private end-to-end access with no exposed public ports."
+    ]
+  },
+  "how": {
+    "kicker": "Architecture",
+    "title": "Private, distributed, and simple",
+    "body": "Your Windows PC serves as the central host. Your mobile devices connect privately over your own secure network without intermediate third-party cloud servers.",
+    "pc": "Your Windows PC",
+    "pcCaption": "The native .NET/WinUI app hosts your library and Node server, delivering WASAPI audio and managing downloads.",
+    "tailscale": "Tailscale Private Serve",
+    "tailscaleCaption": "Tailscale Serve publishes a private HTTPS origin for your devices only, opening zero router ports and keeping your music secure.",
+    "phone": "iPhone & Web Browsers",
+    "phoneCaption": "A responsive PWA served by your PC. Streams while your machine is awake and keeps verified downloads for offline playback.",
+    "android": "Standalone Native Android",
+    "androidCaption": "Standalone Kotlin app that plays and downloads independently without the PC, with optional sync for favorites and playlists.",
+    "hostTag": "Host"
+  },
+  "download": {
+    "kicker": "Downloads",
+    "title": "Start listening today",
+    "body": "Download official, free and open-source builds for Windows and Android directly from GitHub Releases. No signups, no subscriptions.",
+    "latest": "Version {version}",
+    "published": "Released on {date}",
+    "checksums": "SHA-256 checksums",
+    "allReleases": "All releases on GitHub",
+    "unavailable": "Unable to reach GitHub Releases.",
+    "windowsName": "Openfy for Windows",
+    "windowsReq": "Windows 11 (x64)",
+    "windowsCta": "Download installer (.exe)",
+    "windowsNote": "Self-contained 64-bit installer. Includes the native WinUI application and local server.",
+    "androidName": "Openfy for Android",
+    "androidReq": "Android 10 or later · ARM64",
+    "androidCta": "Download package (.apk)",
+    "androidNote": "Standalone native app with in-app update checks via GitHub Releases.",
+    "webName": "Openfy PWA (iPhone / Web)",
+    "webReq": "Safari on iPhone or any modern browser",
+    "webCta": "Setup guide",
+    "webSteps": [
+      "Install and launch Openfy on your Windows PC.",
+      "Enable Tailscale Serve to generate a private HTTPS address.",
+      "Open that private address in Safari on your iPhone.",
+      "Tap Share and select 'Add to Home Screen'."
+    ],
+    "missing": "This release does not include this installer; find it in an earlier release."
+  },
+  "faq": {
+    "kicker": "Frequently Asked Questions",
+    "title": "Clear answers about Openfy",
+    "body": "Everything you need to know about Openfy's architecture, privacy, compatibility, and day-to-day operation.",
+    "items": [
+      {
+        "q": "What is Openfy?",
+        "a": "Openfy is an open-source personal music library. It lets you bring together your local audio files (FLAC, MP3, AAC) and YouTube Music into a single clean, private, and unified interface, complete with synced lyrics and dynamic artwork."
+      },
+      {
+        "q": "Which devices and platforms are supported?",
+        "a": "Openfy features a native app for Windows 11 (built with .NET and WinUI 3), an independent native app for Android (Android 10+ in Kotlin), and a Progressive Web App (PWA) tailored for Safari on iPhone and modern web browsers."
+      },
+      {
+        "q": "Do I need an account or sign-up?",
+        "a": "No. Openfy requires no accounts, passwords, cloud logins, or third-party user tracking. Your library belongs to you and runs autonomously on your own devices."
+      },
+      {
+        "q": "Where are my music and listening data stored?",
+        "a": "Everything is stored locally on your own machine. The SQLite database and files live in your personal storage. Your listening stats, favorites, and playlists are never sent to external servers or shared with third parties."
+      },
+      {
+        "q": "How does remote access work away from home?",
+        "a": "Openfy uses Tailscale Serve to connect your mobile devices to your Windows PC over a private, encrypted HTTPS tunnel. You don't need to open ports on your router or expose your library to the public internet."
+      },
+      {
+        "q": "How do offline downloads work?",
+        "a": "You can download whole albums, playlists, or individual tracks to your device. Each file is verified by size and SHA-256 checksum before being marked complete, preserving lyrics and cover art for airplane mode without relying on your PC."
+      },
+      {
+        "q": "How do synchronized lyrics work?",
+        "a": "Openfy prioritizes embedded lyrics in your audio files and retrieves matching lyrics from LRCLIB. Lyrics highlight line by line in real time and are saved alongside offline downloads so you can read them without a connection."
+      },
+      {
+        "q": "Is Openfy free and open source? How does it update?",
+        "a": "Yes, Openfy is completely free and open source under the MIT License. Windows installers and Android APK packages are published directly on GitHub Releases along with verified SHA-256 checksums."
+      }
+    ]
+  },
+  "news": {
+    "kicker": "Release Notes",
+    "title": "Recent updates",
+    "more": "View all notes on GitHub",
+    "typeNew": "New",
+    "typeImproved": "Improved",
+    "typeFixed": "Fixed",
+    "spanishOnly": "Detailed release notes are published in Spanish."
+  },
+  "footer": {
+    "tagline": "Your music, your files, your control.",
+    "github": "GitHub Repository",
+    "license": "Open source under MIT License",
+    "disclaimer": "YouTube Music streaming and search operate via an unofficial interface. Openfy is an independent project and is not affiliated with YouTube, Google, or Apple.",
+    "madeWith": "Crafted with passion for music lovers.",
+    "media": "Covers and animated covers shown in the demos belong to their respective owners and appear only as examples; the lyric excerpt comes from LRCLIB."
+  },
+  "ui": {
+    "greeting": "Good afternoon",
+    "home": "Home",
+    "favorites": "Your favorites",
+    "suggestions": "Suggestions for you",
+    "releases": "2026 releases",
+    "search": "Search",
+    "library": "Library",
+    "nowPlaying": "Now playing",
+    "cover": "Cover",
+    "lyrics": "Lyrics",
+    "queue": "Queue",
+    "syncedLyrics": "Synced lyrics",
+    "upNext": "Up next",
+    "remaining": "{seconds} s remaining",
+    "downloads": "Downloads"
+  }
+}

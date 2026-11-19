@@ -1,0 +1,220 @@
+{
+  "meta": {
+    "title": "Openfy · Tu biblioteca musical personal",
+    "description": "Biblioteca musical personal para Windows, Android e iPhone. Tus archivos y YouTube Music juntos, con letras sincronizadas y descargas sin conexión."
+  },
+  "nav": {
+    "features": "Funciones",
+    "how": "Cómo funciona",
+    "download": "Descargar",
+    "faq": "Preguntas frecuentes",
+    "news": "Novedades",
+    "cta": "Obtener Openfy",
+    "langLabel": "English"
+  },
+  "hero": {
+    "eyebrow": "Biblioteca musical personal",
+    "titleLine1": "Toda tu música.",
+    "titleLine2": "Bajo tu propio control.",
+    "subtitle": "Reúne tus archivos locales y YouTube Music en una sola biblioteca sin cuentas ni rastreo. Disfruta letras sincronizadas, portadas dinámicas y descargas verificadas en Windows, Android e iPhone.",
+    "ctaPrimary": "Descargar gratis",
+    "ctaSecondary": "Cómo funciona",
+    "scrollHint": "Desplaza para explorar"
+  },
+  "statement": {
+    "line": "Una biblioteca musical privada donde la música siempre te pertenece."
+  },
+  "sequence": {
+    "steps": [
+      {
+        "kicker": "01 · Inicio",
+        "title": "Tu música al frente",
+        "body": "Vuelve al instante a tus canciones favoritas, álbumes y playlists más escuchadas. Un espacio limpio, rápido y pensado exclusivamente para disfrutar de tu música."
+      },
+      {
+        "kicker": "02 · Reproductor",
+        "title": "Color que acompaña cada nota",
+        "body": "El reproductor ampliado convierte la propia portada en un fondo de luz que se mueve despacio, y oscurece solo lo necesario para que leas."
+      },
+      {
+        "kicker": "03 · Letras",
+        "title": "Sigue cada verso al compás",
+        "body": "Letras sincronizadas en tiempo real tanto para tus archivos locales como para YouTube Music. Toca cualquier línea para saltar de inmediato a ese momento."
+      },
+      {
+        "kicker": "04 · Big Picture",
+        "title": "La pantalla completa definitiva",
+        "body": "Lleva Openfy a pantalla completa en Windows con aceleración Direct3D 11. Portadas animadas, letras que se desvanecen con elegancia y una presencia escénica única."
+      }
+    ]
+  },
+  "library": {
+    "kicker": "Tu colección",
+    "title": "Tus archivos y YouTube Music juntos",
+    "body": "Importa tu colección sin alterar tus archivos originales. Busca y reproduce canciones públicas de YouTube Music mediante una interfaz no oficial, combinando ambas fuentes en las mismas listas.",
+    "chips": [
+      "FLAC",
+      "MP3",
+      "AAC",
+      "YouTube Music"
+    ]
+  },
+  "lyrics": {
+    "kicker": "Sincronización exacta",
+    "title": "Palabra por palabra, en vivo",
+    "body": "Sigue el ritmo con versos resaltados al instante. Openfy prioriza letras incrustadas y LRCLIB, y las guarda con tus descargas para cantar incluso sin conexión.",
+    "credit": "{song} · {artist} — letra vía LRCLIB",
+    "sample": [
+      "Las luces bajan sobre la avenida",
+      "Un eco suave despierta la noche",
+      "Bajo el puente brillan sombras lentas",
+      "El ritmo marca el pulso urbano",
+      "Caminas sin prisa entre los reflejos",
+      "La melodía flota en el aire",
+      "Cada esquina guarda una canción",
+      "Y la ciudad vuelve a respirar"
+    ]
+  },
+  "offline": {
+    "kicker": "Descargas reales",
+    "title": "Tu música viaja contigo",
+    "body": "Descarga álbumes o playlists enteras. Cada archivo se comprueba por tamaño y SHA-256 antes de marcarse como listo, para escuchar en modo avión sin depender de tu PC.",
+    "stat1Value": "SHA-256",
+    "stat1Label": "Integridad verificada",
+    "stat2Value": "256 kbps",
+    "stat2Label": "Copias AAC para el iPhone desde tus FLAC",
+    "stat3Value": "0",
+    "stat3Label": "Cuentas necesarias"
+  },
+  "bigPicture": {
+    "kicker": "Modo Big Picture",
+    "title": "El escenario que tu música merece",
+    "body": "Construido para Windows con Direct3D 11. Fondos ambientales que respiran con la música, portadas animadas en bucle y controles que se ocultan en reposo para transformar tu pantalla."
+  },
+  "privacy": {
+    "kicker": "Privacidad por diseño",
+    "title": "Tus hábitos no son mercancía",
+    "body": "Openfy funciona sin cuentas, registros ni telemetría de terceros. Tus datos de reproducción y tus estadísticas se procesan y almacenan únicamente en tu propia máquina.",
+    "points": [
+      "Sin cuentas, inicios de sesión ni contraseñas.",
+      "Tus estadísticas de escucha se guardan únicamente en tu PC.",
+      "Una reproducción cuenta con precisión al alcanzar el 90 %.",
+      "Conexión privada de extremo a extremo sin exponer puertos."
+    ]
+  },
+  "how": {
+    "kicker": "Arquitectura",
+    "title": "Simple, privado y descentralizado",
+    "body": "Tu equipo con Windows es el anfitrión de tu biblioteca. Tus dispositivos móviles se conectan de forma segura a través de tu propia red privada, sin servidores intermedios.",
+    "pc": "Tu PC con Windows",
+    "pcCaption": "La app nativa (.NET/WinUI) aloja tu biblioteca y el servidor Node. Reproduce con audio WASAPI y gestiona tus descargas.",
+    "tailscale": "Túnel privado Tailscale",
+    "tailscaleCaption": "Tailscale Serve publica un origen HTTPS privado solo para tus equipos, sin abrir puertos en tu router ni exponer tu música.",
+    "phone": "iPhone y navegadores",
+    "phoneCaption": "Una PWA ligera servida por tu PC. Reproduce en streaming mientras el equipo está encendido y guarda descargas verificadas sin conexión.",
+    "android": "Android nativo autónomo",
+    "androidCaption": "App nativa en Kotlin que reproduce y descarga de forma independiente sin el PC, con sincronización opcional de favoritas y playlists.",
+    "hostTag": "Anfitrión"
+  },
+  "download": {
+    "kicker": "Descargas",
+    "title": "Empieza a escuchar hoy",
+    "body": "Descarga las versiones oficiales gratuitas y de código abierto para Windows y Android. Sin registros ni pagos.",
+    "latest": "Versión {version}",
+    "published": "Publicada el {date}",
+    "checksums": "Sumas de verificación SHA-256",
+    "allReleases": "Todas las versiones en GitHub",
+    "unavailable": "No se pudo conectar con GitHub Releases.",
+    "windowsName": "Openfy para Windows",
+    "windowsReq": "Windows 11 (x64)",
+    "windowsCta": "Descargar instalador (.exe)",
+    "windowsNote": "Instalador autocontenido de 64 bits. Incluye la aplicación nativa WinUI y el servidor local.",
+    "androidName": "Openfy para Android",
+    "androidReq": "Android 10 o superior · ARM64",
+    "androidCta": "Descargar paquete (.apk)",
+    "androidNote": "Aplicación nativa autónoma con actualizaciones directas desde GitHub Releases.",
+    "webName": "Openfy PWA (iPhone / Web)",
+    "webReq": "Safari en iPhone o cualquier navegador moderno",
+    "webCta": "Guía de instalación",
+    "webSteps": [
+      "Instala e inicia Openfy en tu equipo con Windows.",
+      "Activa Tailscale Serve para generar una dirección HTTPS privada.",
+      "Abre esa dirección en Safari desde tu iPhone.",
+      "Toca Compartir y selecciona «Añadir a pantalla de inicio»."
+    ],
+    "missing": "Esta versión no incluye este instalador; búscalo en versiones anteriores."
+  },
+  "faq": {
+    "kicker": "Preguntas frecuentes",
+    "title": "Respuestas claras sobre Openfy",
+    "body": "Todo lo que necesitas saber sobre la arquitectura, privacidad, compatibilidad y funcionamiento de tu biblioteca.",
+    "items": [
+      {
+        "q": "¿Qué es Openfy?",
+        "a": "Openfy es una biblioteca musical personal de código abierto. Te permite reunir tus archivos de audio locales (FLAC, MP3, AAC) y la música de YouTube Music en una sola interfaz limpia, privada y unificada, con letras sincronizadas y portadas dinámicas."
+      },
+      {
+        "q": "¿En qué dispositivos y plataformas puedo usar Openfy?",
+        "a": "Openfy cuenta con una aplicación nativa para Windows 11 (construida con .NET y WinUI 3), una aplicación nativa autónoma para Android (Android 10 o superior en Kotlin), y una Progressive Web App (PWA) diseñada para Safari en iPhone y cualquier navegador web moderno."
+      },
+      {
+        "q": "¿Necesito crear una cuenta o registrarme para usarlo?",
+        "a": "No. Openfy no tiene cuentas, contraseñas, inicios de sesión ni servidores en la nube de terceros. Tu colección te pertenece a ti y funciona de forma autónoma en tus propios dispositivos."
+      },
+      {
+        "q": "¿Dónde se guardan mis datos y estadísticas de escucha?",
+        "a": "Todo se almacena localmente en tu propio equipo. La base de datos SQLite y los archivos residen en tu almacenamiento personal. Tus estadísticas de reproducción, favoritos y listas no se envían a ningún servidor externo ni se comparten con terceros."
+      },
+      {
+        "q": "¿Cómo funciona el acceso remoto fuera de casa?",
+        "a": "Openfy utiliza Tailscale Serve para conectar tus dispositivos móviles a tu PC con Windows a través de un túnel privado y cifrado con HTTPS. No necesitas abrir puertos en tu router ni exponer tu música a internet público."
+      },
+      {
+        "q": "¿Cómo funcionan las descargas sin conexión?",
+        "a": "Puedes descargar álbumes, listas o canciones individuales en tu dispositivo. Cada archivo se valida verificando su tamaño y suma de verificación SHA-256 antes de darse por completado, guardando también sus letras y portadas para reproducir en modo avión sin depender del PC."
+      },
+      {
+        "q": "¿De dónde provienen las letras sincronizadas?",
+        "a": "Openfy prioriza las letras incrustadas en tus archivos de audio y complementa el catálogo con LRCLIB. Las letras se resaltan verso a verso en tiempo real y quedan guardadas con tus descargas para que puedas seguirlas incluso sin conexión."
+      },
+      {
+        "q": "¿Openfy es gratuito y de código abierto? ¿Cómo se actualiza?",
+        "a": "Sí, Openfy es totalmente gratuito y de código abierto bajo la licencia MIT. Los instaladores para Windows y los paquetes APK para Android se publican directamente en GitHub Releases con sumas de comprobación SHA-256."
+      }
+    ]
+  },
+  "news": {
+    "kicker": "Historial de cambios",
+    "title": "Novedades recientes",
+    "more": "Ver notas completas en GitHub",
+    "typeNew": "Nuevo",
+    "typeImproved": "Mejorado",
+    "typeFixed": "Corregido",
+    "spanishOnly": ""
+  },
+  "footer": {
+    "tagline": "Tu música, tus archivos, tu control.",
+    "github": "Repositorio en GitHub",
+    "license": "Código abierto bajo licencia MIT",
+    "disclaimer": "El acceso a YouTube Music funciona a través de una interfaz no oficial. Openfy es un proyecto independiente y no está afiliado con YouTube, Google ni Apple.",
+    "madeWith": "Hecho con dedicación para los amantes de la música.",
+    "media": "Las portadas y portadas animadas que aparecen en las demostraciones son propiedad de sus titulares y se muestran solo como ejemplo; el fragmento de letra procede de LRCLIB."
+  },
+  "ui": {
+    "greeting": "Buenas tardes",
+    "home": "Inicio",
+    "favorites": "Tus favoritas",
+    "suggestions": "Sugerencias para ti",
+    "releases": "Lanzamientos de 2026",
+    "search": "Buscar",
+    "library": "Biblioteca",
+    "nowPlaying": "Sonando ahora",
+    "cover": "Portada",
+    "lyrics": "Letras",
+    "queue": "Cola",
+    "syncedLyrics": "Letra sincronizada",
+    "upNext": "A continuación",
+    "remaining": "{seconds} s restantes",
+    "downloads": "Descargas"
+  }
+}

@@ -1,0 +1,37 @@
+.hero { position: relative; min-height: 100svh; display: grid; grid-template-rows: 1fr auto; justify-items: center; overflow: hidden; isolation: isolate; padding: calc(var(--nav-h) + 40px) 0 24px; --c1: #1ed760; --c2: #0f2027; --c3: #9cffb5; }
+.hero-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -3; transform-origin: center; }
+.hero-fallback { display: none; z-index: -3; inset: -25%; filter: blur(90px) saturate(1.3); }
+.hero.no-gl .hero-canvas { display: none; }
+.hero.no-gl .hero-fallback { display: block; }
+.hero-fallback i { transition: background-color 1.2s; }
+.hero-shade { position: absolute; inset: 0; z-index: -2; background: radial-gradient(80% 60% at 50% 45%, #0000 0%, #09090b66 70%, #09090bcc 100%), linear-gradient(#09090b00 60%, #09090b 100%); }
+.hero-inner { grid-row: 1; align-self: center; justify-self: center; text-align: center; display: flex; flex-direction: column; align-items: center; will-change: transform; }
+.hero-eyebrow { color: #f4f4f5cc; }
+.hero-title { display: flex; flex-direction: column; align-items: center; line-height: .94; filter: drop-shadow(0 4px 40px #0005); }
+/* The gradient sits on the line and, once SplitText wraps the words (transformed children
+   do not paint through background-clip), on each word instead. */
+.hero-line:last-child, .hero-title.is-split .hero-line:last-child .hero-word { background-image: linear-gradient(92deg, #fff 10%, #b9ffd3 50%, var(--green) 95%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero-title.is-split .hero-line:last-child { background-image: none; color: inherit; }
+/* Room for descenders inside each word's clipping mask. */
+.hero-word { padding-bottom: .14em; }
+.hero-sub { margin-top: 28px; color: #e4e4e7d9; max-width: 44ch; }
+.hero-ctas { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin-top: 40px; }
+.hero .btn-ghost { box-shadow: inset 0 0 0 1.5px #ffffff4d; color: #fff; backdrop-filter: blur(10px); }
+
+.hero-eq { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); display: flex; align-items: flex-end; gap: clamp(4px, .7vw, 9px); height: 80px; opacity: .6; z-index: -1; }
+.hero-eq i { width: clamp(3px, .45vw, 6px); height: 100%; border-radius: 99px 99px 0 0; background: linear-gradient(#fff, #ffffff00); transform-origin: bottom; animation: eq calc(900ms + var(--i) * 37ms) ease-in-out calc(var(--i) * -91ms) infinite alternate; }
+@keyframes eq { 0% { transform: scaleY(.12); } 50% { transform: scaleY(.55); } 100% { transform: scaleY(.95); } }
+.hero-scroll { grid-row: 2; justify-self: center; z-index: 1; margin: 20px 0 72px; display: inline-flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; color: #e4e4e7b3; min-height: 44px; }
+.hero-scroll .icon { width: 18px; height: 18px; animation: nudge 2.2s ease-in-out infinite; }
+@keyframes nudge { 50% { transform: translateY(5px); } }
+@media (max-height: 640px) {
+  .hero-scroll { display: none; }
+}
+@media (max-width: 767px) {
+  .hero-eq { height: 64px; }
+  .hero-scroll { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-eq i { animation: none; transform: scaleY(.4); }
+  .hero-scroll .icon { animation: none; }
+}

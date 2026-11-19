@@ -1,0 +1,212 @@
+/* Scroll-synchronized lyric excerpt */
+.lyrics {
+  position: relative;
+  height: 250vh;
+  background: #09090b;
+  color: #f4f4f5;
+  overflow: clip;
+  isolation: isolate;
+}
+
+@media (max-width: 767px) {
+  .lyrics {
+    height: 160vh;
+  }
+}
+
+/* Ambient color glow in the background using album palette */
+.lyrics-glow {
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  overflow: hidden;
+  filter: blur(clamp(70px, 12vw, 130px));
+  opacity: 0.45;
+  z-index: 0;
+}
+
+.lyrics-glow-orb {
+  position: absolute;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  will-change: transform;
+}
+
+.lyrics-glow-1 {
+  width: clamp(320px, 50vw, 650px);
+  height: clamp(320px, 50vw, 650px);
+  left: 20%;
+  top: 10%;
+  background: radial-gradient(circle, var(--c1, #00c9a7) 0%, transparent 68%);
+  animation: lyrics-drift-1 18s ease-in-out infinite alternate;
+}
+
+.lyrics-glow-2 {
+  width: clamp(280px, 45vw, 580px);
+  height: clamp(280px, 45vw, 580px);
+  right: 12%;
+  bottom: 15%;
+  background: radial-gradient(circle, var(--c2, #0b3d91) 0%, transparent 68%);
+  animation: lyrics-drift-2 22s ease-in-out infinite alternate-reverse;
+}
+
+.lyrics-glow-3 {
+  width: clamp(240px, 38vw, 480px);
+  height: clamp(240px, 38vw, 480px);
+  left: 45%;
+  top: 40%;
+  background: radial-gradient(circle, var(--c3, #7ef9ff) 0%, transparent 68%);
+  animation: lyrics-drift-1 14s ease-in-out infinite alternate;
+}
+
+@keyframes lyrics-drift-1 {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6%, 8%) scale(1.08); }
+  100% { transform: translate(-5%, -4%) scale(0.95); }
+}
+
+@keyframes lyrics-drift-2 {
+  0% { transform: translate(0, 0) scale(1.05); }
+  50% { transform: translate(-7%, -6%) scale(0.96); }
+  100% { transform: translate(5%, 5%) scale(1.02); }
+}
+
+/* Sticky viewport where lyrics and copy remain locked during scroll */
+.lyrics-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.lyrics-inner {
+  width: min(100% - 2 * var(--gutter), var(--max));
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(280px, 400px) 1fr;
+  gap: clamp(32px, 6vw, 88px);
+  align-items: center;
+  height: 100%;
+}
+
+@media (max-width: 959px) {
+  .lyrics-inner {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: clamp(16px, 3vh, 32px);
+    padding-top: clamp(28px, 6vh, 52px);
+    align-items: start;
+  }
+  /* Fill the row left under the intro instead of overflowing the sticky viewport. */
+  .lyrics-inner .lyrics-stage { height: 100%; min-height: 0; }
+}
+
+.lyrics-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lyrics-intro .kicker {
+  margin-bottom: 2px;
+}
+
+.lyrics-intro .headline {
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  font-size: clamp(36px, 4.6vw, 64px);
+  text-wrap: balance;
+}
+
+.lyrics-intro .lead {
+  color: var(--muted);
+}
+
+/* Masked viewing stage for the active lyrics stream */
+.lyrics-stage {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-width: 0;
+  height: clamp(380px, 72vh, 760px);
+  padding-bottom: 18px;
+}
+
+.lyrics-window {
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 16%, #000 70%, transparent 100%);
+}
+
+.lyrics-credit {
+  font-size: .78rem;
+  color: #d4d4d8;
+}
+
+.lyrics-track {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.5vh, 28px);
+  transition: transform .35s cubic-bezier(.2, .8, .2, 1);
+}
+
+/* Giant lyric typography */
+.lyrics-line {
+  font-size: clamp(30px, 4.2vw, 68px);
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+  color: #ffffff;
+  opacity: max(.25, calc(.65 - var(--distance, 4) * .1));
+  min-height: 44px;
+  transition: opacity .25s ease;
+}
+
+.lyrics-line.on {
+  opacity: 1;
+}
+
+/* Reduced motion keeps the whole excerpt readable in normal document flow. */
+@media (prefers-reduced-motion: reduce) {
+  .lyrics {
+    height: auto !important;
+    padding-block: clamp(96px, 16vh, 180px);
+  }
+
+  .lyrics-sticky {
+    position: static;
+    height: auto;
+  }
+
+  .lyrics-inner {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    height: auto;
+    gap: 40px;
+  }
+
+  .lyrics-inner .lyrics-stage {
+    height: auto;
+    padding-bottom: 0;
+  }
+
+  .lyrics-window {
+    mask-image: none;
+    overflow: visible;
+  }
+
+  .lyrics-track {
+    transform: none !important;
+    transition: none;
+  }
+
+  .lyrics-line { opacity: 1; transition: none; }
+
+  .lyrics-glow {
+    display: none;
+  }
+}

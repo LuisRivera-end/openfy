@@ -95,6 +95,15 @@ Several rules are implemented twice and pinned by fixtures in `tests/fixtures/*-
 
 Every version bump needs its "Novedades" entry in `shared/release-notes.json` (Spanish text, newest first; see `docs/release-notes.md`). The PWA bundles it and `Openfy.Core` embeds it; each client shows, once, every entry newer than the version it last saw (`openfy-release-seen` in `localStorage`, `release-notes.json` in the desktop state directory). The selection rule (`shared/utils/release-notes.ts` ↔ `Openfy.Core/ReleaseNotes.cs`) is pinned by `tests/fixtures/release-notes-contract.json`. Vitest and `package-desktop.ps1` refuse a version without an entry.
 
+### Branches and pull requests
+
+The GitHub repository (`LuisRivera-end/openfy`, public) uses two long-lived branches, enforced by repository rulesets (`gh api repos/LuisRivera-end/openfy/rulesets`):
+
+- `dev` is the default branch and where all work lands. Pull requests always target `dev`. The repository admin may push to it directly; everyone else goes through a pull request. Deleting it and force-pushing are blocked.
+- `main` only receives accepted releases, through a pull request from `dev` that the owner merges. Nobody pushes to it directly, the admin included (no bypass), and it cannot be deleted or force-pushed. The required status check `Solo dev hacia main` comes from `.github/workflows/pr-base.yml`, a `pull_request_target` workflow that never checks out PR code and closes, with a Spanish comment, any PR to `main` whose head is not this repository's `dev`.
+
+Work locally on `dev` (tracking `origin/dev`) and never push to `main`. Publish a release with `gh pr create --base main --head dev`. Do not change the rulesets, the default branch or that workflow unless the user asks.
+
 ## Diagnostics
 
 For failures involving requests, artwork, native↔Node communication or startup, read `docs/session-diagnostics.md` first. The native app writes per-session `native.jsonl` and `backend.jsonl` under `%LOCALAPPDATA%\Openfy\desktop\session-logs\`; they are wiped on the next real launch, so copy both before restarting if the evidence matters. Do not attribute a cause the logs do not show. Persistent Node and native error logs are separate, in `%LOCALAPPDATA%\Openfy\logs`.
