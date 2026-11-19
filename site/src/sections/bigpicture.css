@@ -1,0 +1,124 @@
+/* Big Picture Section */
+.bigpic {
+  position: relative;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: clip;
+}
+
+/* Desktop: 220vh runway with sticky stage */
+@media (min-width: 768px) {
+  .bigpic {
+    height: 220vh;
+  }
+
+  .bigpic-stage {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: clip;
+    padding: clamp(24px, 3.5vh, 48px) var(--gutter);
+  }
+
+  .bigpic-header {
+    position: relative;
+    z-index: 2;
+    margin-bottom: clamp(18px, 2.6vh, 32px);
+    max-width: 720px;
+    will-change: transform, opacity;
+  }
+
+  .bigpic-viewport {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+
+  .bigpic-window {
+    transform-origin: center center;
+    will-change: transform;
+    --desk-w: min(86vw, 940px, max(420px, (100dvh - 450px) * 1.6));
+  }
+}
+
+/* Mobile: clean, stacked flow with natural padding */
+@media (max-width: 767px) {
+  .bigpic {
+    height: auto;
+    padding-block: clamp(80px, 14vh, 120px);
+  }
+
+  .bigpic-stage {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(32px, 5vh, 44px);
+    width: 100%;
+    padding-inline: var(--gutter);
+  }
+
+  .bigpic-header {
+    text-align: center;
+    max-width: 520px;
+  }
+
+  .bigpic-viewport {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+
+  .bigpic-window {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    --desk-w: 100%;
+  }
+}
+
+.bigpic-header .kicker {
+  margin-bottom: 12px;
+}
+
+.bigpic-header .headline {
+  margin-bottom: 16px;
+}
+
+.bigpic-body {
+  margin-inline: auto;
+}
+
+/* Enhanced ambient halo behind the desktop mockup */
+.bigpic-window .desk {
+  box-shadow: 0 0 0 1px #ffffff1f, 0 30px 80px -20px #000e, 0 0 120px -30px rgba(252, 74, 26, 0.28);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .bigpic {
+    height: auto !important;
+    padding-block: clamp(80px, 14vh, 120px) !important;
+  }
+
+  .bigpic-stage {
+    position: relative !important;
+    height: auto !important;
+    top: auto !important;
+    padding-block: 0 !important;
+  }
+
+  .bigpic-header,
+  .bigpic-window {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

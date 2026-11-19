@@ -27,3 +27,6 @@ android/**/build/
 android/app/src/main/assets/provider/
 *.jks
 *.keystore
+site/dist
+site/node_modules
+site/test-results

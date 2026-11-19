@@ -1,0 +1,151 @@
+/* Privacy Section */
+.privacy {
+  position: relative;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: clip;
+}
+
+.privacy-header {
+  position: relative;
+  max-width: 680px;
+  margin-inline: auto;
+  margin-bottom: clamp(48px, 8vh, 76px);
+}
+
+/* Subtle slowly pulsing green glow behind central shield */
+.privacy-shield-wrap {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 28px;
+  display: grid;
+  place-items: center;
+}
+
+.privacy-glow {
+  position: absolute;
+  inset: -24px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(30, 215, 96, 0.35) 0%, rgba(30, 215, 96, 0) 70%);
+  filter: blur(14px);
+  animation: privacy-pulse 4.5s ease-in-out infinite alternate;
+  animation-play-state: paused;
+  pointer-events: none;
+}
+
+.privacy.is-in-view .privacy-glow {
+  animation-play-state: running;
+}
+
+@keyframes privacy-pulse {
+  0% { transform: scale(0.86); opacity: 0.4; }
+  100% { transform: scale(1.22); opacity: 0.95; }
+}
+
+.privacy-shield-badge {
+  position: relative;
+  z-index: 1;
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.45);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+
+.privacy-central-shield {
+  width: 32px;
+  height: 32px;
+}
+
+.privacy-header .kicker {
+  margin-bottom: 12px;
+}
+
+.privacy-header .headline {
+  margin-bottom: 16px;
+}
+
+.privacy-lead {
+  margin-inline: auto;
+}
+
+/* 2x2 Grid on desktop, 1 column on mobile */
+.privacy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: clamp(20px, 2.5vw, 32px);
+  max-width: 1040px;
+  margin-inline: auto;
+}
+
+@media (max-width: 767px) {
+  .privacy-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+.privacy-card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: clamp(28px, 3.5vw, 40px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.25s, box-shadow 0.35s;
+}
+
+@media (hover: hover) {
+  .privacy-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(30, 215, 96, 0.28);
+    box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.45);
+  }
+}
+
+.privacy-card-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.privacy-card-icon .icon {
+  width: 24px;
+  height: 24px;
+}
+
+.privacy-card-point {
+  font-size: clamp(19px, 2vw, 24px);
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+  font-weight: 650;
+  color: var(--fg);
+  text-wrap: balance;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .privacy-glow {
+    animation: none !important;
+    opacity: 0.6 !important;
+    transform: none !important;
+  }
+
+  .privacy-card,
+  .privacy-header {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

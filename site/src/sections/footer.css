@@ -1,0 +1,11 @@
+.footer { padding: 64px 0 48px; border-top: 1px solid var(--line); font-size: 14px; }
+.footer-inner { display: grid; gap: 20px; }
+.footer-brand { display: flex; align-items: center; gap: 14px; }
+.footer-brand img { border-radius: 10px; }
+.footer-brand b { font-size: 18px; letter-spacing: -.02em; }
+.footer-brand p { color: var(--muted); }
+.footer-links { display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 8px; }
+.footer-links a { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--fg); }
+.footer-links .icon { width: 18px; height: 18px; }
+.footer-note { color: var(--muted); max-width: 80ch; font-size: 13px; line-height: 1.6; }
+@media (hover: hover) { .footer-links a:hover { color: var(--accent); } }
