@@ -16,7 +16,13 @@ node site/tests/capture.mjs <dir> # capturas de revisión a 375/768/1440 px (con
 
 Las pruebas cubren ambos idiomas, la resolución de descargas (incluida una release solo de Android), la caída a `/releases/latest`, movimiento reducido, ausencia de scroll horizontal y errores de consola, y que al cambiar de tamaño o de preferencia de movimiento a mitad de la secuencia fijada no se pierda la posición de lectura.
 
-`site/dist` es la salida publicable: rutas relativas (`base: './'`), así que funciona en GitHub Pages, en una subcarpeta o en cualquier hosting estático. Por ahora no se publica en ningún sitio.
+`site/dist` contiene la landing compilada. Vite genera rutas relativas (`base: './'`) para que el HTML, los scripts y los medios funcionen bajo `/openfy/`.
+
+## GitHub Pages
+
+En **Settings → Pages**, la fuente es **GitHub Actions**. El [workflow](../.github/workflows/pages.yml) compila `site/` tanto en `dev` como en `main` y prepara `site/dist` como artefacto. La fusión del PR de `dev` a `main` publica el sitio. El entorno `github-pages` permite despliegues desde `main`.
+
+La dirección pública es [luisrivera-end.github.io/openfy](https://luisrivera-end.github.io/openfy/). La versión en inglés está en [/openfy/en/](https://luisrivera-end.github.io/openfy/en/).
 
 ## Idiomas
 
@@ -30,8 +36,21 @@ Las pruebas cubren ambos idiomas, la resolución de descargas (incluida una rele
 
 - `src/main.ts` monta las secciones en orden y arranca el movimiento.
 - `src/types.ts` define el contrato de sección: `render(t)` devuelve el HTML; `animate(root, ctx)` crea todo el movimiento dentro de `ctx.mm.add(CONDITIONS, …)`, de modo que se revierte al cambiar de tamaño o de preferencia de movimiento.
-- `src/lib/devices.ts` dibuja el teléfono y la ventana de Big Picture en HTML/CSS. `src/lib/art.ts` genera portadas y álbumes ficticios: la página no muestra música real ni portadas de terceros.
+- `src/lib/devices.ts` dibuja en HTML/CSS el teléfono (Inicio y reproductor de Android) y la ventana de Big Picture, a imagen de la app actual. `src/lib/art.ts` genera las portadas ficticias que representan archivos locales en Biblioteca.
 - El fondo del inicio reutiliza el renderizador ambiental de la app (`app/lib/ambient-gl.ts` y `shared/utils/ambient.ts`) con paletas de las portadas generadas; sin WebGL2 usa degradados CSS.
+
+## Medios reales
+
+Los mockups muestran portadas reales de YouTube Music, la portada animada de Apple Music de cada álbum y un fragmento corto de letra sincronizada de LRCLIB. Un sitio estático no puede pedir esos datos en tiempo de ejecución, así que se descargan una vez y se versionan:
+
+```powershell
+npm run build                     # en la raíz: el script usa .output/server
+npm --prefix site run media       # regenera site/src/data/media.json y site/src/assets/media/
+```
+
+`site/scripts/fetch-media.mjs` arranca un servidor Openfy aislado (directorio de datos temporal, puerto libre, sin `.env` ni `OPENFY_ORIGIN`) y usa su propia API: búsqueda y detalle de álbum, `POST /api/motion/resolve` y `POST /api/lyrics/resolve`. Las portadas se guardan en WebP de 512 y 160 px. Las portadas animadas se recodifican a 480 px y H.264 sin audio, como mucho 12 s. La letra se reduce a 7 líneas consecutivas de una sola canción, con los tiempos rebasados a 0. Solo acepta álbumes con portada animada y escribe el manifiesto si reúne al menos cuatro. `--candidates <archivo.json>` sustituye las listas de candidatos.
+
+Los archivos se nombran por su hash y Vite los vuelve a firmar al construir, de modo que el navegador los guarda en caché y la página no hace ninguna petición a terceros. `src/lib/media.ts` resuelve el manifiesto. `src/lib/motion-video.ts` carga y reproduce cada portada animada solo mientras está visible, y nunca con movimiento reducido. `src/lib/ambient-pool.ts` monta el fondo ambiental de la app dentro de los dispositivos visibles, con un máximo de dos contextos WebGL a la vez además del inicio. El pie de página da el crédito de portadas y letra.
 
 ## Movimiento y accesibilidad
 
@@ -43,3 +62,5 @@ Las pruebas cubren ambos idiomas, la resolución de descargas (incluida una rele
 ## Agentes que participaron
 
 La planificación, el esqueleto, el inicio, la secuencia fijada, Novedades, la integración y la verificación son de Claude. Gemini (Antigravity CLI, `agy`) redactó los textos ES/EN —revisados contra el README— y la investigación de movimiento (`site/notes/motion-research.md`), y construyó las secciones de biblioteca, letras, descargas sin conexión, Big Picture, privacidad, arquitectura y descargas. Codex hizo la revisión visual y la revisión final de código. `gemini` (Gemini CLI) ya no autentica con la cuenta personal: Google exige migrar a Antigravity.
+
+En la segunda iteración (18 de noviembre de 2026), Gemini corrigió la superposición del aviso de desplazamiento en el inicio y llevó las portadas reales a Biblioteca. Codex escribió el script de medios y rehízo los mockups (Inicio y reproductor de Android con portada animada, Big Picture real y fondo ambiental en los dispositivos). Claude planificó, ejecutó el script, integró y verificó.

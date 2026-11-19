@@ -2,6 +2,8 @@ import './styles/base.css'
 import type { SectionModule } from './types'
 import { t } from './lib/i18n'
 import { CONDITIONS, startMotion, scrollToTarget, ScrollTrigger } from './lib/motion'
+import { watchMotionVideos } from './lib/motion-video'
+import { watchAmbient } from './lib/ambient-pool'
 import { nav } from './sections/nav'
 import { hero } from './sections/hero'
 import { statement } from './sections/statement'
@@ -13,10 +15,11 @@ import { bigPicture } from './sections/bigpicture'
 import { privacy } from './sections/privacy'
 import { how } from './sections/how'
 import { download } from './sections/download'
+import { faq } from './sections/faq'
 import { news } from './sections/news'
 import { footer } from './sections/footer'
 
-const page: SectionModule[] = [hero, statement, sequence, library, lyrics, offline, bigPicture, privacy, how, download, news]
+const page: SectionModule[] = [hero, statement, sequence, library, lyrics, offline, bigPicture, privacy, how, download, faq, news]
 
 function render(module: SectionModule): [SectionModule, HTMLElement][] {
   const template = document.createElement('template')
@@ -40,6 +43,8 @@ for (const [module, root] of mounted) {
   seen.add(module)
   try { module.animate?.(root, ctx) } catch (error) { console.error(error) }
 }
+watchMotionVideos(app)
+watchAmbient(app)
 
 // In-page links go through the smooth scroller and move focus to their section.
 document.addEventListener('click', event => {

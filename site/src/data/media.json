@@ -1,0 +1,490 @@
+{
+  "generatedAt": "2026-11-19T03:02:23.433Z",
+  "albums": [
+    {
+      "title": "Un Verano Sin Ti",
+      "artist": "Bad Bunny",
+      "year": 2022,
+      "cover": {
+        "large": "c66c36f04cba2366.webp",
+        "small": "60b5c090938858ee.webp"
+      },
+      "colors": [
+        "#cba4a9",
+        "#d73d27",
+        "#d5a737"
+      ],
+      "dominant": "#d81808",
+      "motion": {
+        "video": "1ce58fd2fff37e65.mp4",
+        "poster": "5f7c02441d513b18.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 461416
+      },
+      "songs": [
+        {
+          "title": "Moscow Mule",
+          "duration": 246
+        },
+        {
+          "title": "Después de la Playa",
+          "duration": 231
+        },
+        {
+          "title": "Me Porto Bonito",
+          "duration": 179
+        },
+        {
+          "title": "Tití Me Preguntó",
+          "duration": 244
+        },
+        {
+          "title": "Un Ratito",
+          "duration": 177
+        },
+        {
+          "title": "Yo No Soy Celoso",
+          "duration": 231
+        }
+      ]
+    },
+    {
+      "title": "Submarine",
+      "artist": "The Marías",
+      "year": 2024,
+      "cover": {
+        "large": "e2fdc48e55a67f28.webp",
+        "small": "47ea720860c2f06d.webp"
+      },
+      "colors": [
+        "#172a5d",
+        "#465f8b",
+        "#5a72a0"
+      ],
+      "dominant": "#183868",
+      "motion": {
+        "video": "b8ce9ec8fe2888e3.mp4",
+        "poster": "38c444849a71e45d.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 101488
+      },
+      "songs": [
+        {
+          "title": "Ride",
+          "duration": 81
+        },
+        {
+          "title": "Hamptons",
+          "duration": 189
+        },
+        {
+          "title": "Echo",
+          "duration": 210
+        },
+        {
+          "title": "Run Your Mouth",
+          "duration": 160
+        },
+        {
+          "title": "Real Life",
+          "duration": 207
+        },
+        {
+          "title": "Blur",
+          "duration": 226
+        }
+      ]
+    },
+    {
+      "title": "MAÑANA SERÁ BONITO",
+      "artist": "KAROL G",
+      "year": 2023,
+      "cover": {
+        "large": "4e08f94f89288d15.webp",
+        "small": "f285fa55e7e284ed.webp"
+      },
+      "colors": [
+        "#c8a98c",
+        "#bf9388",
+        "#c7a99a"
+      ],
+      "dominant": "#e8c8a8",
+      "motion": {
+        "video": "7426cb8c7c2770c7.mp4",
+        "poster": "35daaf04341b22d0.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 374789
+      },
+      "songs": [
+        {
+          "title": "MIENTRAS ME CURO DEL CORA",
+          "duration": 165
+        },
+        {
+          "title": "X SI VOLVEMOS",
+          "duration": 201
+        },
+        {
+          "title": "PERO TÚ",
+          "duration": 184
+        },
+        {
+          "title": "BESTIES",
+          "duration": 163
+        },
+        {
+          "title": "GUCCI LOS PAÑOS",
+          "duration": 187
+        },
+        {
+          "title": "TQG",
+          "duration": 198
+        }
+      ]
+    },
+    {
+      "title": "Short n' Sweet",
+      "artist": "Sabrina Carpenter",
+      "year": 2024,
+      "cover": {
+        "large": "af07340c06b969d0.webp",
+        "small": "02fc7c2100d9d131.webp"
+      },
+      "colors": [
+        "#1e4599",
+        "#96542f",
+        "#4d4f59"
+      ],
+      "dominant": "#284898",
+      "motion": {
+        "video": "81af181c4e9ce7ec.mp4",
+        "poster": "f0cea90851f8367b.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 173992
+      },
+      "songs": [
+        {
+          "title": "Taste",
+          "duration": 158
+        },
+        {
+          "title": "Please Please Please",
+          "duration": 187
+        },
+        {
+          "title": "Good Graces",
+          "duration": 186
+        },
+        {
+          "title": "Sharpest Tool",
+          "duration": 219
+        },
+        {
+          "title": "Coincidence",
+          "duration": 165
+        },
+        {
+          "title": "Bed Chem",
+          "duration": 172
+        }
+      ]
+    },
+    {
+      "title": "GÉNESIS",
+      "artist": "Peso Pluma",
+      "year": 2023,
+      "cover": {
+        "large": "95f55f00f77c64b0.webp",
+        "small": "d104227c0509d8ac.webp"
+      },
+      "colors": [
+        "#0e1528",
+        "#15172a",
+        "#0a1020"
+      ],
+      "dominant": "#080818",
+      "motion": {
+        "video": "b14eadee97588a41.mp4",
+        "poster": "f0a2e98fc009968c.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 69291
+      },
+      "songs": [
+        {
+          "title": "ROSA PASTEL",
+          "duration": 205
+        },
+        {
+          "title": "LUNA",
+          "duration": 164
+        },
+        {
+          "title": "77",
+          "duration": 216
+        },
+        {
+          "title": "RUBICON",
+          "duration": 239
+        },
+        {
+          "title": "CARNAL",
+          "duration": 175
+        },
+        {
+          "title": "LAS MORRAS",
+          "duration": 156
+        }
+      ]
+    },
+    {
+      "title": "Radical Optimism",
+      "artist": "Dua Lipa",
+      "year": 2024,
+      "cover": {
+        "large": "0b9c7e7858e4a309.webp",
+        "small": "6ea39ad74741c9aa.webp"
+      },
+      "colors": [
+        "#a1a6ae",
+        "#9ea197",
+        "#36686b"
+      ],
+      "dominant": "#084848",
+      "motion": {
+        "video": "8fe7c3afdf5c9456.mp4",
+        "poster": "ed7e576f76586349.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 87598
+      },
+      "songs": [
+        {
+          "title": "End Of An Era",
+          "duration": 197
+        },
+        {
+          "title": "Houdini",
+          "duration": 186
+        },
+        {
+          "title": "Training Season",
+          "duration": 210
+        },
+        {
+          "title": "These Walls",
+          "duration": 218
+        },
+        {
+          "title": "Whatcha Doing",
+          "duration": 199
+        },
+        {
+          "title": "French Exit",
+          "duration": 202
+        }
+      ]
+    },
+    {
+      "title": "THE TORTURED POETS DEPARTMENT",
+      "artist": "Taylor Swift",
+      "year": 2024,
+      "cover": {
+        "large": "7439944499d2ba43.webp",
+        "small": "f8577e8ef8b3adc8.webp"
+      },
+      "colors": [
+        "#d7d4cf",
+        "#a09a91",
+        "#cfcdc7"
+      ],
+      "dominant": "#e8e8e8",
+      "motion": {
+        "video": "ddf7a01dbf871407.mp4",
+        "poster": "9b1be5c259848141.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 29262
+      },
+      "songs": [
+        {
+          "title": "Fortnight (con Post Malone)",
+          "duration": 229
+        },
+        {
+          "title": "The Tortured Poets Department",
+          "duration": 294
+        },
+        {
+          "title": "My Boy Only Breaks His Favorite Toys",
+          "duration": 204
+        },
+        {
+          "title": "Down Bad",
+          "duration": 262
+        },
+        {
+          "title": "So Long, London",
+          "duration": 263
+        },
+        {
+          "title": "But Daddy I Love Him",
+          "duration": 341
+        }
+      ]
+    },
+    {
+      "title": "FERXXOCALIPSIS",
+      "artist": "Feid",
+      "year": 2023,
+      "cover": {
+        "large": "31b9d3a6f0296be8.webp",
+        "small": "d3570b567efa0cae.webp"
+      },
+      "colors": [
+        "#643c17",
+        "#613b17",
+        "#693d17"
+      ],
+      "dominant": "#080808",
+      "motion": {
+        "video": "046fb3b496e6aca6.mp4",
+        "poster": "4879072fbdc23917.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 1407274
+      },
+      "songs": [
+        {
+          "title": "ALAKRAN",
+          "duration": 91
+        },
+        {
+          "title": "50 PALOS",
+          "duration": 168
+        },
+        {
+          "title": "LA VUELTA",
+          "duration": 122
+        },
+        {
+          "title": "CUAL ES ESA",
+          "duration": 173
+        },
+        {
+          "title": "INTERLUDE",
+          "duration": 104
+        },
+        {
+          "title": "LUNA",
+          "duration": 197
+        }
+      ]
+    }
+  ],
+  "lyrics": {
+    "song": "Moscow Mule",
+    "artist": "Bad Bunny",
+    "album": "Un Verano Sin Ti",
+    "albumIndex": 0,
+    "attribution": "Letras de LRCLIB",
+    "sourceUrl": "https://lrclib.net/api/get/1048",
+    "duration": 16.97,
+    "lines": [
+      {
+        "time": 0,
+        "text": "Si mañana me vo'a perder"
+      },
+      {
+        "time": 1.79,
+        "text": "Tú ere' una player, me hiciste un crossover"
+      },
+      {
+        "time": 4.23,
+        "text": "Esta ve' metiste, me diste game over, eh-eh"
+      },
+      {
+        "time": 7.52,
+        "text": "Porque no puedo olvidar"
+      },
+      {
+        "time": 9.16,
+        "text": "El perreo aquel, que se fue viral"
+      },
+      {
+        "time": 11.53,
+        "text": "Dime si mañana te va' a quedar"
+      },
+      {
+        "time": 13.97,
+        "text": "Después de la alarma te lo voy a dar, ey"
+      }
+    ]
+  },
+  "library": [
+    {
+      "title": "Las Mujeres Ya No Lloran",
+      "artist": "Shakira",
+      "cover": "ce56c6a6739cb34b.webp"
+    },
+    {
+      "title": "SATURNO",
+      "artist": "Rauw Alejandro",
+      "cover": "b10a1f23d3ce5767.webp"
+    },
+    {
+      "title": "BRAT",
+      "artist": "Charli xcx",
+      "cover": "ef9e69ba6b712a60.webp"
+    },
+    {
+      "title": "The Rise and Fall of a Midwest Princess",
+      "artist": "Chappell Roan",
+      "cover": "4643fd99162d6369.webp"
+    },
+    {
+      "title": "SOS",
+      "artist": "SZA",
+      "cover": "ea3ae6829fd3010a.webp"
+    },
+    {
+      "title": "Currents",
+      "artist": "Tame Impala",
+      "cover": "92f7160c5cfcdc55.webp"
+    },
+    {
+      "title": "GUTS (spilled)",
+      "artist": "Olivia Rodrigo",
+      "cover": "47ca9bb7f1d4129f.webp"
+    },
+    {
+      "title": "After Hours",
+      "artist": "The Weeknd",
+      "cover": "00072f4656a13800.webp"
+    },
+    {
+      "title": "NataKong",
+      "artist": "Natanael Cano",
+      "cover": "2ed1ed62248c9e7b.webp"
+    },
+    {
+      "title": "Autopoiética",
+      "artist": "Mon Laferte",
+      "cover": "ec6a39b732c4d733.webp"
+    },
+    {
+      "title": "PERO NO TE ENAMORES",
+      "artist": "Fuerza Regida",
+      "cover": "85141fadabe7da0c.webp"
+    },
+    {
+      "title": "AM",
+      "artist": "Arctic Monkeys",
+      "cover": "5378bad3a11262f2.webp"
+    }
+  ]
+}

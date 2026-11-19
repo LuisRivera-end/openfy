@@ -1,15 +1,15 @@
 import type { SectionModule } from '../types'
-import { phone } from '../lib/devices'
-import { cover, album } from '../lib/art'
+import { androidStatus, phone } from '../lib/devices'
+import { realCover, realAlbum } from '../lib/media'
 import { escapeHtml } from '../lib/i18n'
 import { CONDITIONS, EASE, gsap } from '../lib/motion'
 import './offline.css'
 
 function screenDownloads(kicker: string, title: string, stat1: string, stat2: string): string {
   const items = [0, 1, 2, 4, 5, 6].map(i => {
-    const a = album(i)
+    const a = realAlbum(i)
     return `<li class="od-item">
-      ${cover(i, 'od-cover')}
+      ${realCover(i, 'od-cover', 'small')}
       <div class="od-meta">
         <b>${escapeHtml(a.title)}</b>
         <span>${escapeHtml(a.artist)}</span>
@@ -25,15 +25,9 @@ function screenDownloads(kicker: string, title: string, stat1: string, stat2: st
   }).join('')
 
   return `<div class="screen screen-downloads">
-    <div class="status">
-      <span>9:41</span>
-      <span class="status-icons">
-        <svg class="offline-airplane" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
-          <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
-        </svg>
-        <i></i><i></i><b></b>
-      </span>
-    </div>
+    ${androidStatus(`<svg class="offline-airplane" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+    </svg>`)}
 
     <div class="od-screen-body">
       <div class="od-head">

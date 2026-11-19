@@ -99,7 +99,7 @@
 
 /* Enhanced ambient halo behind the desktop mockup */
 .bigpic-window .desk {
-  box-shadow: 0 0 0 1px #ffffff1f, 0 30px 80px -20px #000e, 0 0 120px -30px rgba(252, 74, 26, 0.28);
+  box-shadow: 0 0 0 1px #ffffff1f, 0 30px 80px -20px #000e, 0 0 120px -30px color-mix(in srgb, var(--c2) 30%, transparent);
 }
 
 /* Reduced motion */

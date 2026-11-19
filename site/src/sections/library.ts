@@ -1,19 +1,31 @@
 import type { SectionModule } from '../types'
 import { cover, album } from '../lib/art'
 import { escapeHtml } from '../lib/i18n'
+import { libraryCovers } from '../lib/media'
 import { CONDITIONS, EASE, gsap } from '../lib/motion'
 import './library.css'
 
-function renderCard(albumIndex: number, badgeText?: string): string {
-  const a = album(albumIndex)
+interface RealCover {
+  title: string
+  artist: string
+  url: string
+}
+
+function renderCard(albumIndex: number, badgeText?: string, real?: RealCover): string {
+  const cardTitle = real ? real.title : album(albumIndex).title
+  const cardArtist = real ? real.artist : album(albumIndex).artist
+  const coverHtml = real
+    ? `<div class="cover library-cover real-cover" aria-hidden="true"><img src="${escapeHtml(real.url)}" alt="" loading="lazy" decoding="async" width="256" height="256"></div>`
+    : cover(albumIndex, 'library-cover')
+
   return `<div class="library-card">
     <div class="library-art-wrap">
-      ${cover(albumIndex, 'library-cover')}
+      ${coverHtml}
       ${badgeText ? `<span class="library-badge">${escapeHtml(badgeText)}</span>` : ''}
     </div>
     <div class="library-caption">
-      <h3 class="library-card-title">${escapeHtml(a.title)}</h3>
-      <p class="library-card-artist">${escapeHtml(a.artist)}</p>
+      <h3 class="library-card-title">${escapeHtml(cardTitle)}</h3>
+      <p class="library-card-artist">${escapeHtml(cardArtist)}</p>
     </div>
   </div>`
 }
@@ -22,8 +34,13 @@ export const library: SectionModule = {
   render(t) {
     const chips = t.list<string>('library.chips')
     const getChip = (index: number): string => chips[index % chips.length] ?? ''
+    const ytChip = getChip(3)
 
-    // Rows of fictional albums with badges showcasing mixed sources (local formats and YouTube Music)
+    const realCovers = libraryCovers()
+    let realIndex = 0
+    const nextReal = (): RealCover => realCovers[realIndex++ % realCovers.length]!
+
+    // Rows of albums with badges showcasing mixed sources (local formats and YouTube Music)
     const row1Indices = [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3]
     const row2Indices = [4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7]
     const row3Indices = [2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5]
@@ -31,22 +48,25 @@ export const library: SectionModule = {
     const row1 = row1Indices.map((albumIdx, i) => {
       let badge: string | undefined
       if (i % 4 === 0) badge = getChip(0) // FLAC
-      else if (i % 4 === 2) badge = getChip(3) // YouTube Music
-      return renderCard(albumIdx, badge)
+      else if (i % 4 === 2) badge = ytChip // YouTube Music
+      const real = badge === ytChip ? nextReal() : undefined
+      return renderCard(albumIdx, badge, real)
     }).join('')
 
     const row2 = row2Indices.map((albumIdx, i) => {
       let badge: string | undefined
-      if (i % 3 === 0) badge = getChip(3) // YouTube Music
+      if (i % 3 === 0) badge = ytChip // YouTube Music
       else if (i % 3 === 1) badge = getChip(1) // MP3
-      return renderCard(albumIdx, badge)
+      const real = badge === ytChip ? nextReal() : undefined
+      return renderCard(albumIdx, badge, real)
     }).join('')
 
     const row3 = row3Indices.map((albumIdx, i) => {
       let badge: string | undefined
       if (i % 4 === 1) badge = getChip(2) // AAC
-      else if (i % 4 === 3) badge = getChip(3) // YouTube Music
-      return renderCard(albumIdx, badge)
+      else if (i % 4 === 3) badge = ytChip // YouTube Music
+      const real = badge === ytChip ? nextReal() : undefined
+      return renderCard(albumIdx, badge, real)
     }).join('')
 
     const lastChipIdx = Math.max(0, chips.length - 1)

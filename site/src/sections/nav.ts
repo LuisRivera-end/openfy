@@ -13,6 +13,7 @@ export const nav: SectionModule = {
         <a href="#features">${t('nav.features')}</a>
         <a href="#how">${t('nav.how')}</a>
         <a href="#download">${t('nav.download')}</a>
+        <a href="#faq">${t('nav.faq')}</a>
         <a href="#news">${t('nav.news')}</a>
       </nav>
       <div class="nav-actions">

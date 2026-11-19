@@ -7,6 +7,7 @@
     "features": "Funciones",
     "how": "Cómo funciona",
     "download": "Descargar",
+    "faq": "Preguntas frecuentes",
     "news": "Novedades",
     "cta": "Obtener Openfy",
     "langLabel": "English"
@@ -62,6 +63,7 @@
     "kicker": "Sincronización exacta",
     "title": "Palabra por palabra, en vivo",
     "body": "Sigue el ritmo con versos resaltados al instante. Openfy prioriza letras incrustadas y LRCLIB, y las guarda con tus descargas para cantar incluso sin conexión.",
+    "credit": "{song} · {artist} — letra vía LRCLIB",
     "sample": [
       "Las luces bajan sobre la avenida",
       "Un eco suave despierta la noche",
@@ -142,6 +144,45 @@
     ],
     "missing": "Esta versión no incluye este instalador; búscalo en versiones anteriores."
   },
+  "faq": {
+    "kicker": "Preguntas frecuentes",
+    "title": "Respuestas claras sobre Openfy",
+    "body": "Todo lo que necesitas saber sobre la arquitectura, privacidad, compatibilidad y funcionamiento de tu biblioteca.",
+    "items": [
+      {
+        "q": "¿Qué es Openfy?",
+        "a": "Openfy es una biblioteca musical personal de código abierto. Te permite reunir tus archivos de audio locales (FLAC, MP3, AAC) y la música de YouTube Music en una sola interfaz limpia, privada y unificada, con letras sincronizadas y portadas dinámicas."
+      },
+      {
+        "q": "¿En qué dispositivos y plataformas puedo usar Openfy?",
+        "a": "Openfy cuenta con una aplicación nativa para Windows 11 (construida con .NET y WinUI 3), una aplicación nativa autónoma para Android (Android 10 o superior en Kotlin), y una Progressive Web App (PWA) diseñada para Safari en iPhone y cualquier navegador web moderno."
+      },
+      {
+        "q": "¿Necesito crear una cuenta o registrarme para usarlo?",
+        "a": "No. Openfy no tiene cuentas, contraseñas, inicios de sesión ni servidores en la nube de terceros. Tu colección te pertenece a ti y funciona de forma autónoma en tus propios dispositivos."
+      },
+      {
+        "q": "¿Dónde se guardan mis datos y estadísticas de escucha?",
+        "a": "Todo se almacena localmente en tu propio equipo. La base de datos SQLite y los archivos residen en tu almacenamiento personal. Tus estadísticas de reproducción, favoritos y listas no se envían a ningún servidor externo ni se comparten con terceros."
+      },
+      {
+        "q": "¿Cómo funciona el acceso remoto fuera de casa?",
+        "a": "Openfy utiliza Tailscale Serve para conectar tus dispositivos móviles a tu PC con Windows a través de un túnel privado y cifrado con HTTPS. No necesitas abrir puertos en tu router ni exponer tu música a internet público."
+      },
+      {
+        "q": "¿Cómo funcionan las descargas sin conexión?",
+        "a": "Puedes descargar álbumes, listas o canciones individuales en tu dispositivo. Cada archivo se valida verificando su tamaño y suma de verificación SHA-256 antes de darse por completado, guardando también sus letras y portadas para reproducir en modo avión sin depender del PC."
+      },
+      {
+        "q": "¿De dónde provienen las letras sincronizadas?",
+        "a": "Openfy prioriza las letras incrustadas en tus archivos de audio y complementa el catálogo con LRCLIB. Las letras se resaltan verso a verso en tiempo real y quedan guardadas con tus descargas para que puedas seguirlas incluso sin conexión."
+      },
+      {
+        "q": "¿Openfy es gratuito y de código abierto? ¿Cómo se actualiza?",
+        "a": "Sí, Openfy es totalmente gratuito y de código abierto bajo la licencia MIT. Los instaladores para Windows y los paquetes APK para Android se publican directamente en GitHub Releases con sumas de comprobación SHA-256."
+      }
+    ]
+  },
   "news": {
     "kicker": "Historial de cambios",
     "title": "Novedades recientes",
@@ -156,18 +197,24 @@
     "github": "Repositorio en GitHub",
     "license": "Código abierto bajo licencia MIT",
     "disclaimer": "El acceso a YouTube Music funciona a través de una interfaz no oficial. Openfy es un proyecto independiente y no está afiliado con YouTube, Google ni Apple.",
-    "madeWith": "Hecho con dedicación para los amantes de la música."
+    "madeWith": "Hecho con dedicación para los amantes de la música.",
+    "media": "Las portadas y portadas animadas que aparecen en las demostraciones son propiedad de sus titulares y se muestran solo como ejemplo; el fragmento de letra procede de LRCLIB."
   },
   "ui": {
-    "greeting": "Tu música, contigo",
+    "greeting": "Buenas tardes",
     "home": "Inicio",
-    "minutes": "minutos escuchados",
-    "plays": "reproducciones",
-    "recent": "Escuchado recientemente",
+    "favorites": "Tus favoritas",
+    "suggestions": "Sugerencias para ti",
+    "releases": "Lanzamientos de 2026",
+    "search": "Buscar",
+    "library": "Biblioteca",
     "nowPlaying": "Sonando ahora",
     "cover": "Portada",
     "lyrics": "Letras",
     "queue": "Cola",
+    "syncedLyrics": "Letra sincronizada",
+    "upNext": "A continuación",
+    "remaining": "{seconds} s restantes",
     "downloads": "Descargas"
   }
 }

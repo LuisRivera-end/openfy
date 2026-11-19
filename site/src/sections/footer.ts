@@ -15,6 +15,7 @@ export const footer: SectionModule = {
         <a href="${otherLangHref}">${t('nav.langLabel')}</a>
       </nav>
       <p class="footer-note">${t('footer.disclaimer')}</p>
+      <p class="footer-note">${t('footer.media')}</p>
       <p class="footer-note">© ${new Date().getFullYear()} Openfy · ${t('footer.madeWith')}</p>
     </div>
   </footer>`
