@@ -1,0 +1,35 @@
+# main only receives pull requests from this repository's dev branch.
+# Any other pull request that targets main is closed with an explanation.
+# pull_request_target runs the workflow from main and never checks out the
+# pull request's code, so a fork cannot change what this check does.
+name: Rama de destino
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize]
+    branches: [main]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  base:
+    name: Solo dev hacia main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar origen del pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          if [ "$HEAD_REPO" = "$GH_REPO" ] && [ "$HEAD_REF" = "dev" ]; then
+            echo "Pull request de dev hacia main: permitido."
+            exit 0
+          fi
+          gh pr comment "$NUMBER" --body "Gracias por contribuir. Los pull requests se envían a la rama \`dev\`; \`main\` solo recibe las versiones aceptadas desde \`dev\`. Abre de nuevo el pull request con \`dev\` como rama base."
+          gh pr close "$NUMBER"
+          echo "::error::main solo acepta pull requests desde dev."
+          exit 1
