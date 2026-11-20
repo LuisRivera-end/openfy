@@ -11,15 +11,23 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.openfy.android.data.Song
 import kotlinx.serialization.json.*
 
@@ -68,11 +76,55 @@ internal fun LazyListScope.searchItems(vm: OpenfyViewModel,search: SearchState,t
     }
 
     if(isSongSearch) {
-        songItems(tracks,songMap,currentId,{ vm.play(it,tracks) },onSongActions,keyPrefix="search:song")
+        val featured = tracks.firstOrNull()?.let { FeaturedSearchResult.SongResult(it) }
+        val remainingTracks = tracks.drop(1)
+        if (featured != null) {
+            gutterItem("search:featured-title") { SectionTitle("Resultado más relevante") }
+            item(key = "search:featured:${featured.themeKey}") {
+                Box(Modifier.padding(horizontal = Gutter)) {
+                    FeaturedCard(featured, vm, onPlay = { vm.playFeatured(featured, tracks) }, onClick = { vm.play(featured.song, tracks) })
+                }
+            }
+        }
+        if (remainingTracks.isNotEmpty()) {
+            songItems(remainingTracks, songMap, currentId, { vm.play(it, tracks) }, onSongActions, keyPrefix = "search:song")
+        }
     } else {
-        val kind=if(search.kind=="artists") "artist" else "album"
-        gutterItems(search.cards.chunked(2),key={ "search:$kind:${it.first().getValue("id").jsonPrimitive.content}" }) {
-            SearchCardPair(it,kind,vm::openRemote)
+        val isArtist = search.kind == "artists"
+        val kind = if(isArtist) "artist" else "album"
+        val firstCard = search.cards.firstOrNull()
+        val featured = firstCard?.let { card ->
+            val id = card.getValue("id").jsonPrimitive.content
+            if (isArtist) {
+                val name = (card["name"] ?: card["title"])?.jsonPrimitive?.content.orEmpty()
+                FeaturedSearchResult.Artist(id, name, card["artwork"]?.jsonPrimitive?.contentOrNull)
+            } else {
+                val title = card["title"]?.jsonPrimitive?.content.orEmpty()
+                val artistName = (card["artists"] as? JsonArray).orEmpty().mapNotNull {
+                    (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
+                }.joinToString(", ")
+                FeaturedSearchResult.Album(id, title, artistName, card["artwork"]?.jsonPrimitive?.contentOrNull)
+            }
+        }
+        val remainingCards = search.cards.drop(1)
+        if (featured != null) {
+            gutterItem("search:featured-title") { SectionTitle("Resultado más relevante") }
+            item(key = "search:featured:${featured.themeKey}") {
+                Box(Modifier.padding(horizontal = Gutter)) {
+                    FeaturedCard(featured, vm,
+                        onPlay = { vm.playFeatured(featured) },
+                        onClick = {
+                            if (featured is FeaturedSearchResult.Artist) vm.openRemote("artist", featured.id, featured.name)
+                            else if (featured is FeaturedSearchResult.Album) vm.openRemote("album", featured.id, featured.title)
+                        }
+                    )
+                }
+            }
+        }
+        if (remainingCards.isNotEmpty()) {
+            gutterItems(remainingCards.chunked(2), key = { "search:$kind:${it.first().getValue("id").jsonPrimitive.content}" }) {
+                SearchCardPair(it, kind, vm::openRemote)
+            }
         }
     }
     when {
@@ -107,6 +159,78 @@ private fun SearchCardPair(cards: List<JsonObject>,kind: String,open: (String,St
                 }
             }
             if(cards.size==1) Spacer(Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun FeaturedCard(
+    featured: FeaturedSearchResult,
+    vm: OpenfyViewModel,
+    onClick: () -> Unit,
+    onPlay: () -> Unit
+) {
+    val context = LocalContext.current
+    val artistId = (featured as? FeaturedSearchResult.Artist)?.id
+    val theme = (if (artistId != null) vm.artistThemes["youtube:$artistId"] else null)
+        ?: featured.artwork?.let { vm.artistThemes[it] }
+        ?: NEUTRAL
+    LaunchedEffect(artistId, featured.artwork) {
+        vm.loadSearchTheme(context, artistId, featured.artwork)
+    }
+    val colors = remember(theme) { ArtistPageColors(theme) }
+    val shape = RoundedCornerShape(Radii.feature)
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(colors.base, colors.deep)))
+            .clickable(onClickLabel = "Abrir ${featured.title}", role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${featured.subtitle}: ${featured.title}"
+            }
+            .padding(20.dp)
+    ) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            val imageShape = if (featured.isArtist) CircleShape else RoundedCornerShape(Radii.card)
+            Cover(featured.artwork, Modifier.size(120.dp).clip(imageShape), 120.dp, background = colors.surface)
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        featured.title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineMedium.copy(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        featured.subtitle,
+                        color = ArtistSecondaryText,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+
+                IconButton(
+                    onClick = onPlay,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(Color.White, CircleShape)
+                        .semantics { contentDescription = "Reproducir ${featured.title}" }
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = colors.deep,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+            }
         }
     }
 }

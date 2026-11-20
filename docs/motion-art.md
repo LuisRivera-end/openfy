@@ -59,6 +59,17 @@ Tamaño orientativo: entre 5 y 15 MB por álbum con vídeo.
 
 El vídeo nativo de `MediaPlayerElement` ignoraba el radio del marco y los recortes de composición con Windows App SDK 2.6.5. El modo de fotogramas de `MediaPlayer` y la superficie Win2D sustituyen esa ruta para conservar las esquinas redondeadas, también al redimensionar y pausar.
 
+## Vídeo de cabecera del artista
+
+Desde la 0.5.5, la cabecera de la página de artista muestra el vídeo editorial del artista cuando Apple Music lo tiene (por ejemplo, Rauw Alejandro). Diseño completo: [Identidad visual de artista](superpowers/specs/2026-11-19-artist-identity-design.md).
+
+- **Búsqueda:** catálogo de Apple Music con `types=artists` y el nombre normalizado exacto (`metadataKey`). Para descartar homónimos, la ficha `artists/<id>?extend=editorialVideo&include=albums` debe incluir al menos uno de los álbumes o singles que YouTube Music muestra para ese artista (sin los sufijos ` - Single`/` - EP`). Sin títulos que comparar no se consulta nada.
+- **Vídeo:** `motionArtistWide16x9` y, si falta, `motionArtistFullscreen16x9`. Variante H.264 de hasta 1920 px de ancho (las portadas siguen limitadas a 1080 px).
+- **Servidor (web y Windows):** `POST /api/motion/resolve` con `{ entry: { source: 'artist', artistId, name, albums } }` devuelve el mismo `MotionArtResult`. La clave SHA-256 incluye el identificador de origen, el nombre normalizado y los lanzamientos normalizados que acreditan la coincidencia. Las respuestas negativas mantienen su vencimiento original al consultarse. Los vídeos de artista nunca se fijan, quedan fuera del repaso en segundo plano y se expulsan con el resto por encima de 1 GB.
+- **Android:** `MotionRepository` resuelve el artista en el teléfono con la misma regla, con resultados en disco y la caché LRU de Media3. `MotionArtistArtwork` lo muestra en la cabecera; el reproductor ampliado conserva la prioridad del único decodificador.
+- **Clientes:** el vídeo se reproduce silenciado y en bucle, con un fundido al primer fotograma, solo mientras la cabecera está en pantalla y la ventana o pestaña está visible. Lo desactivan «Portadas animadas», «Movimiento ambiental», el movimiento reducido, el ahorro de datos o la red medida, y `OPENFY_MOTION_ART=off`. Respaldo: el banner fijo de YouTube Music.
+- **Windows:** `Views/LoopingVideo.cs` reutiliza el modo de fotogramas de `MediaPlayer` con Win2D. Una reconstrucción de la misma página mueve el vídeo en curso en vez de reiniciarlo.
+
 ## Configuración
 
 | Variable | Efecto |

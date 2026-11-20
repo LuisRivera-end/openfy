@@ -307,6 +307,77 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         return video.copy(renditions = renditions(readPlaylist(appleUrl(master)) as HlsMultivariantPlaylist))
     }
 
+    suspend fun resolveArtist(artist: String, youtubeAlbums: List<String>, allowNetwork: Boolean, artistId: String? = null): MotionLookup =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (youtubeAlbums.none { normalize(it).isNotEmpty() }) return@withLock MotionLookup()
+                val key = artistKey(artist, artistId, youtubeAlbums)
+                val now = System.currentTimeMillis()
+                val cached = results[key]?.takeIf { it.expiresAt > now }
+                val policy = decoderPolicy()
+                val maxEdge = if (policy.maxEdge >= MaxVideoEdge) 1920 else policy.maxEdge
+                if (!allowNetwork) return@withLock MotionLookup(cached?.video?.let { offlineVideo(it, maxEdge) })
+                failures[key]?.second?.takeIf { it > now }?.let { return@withLock MotionLookup(retryAt = it) }
+                try {
+                    if (cached != null) {
+                        val video = cached.video ?: return@withLock MotionLookup(retryAt = cached.expiresAt)
+                        val preferred = preferredRendition(video.renditions.orEmpty(), maxEdge, ::decoderSupports)
+                            ?.let(video::withRendition) ?: video.takeIf { it.maxEdge <= maxEdge }
+                            ?: return@withLock MotionLookup()
+                        if (preferred != video) saveVideo(key, preferred)
+                        return@withLock MotionLookup(preferred)
+                    }
+                    val result = lookupArtist(artist, youtubeAlbums, maxEdge)
+                    results[key] = result
+                    failures.remove(key)
+                    saveResults()
+                    MotionLookup(result.video, result.expiresAt.takeIf { result.video == null })
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    MotionLookup(retryAt = scheduleRetry(key))
+                }
+            }
+        }
+
+    suspend fun videoFailedArtist(artist: String, albums: List<String>, video: MotionVideo, artistId: String?): Long = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val key = artistKey(artist, artistId, albums)
+            if (results[key]?.video == video) {
+                results.remove(key)
+                saveResults()
+            }
+            scheduleRetry(key)
+        }
+    }
+
+    suspend fun smallerVideoArtist(artist: String, albums: List<String>, rejected: MotionVideo, allowNetwork: Boolean, artistId: String?): MotionVideo? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val policy = decoderPolicy()
+                val maxEdge = minOf(policy.maxEdge, rejected.maxEdge - 1)
+                if (maxEdge <= 0) return@withLock null
+                try {
+                    val current = rejected
+                    val candidates = current.renditions.orEmpty().filter { it.url != rejected.url && it.maxEdge <= maxEdge }
+                    val next = if (allowNetwork) {
+                        largestRendition(candidates)?.let(current::withRendition)
+                    } else {
+                        cachedRendition(current, candidates)
+                    }
+                    if (next != null) {
+                        if (next.maxEdge < policy.maxEdge) saveDecoderPolicy(policy.copy(maxEdge = next.maxEdge))
+                        saveVideo(artistKey(artist, artistId, albums), next)
+                    }
+                    next
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            }
+        }
+
     private suspend fun decoderPolicy(): MotionDecoderPolicy {
         learnedDecoderPolicy?.let { return it }
         val stored = try {
@@ -456,14 +527,71 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         return null
     }
 
+    private suspend fun lookupArtist(artist: String, youtubeAlbums: List<String>, maxEdge: Int): MotionResult {
+        val query = mapOf("term" to artist, "types" to "artists", "limit" to "25")
+        val response = catalog("search", query)?.getValue("results")?.jsonObject
+            ?: error("Motion artist search unavailable")
+        val rows = response["artists"]?.jsonObject?.getValue("data")?.jsonArray.orEmpty()
+        val ids = rows.map { it.jsonObject }.filter {
+            matchArtist(artist, it.getValue("attributes").jsonObject.string("name"))
+        }.map { albumId(it.string("id")) }.distinct()
+        // A truncated set of same-name artists cannot establish that a match is unique.
+        if (ids.size > MaxCandidates) return MotionResult(MotionStatus.UNMATCHED, System.currentTimeMillis(), null)
+        val candidates = ids.mapNotNull { id ->
+            val data = catalog("artists/$id", mapOf("extend" to "editorialVideo", "include" to "albums"))
+                ?.getValue("data")?.jsonArray?.firstOrNull()?.jsonObject ?: return@mapNotNull null
+            val attributes = data.getValue("attributes").jsonObject
+            val albums = data["relationships"]?.jsonObject?.get("albums")?.jsonObject?.get("data")?.jsonArray.orEmpty()
+            val titles = albums.mapNotNull { it.jsonObject["attributes"]?.jsonObject?.string("name") }
+            val editorial = attributes["editorialVideo"]?.takeUnless { it is JsonNull }?.jsonObject
+            ArtistCandidate(id, attributes.string("name"), titles, editorial)
+        }
+        val chosen = evaluateArtistCandidates(artist, youtubeAlbums, candidates)
+        val video = if (chosen is ArtistCandidateResult.Ready) artistVideo(chosen.candidate.editorialVideo!!, maxEdge) else null
+        val now = System.currentTimeMillis()
+        return when {
+            video != null -> MotionResult(MotionStatus.READY, now, video)
+            chosen == ArtistCandidateResult.None -> MotionResult(MotionStatus.NONE, now, null)
+            else -> MotionResult(MotionStatus.UNMATCHED, now, null)
+        }
+    }
+
+    private suspend fun artistVideo(editorial: JsonObject, maxEdge: Int): MotionVideo? {
+        for (field in listOf("motionArtistWide16x9", "motionArtistFullscreen16x9")) {
+            val attributes = editorial[field]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
+            val address = attributes["video"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank) ?: continue
+            val url = appleUrl(address)
+            return when (val playlist = readPlaylist(url)) {
+                is HlsMultivariantPlaylist -> {
+                    val variants = renditions(playlist, maxWidth = 1920, maxHeight = 1080)
+                    val variant = preferredRendition(variants, maxEdge, ::decoderSupports)
+                        ?: error("Motion HLS rendition unavailable")
+                    MotionVideo(variant.url, variant.width, variant.height, master = url.toString(), renditions = variants)
+                }
+                is HlsMediaPlaylist -> {
+                    val width = attributes.getValue("width").jsonPrimitive.int
+                    val height = attributes.getValue("height").jsonPrimitive.int
+                    check(width in 1..1920 && height in 1..1080 && playlist.hasEndTag)
+                    MotionVideo(url.toString(), width, height, renditions = emptyList())
+                }
+                else -> error("Motion playlist unavailable")
+            }
+        }
+        return null
+    }
+
     private suspend fun readPlaylist(url: HttpUrl) = HlsPlaylistParser().parse(
         Uri.parse(url.toString()), request(url, limit = MaxPlaylistBytes).inputStream()
     )
 
-    private fun renditions(playlist: HlsMultivariantPlaylist): List<MotionRendition> = playlist.variants.mapNotNull { variant ->
+    private fun renditions(
+        playlist: HlsMultivariantPlaylist,
+        maxWidth: Int = MaxVideoEdge,
+        maxHeight: Int = MaxVideoEdge
+    ): List<MotionRendition> = playlist.variants.mapNotNull { variant ->
         val format = variant.format
         val codecs = MimeTypes.getCodecsCorrespondingToMimeType(format.codecs, MimeTypes.VIDEO_H264)
-        if (format.width !in 1..MaxVideoEdge || format.height !in 1..MaxVideoEdge || format.frameRate > MaxVideoRate || codecs == null) {
+        if (format.width !in 1..maxWidth || format.height !in 1..maxHeight || format.frameRate > MaxVideoRate || codecs == null) {
             return@mapNotNull null
         }
         val url = runCatching { appleUrl(variant.url.toString()).toString() }.getOrNull() ?: return@mapNotNull null
@@ -575,15 +703,88 @@ internal class MotionRepository(private val app: OpenfyApplication) {
             })
         }
 
+    data class ArtistCandidate(
+        val id: String,
+        val name: String,
+        val albumNames: List<String>,
+        val editorialVideo: JsonObject?
+    )
+
+    sealed class ArtistCandidateResult {
+        data class Ready(val candidate: ArtistCandidate, val videoKey: String) : ArtistCandidateResult()
+        data object None : ArtistCandidateResult()
+        data object Unmatched : ArtistCandidateResult()
+    }
+
     private class HttpFailure(val code: Int) : IOException("Motion HTTP $code")
 
-    private companion object {
+    internal companion object {
         val RedirectCodes = setOf(301, 302, 303, 307, 308)
         val BundlePattern = Regex("src=\"(/assets/index[^\"]+?\\.js)\"")
         val TokenPattern = Regex("eyJ[\\w-]+\\.eyJ[\\w-]+\\.[\\w-]+")
         val ArtistSeparator = Regex("\\s*(?:,|&|/|\\bx\\b|\\by\\b|\\band\\b|\\bfeat\\.?|\\bft\\.?)\\s*", RegexOption.IGNORE_CASE)
 
         fun key(artist: String, album: String) = normalize(artist) + "\n" + normalize(album)
+        fun artistKey(name: String, artistId: String?, albums: List<String>): String {
+            val evidence = albums.map(::normalize).filter(String::isNotEmpty).distinct().sorted()
+            return "artist-header\u0000" + buildJsonArray {
+                add(JsonPrimitive(artistId))
+                add(JsonPrimitive(normalize(name)))
+                add(JsonArray(evidence.map(::JsonPrimitive)))
+            }.toString()
+        }
+
+        fun matchArtist(artistName: String, candidateArtistName: String): Boolean =
+            normalize(artistName).isNotEmpty() && normalize(artistName) == normalize(candidateArtistName)
+
+        fun matchesAnyAlbum(youtubeAlbums: Collection<String>, appleAlbums: Collection<String>): Boolean {
+            val normalizedYt = youtubeAlbums.mapNotNull { normalize(it).ifEmpty { null } }.toSet()
+            if (normalizedYt.isEmpty()) return false
+            return appleAlbums.any { normalize(it) in normalizedYt }
+        }
+
+        fun pickArtistVideoKey(editorial: JsonObject): String? {
+            for (field in listOf("motionArtistWide16x9", "motionArtistFullscreen16x9")) {
+                val attributes = editorial[field]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
+                val address = attributes["video"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+                if (address != null) return field
+            }
+            return null
+        }
+
+        fun evaluateArtistCandidates(
+            artistName: String,
+            youtubeAlbums: Collection<String>,
+            candidates: List<ArtistCandidate>
+        ): ArtistCandidateResult {
+            val ready = mutableListOf<Pair<ArtistCandidate, String>>()
+            var verifiedCount = 0
+            for (candidate in candidates) {
+                if (!matchArtist(artistName, candidate.name)) continue
+                if (!matchesAnyAlbum(youtubeAlbums, candidate.albumNames)) continue
+                val editorial = candidate.editorialVideo
+                val videoKey = editorial?.let { pickArtistVideoKey(it) }
+                if (videoKey != null) {
+                    ready.add(candidate to videoKey)
+                } else {
+                    verifiedCount++
+                }
+            }
+            if (ready.size + verifiedCount > 1) return ArtistCandidateResult.Unmatched
+            if (ready.size == 1) return ArtistCandidateResult.Ready(ready.first().first, ready.first().second)
+            return if (verifiedCount > 0) ArtistCandidateResult.None else ArtistCandidateResult.Unmatched
+        }
+
+        fun selectArtistCandidate(
+            artistName: String,
+            youtubeAlbums: Collection<String>,
+            candidates: List<ArtistCandidate>
+        ): Pair<ArtistCandidate, String>? {
+            return when (val result = evaluateArtistCandidates(artistName, youtubeAlbums, candidates)) {
+                is ArtistCandidateResult.Ready -> result.candidate to result.videoKey
+                else -> null
+            }
+        }
         fun json(bytes: ByteArray) = Json.parseToJsonElement(bytes.decodeToString()).jsonObject
         fun JsonObject.string(key: String) = get(key)?.jsonPrimitive?.contentOrNull.orEmpty()
         fun albumId(id: String) = id.also { check(it.toLongOrNull()?.let { value -> value > 0 } == true) }

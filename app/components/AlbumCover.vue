@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { artworkSize, artworkUrl } from '../../shared/utils/artwork'
 const props = defineProps<{ src?: string | null; title?: string; palette?: string[]; favorite?: boolean; size?: number }>()
+const emit = defineEmits<{ load: [] }>()
 const root = ref<HTMLElement>()
 const visible = ref(false), broken = ref(false), measured = ref(128)
 const variant = computed(() => artworkSize(props.size || measured.value))
@@ -40,7 +41,7 @@ onBeforeUnmount(() => { generation++; clearTimeout(retry); observer?.disconnect(
 
 <template>
   <div ref="root" class="album-cover" :class="{ 'favorite-cover': favorite }" :style="{ '--cover-color': palette?.[0] || '#28483e' }">
-    <img v-if="image && !broken && !favorite" :src="image" :alt="title ? `Portada de ${title}` : ''" decoding="async" @error="broken = true">
+    <img v-if="image && !broken && !favorite" :src="image" :alt="title ? `Portada de ${title}` : ''" decoding="async" @load="emit('load')" @error="broken = true">
     <OIcon v-else :name="favorite ? 'heart' : 'disc'" :size="40" />
     <slot />
   </div>

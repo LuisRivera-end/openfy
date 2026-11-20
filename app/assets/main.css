@@ -8,25 +8,29 @@
 @media (hover: hover) { .catalog-back:hover { color: #f4f4f5; } }
 /* Artist profile: the hero is the one expressive surface; everything below stays in the quiet catalogue language. */
 .catalog-artist-hero { padding: 4px 0 6px; }
-.artist-stage { position: relative; isolation: isolate; overflow: hidden; min-height: clamp(260px, 30vw, 400px); display: flex; align-items: flex-end; gap: 30px; padding: clamp(22px, 3vw, 40px); background: #18181b; }
+.artist-stage { --artist-stage-padding: clamp(22px, 3vw, 40px); position: relative; isolation: isolate; overflow: hidden; min-height: clamp(260px, 30vw, 400px); display: flex; align-items: flex-end; gap: 30px; padding: var(--artist-stage-padding); background: var(--artist-base, #18181b); }
 .artist-backdrop { position: absolute; inset: 0; z-index: -1; }
 .artist-backdrop .album-cover { width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
-.artist-backdrop .album-cover img { object-position: center 30%; }
+/* The cover is a grid whose auto row would grow to the square image; pin the image to the stage instead. */
+.artist-backdrop .album-cover { position: relative; }
+.artist-backdrop .album-cover img { position: absolute; inset: 0; height: 100%; object-position: center 20%; }
 .artist-backdrop svg, .artist-about-art svg { display: none; }
-.has-banner .artist-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, #0000 25%, #000000a8 78%, #000000d9), linear-gradient(90deg, #0000004d, #0000 55%); }
+.artist-page .artist-backdrop { mask-image: linear-gradient(to bottom, #000 47%, #0000 100%); }
+.artist-page .artist-backdrop:not(.has-artwork) .album-cover { background: transparent; }
 /* Without a banner the portrait's own colours fill the stage. */
 .artist-backdrop-blur { filter: blur(56px) saturate(1.5); transform: scale(1.35); opacity: .7; }
-.has-portrait .artist-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, #09090b33, #09090bb3); }
-.artist-stage .artist-portrait { width: clamp(150px, 17vw, 220px); border-radius: 50%; box-shadow: 0 18px 50px #0007; }
+.has-portrait .artist-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, #0000 20%, var(--artist-base, #09090bb3) 100%); }
+.artist-stage .artist-portrait { width: clamp(140px, 17vw, 210px); border-radius: 50%; box-shadow: 0 18px 50px #0007; }
 .catalog-artist-copy { min-width: 0; }
 .artist-kind { color: #e4e4e7; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
 .catalog-artist-copy h1 { line-height: 1.04; padding-bottom: .06em; font-weight: 800; overflow-wrap: anywhere; text-shadow: 0 2px 30px #0006; }
-.artist-actions { display: flex; align-items: center; gap: 16px; padding: 22px 0 4px; }
-.artist-play { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; color: #07160b; background: var(--green); box-shadow: 0 8px 24px #1ed76033; }
-@media (hover: hover) { .artist-play:hover:not(:disabled) { background: #4ae37f; transform: scale(1.04); } }
+.artist-actions { display: flex; align-items: center; gap: 16px; padding: 12px 0 0; }
+.artist-play { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 50%; color: var(--artist-deep, #07160b); background: #ffffff; box-shadow: 0 8px 24px #00000040; }
+@media (hover: hover) { .artist-play:hover:not(:disabled) { background: #f4f4f5; transform: scale(1.04); } }
 .artist-play:disabled { opacity: .45; }
 .artist-play span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.artist-overview.with-latest { display: grid; grid-template-columns: minmax(0, 1fr) minmax(200px, 280px); gap: 0 36px; align-items: start; }
+.artist-page .artist-actions .button.subtle { background: color-mix(in srgb, var(--artist-deep) 88%, white); border-color: #ffffff40; color: #fff; }
+@media (hover: hover) { .artist-page .artist-actions .button.subtle:hover:not(:disabled) { background: color-mix(in srgb, var(--artist-deep) 82%, white); } }
 .artist-latest-card { display: flex; flex-direction: column; gap: 6px; padding: 10px; margin: -10px; border-radius: 12px; }
 @media (hover: hover) { .artist-latest-card:hover { background: #ffffff08; } }
 .artist-latest-card .album-cover { width: 100%; border-radius: 10px; margin-bottom: 8px; box-shadow: 0 14px 36px #0006; }
@@ -48,12 +52,9 @@
 .catalog-album-hero .button { margin-top: 24px; }
 .catalog-album-artists { font-size: 17px; margin: 12px 0 8px; }
 @media (max-width: 700px) {
-  .artist-stage { min-height: 240px; padding: 20px; gap: 18px; }
-  .has-portrait .artist-stage { flex-direction: column; align-items: flex-start; }
+  .artist-stage { --artist-stage-padding: 20px; min-height: 240px; gap: 18px; }
+  .has-portrait .artist-stage { flex-direction: row; align-items: flex-end; }
   .artist-stage .artist-portrait { width: 140px; }
-  .artist-overview.with-latest { display: block; }
-  .artist-latest-card { flex-direction: row; align-items: center; gap: 14px; }
-  .artist-latest-card .album-cover { width: 88px; margin: 0; }
   .catalog-section .section-heading { align-items: flex-start; gap: 12px; flex-wrap: wrap; }
   .catalog-text-button { text-align: left; }
 }
@@ -971,3 +972,168 @@ h1, h2 { text-wrap: balance; }
   :root .global-search .icon-button { flex-basis: 44px; width: 44px; height: 44px; }
   :root .search-active { --search-header-height: calc(114px + var(--safe-top)); }
 }
+
+/* Artist identity */
+:root .main-column.artist-tinted {
+  background: linear-gradient(
+    180deg,
+    var(--artist-base, #3f4a5a) 0%,
+    var(--artist-base, #3f4a5a) var(--artist-stop-popular, 450px),
+    var(--artist-secondary, #3a3f4f) var(--artist-stop-releases, 900px),
+    var(--artist-deep, #1c2129) var(--artist-stop-about, 1400px),
+    #09090b var(--artist-stop-end, 1800px),
+    #09090b 100%
+  );
+}
+:root .artist-page { padding-top: 0; min-height: 100vh; container: artist-content / inline-size; }
+.main-column.artist-tinted #main:focus-visible { outline: none; }
+:root .app-shell:has(.artist-tinted, .library-artist-page) .mobile-nav { background: #18181cf5; }
+:root .artist-page .catalog-artist-hero .artist-stage { min-height: clamp(300px, 36vw, 480px); }
+:root .artist-page :is(.artist-popular, .artist-latest) .section-heading { min-height: 44px; }
+:root :is(.artist-page, .library-artist-page) { --muted: #ededf0; color: #fff; }
+:root :is(.artist-page, .library-artist-page) :is(.track-list-heading, .track-number, .track-copy a, .track-album, .track-duration, .collection-table .track-row > span, .album-card > span, .artist-about .catalog-biography, .artist-kind, .detail-back) { color: var(--muted); }
+:root :is(.artist-page, .library-artist-page) .track-row .icon-button { color: var(--muted); }
+:root .artist-page .catalog-artist-copy { position: relative; z-index: 0; }
+:root .artist-page .has-media .catalog-artist-copy::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -96px -100vw calc(-1 * var(--artist-stage-padding));
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--artist-base) 75%, #09090b) 96px, var(--artist-base));
+  pointer-events: none;
+}
+:root .artist-page .artist-stage:has(.artist-header-video.is-playing) > .artist-portrait { display: none; }
+:root .artist-page .catalog-artist-hero {
+  /* Bleed over the page padding and main's 32px so the media meets the panel edges. */
+  --artist-bleed: calc(36px + 32px);
+  margin-inline: calc(-1 * var(--artist-bleed));
+  padding: 0;
+}
+/* The name keeps the content's left edge inside the bled stage. */
+:root .artist-page .catalog-artist-hero .artist-stage { padding-inline: var(--artist-bleed); }
+:root .artist-page .catalog-artist-hero .artist-actions { padding-inline: var(--artist-bleed); }
+@media (min-width: 1400px) {
+  :root .artist-page .catalog-artist-hero {
+    --artist-bleed: calc(48px + 32px);
+  }
+}
+@media (max-width: 1100px) and (min-width: 761px) {
+  :root .artist-page .catalog-artist-hero {
+    --artist-bleed: calc(24px + 32px);
+  }
+}
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  /* The phone stage already bleeds over the shared gutter (see the catalogue rules above). */
+  :root .artist-page .catalog-artist-hero {
+    margin-inline: 0;
+  }
+  :root .artist-page .catalog-artist-hero .artist-stage { padding-inline: var(--gutter, 16px); }
+  :root .artist-page .catalog-artist-hero .artist-actions { padding-inline: 0; }
+  :root .artist-page .catalog-artist-hero .artist-stage { min-height: clamp(260px, 76vw, 345px); }
+  :root .artist-page .artist-stage .artist-portrait { width: clamp(96px, 31vw, 140px); flex: none; }
+  :root .artist-page .has-portrait h1 { font-size: clamp(29px, 8.5vw, 42px); }
+}
+:root .artist-page .artist-stage {
+  border-radius: 0;
+}
+:root .artist-page .detail-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  padding: 12px 36px;
+  margin: 0 -36px 0;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: background-color 0.25s ease;
+}
+@media (min-width: 1400px) {
+  :root .artist-page .detail-bar {
+    padding: 14px 48px;
+    margin: 0 -48px 0;
+  }
+}
+@media (max-width: 1100px) and (min-width: 761px) {
+  :root .artist-page .detail-bar {
+    padding: 12px 24px;
+    margin: 0 -24px 0;
+  }
+}
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  :root .artist-page .detail-bar {
+    top: max(0px, var(--safe-top));
+    margin: -12px calc(-1 * var(--gutter, 16px)) 6px;
+    padding: 0 calc(var(--gutter, 16px) + 44px) 0 var(--gutter, 16px);
+  }
+}
+:root .artist-page .detail-bar { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root .artist-page .detail-bar {
+    transition: none !important;
+  }
+}
+.artist-header-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 20%;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.artist-header-video.is-playing {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .artist-header-video {
+    display: none !important;
+  }
+}
+:is(.artist-page, .library-artist-page) :focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--artist-base, #3f4a5a);
+}
+@media (hover: hover) {
+  :root .artist-page .track-row:hover {
+:root .artist-page .artist-popular .section-heading { flex-wrap: wrap; }
+/* The sidebar stays visible on unfolded phones and tablets, so use the artist panel's available width. */
+@container artist-content (width >= 700px) {
+  .artist-overview.with-latest { display: grid; grid-template-columns: minmax(0, 1fr) minmax(196px, 28%); gap: 0 32px; align-items: start; }
+}
+@container artist-content (width < 700px) {
+  .artist-latest-card { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 3px 14px; }
+  .artist-latest-card .album-cover { width: 76px; grid-row: span 2; margin: 0; }
+  .artist-latest-card strong { align-self: end; }
+  .artist-latest-card span { align-self: start; }
+}
+@media (width > 760px) and (height > 500px), (width > 760px) and (pointer: fine) {
+  :root .artist-popular .youtube-list :is(.track-row, .track-list-heading) {
+    grid-template-columns: 24px minmax(0, 2fr) minmax(0, 1fr) 54px 126px;
+    column-gap: 8px;
+  }
+  @container artist-content (width < 560px) {
+    :root .artist-popular .youtube-list :is(.track-row, .track-list-heading) { grid-template-columns: 24px minmax(0, 1fr) 54px 126px; }
+    .artist-popular :is(.track-album, .track-list-heading > :nth-child(3)) { display: none; }
+  }
+}
+    background: var(--artist-surface, #525c6b);
+  }
+}
+:root .artist-page .track-row.selected {
+  background: var(--artist-surface, #525c6b);
+}
+/* The global green only reaches AA on the dark base; on artist colours the selection stays white. */
+:root .artist-page .track-row.selected .track-title { color: #ffffff; }
+:root .artist-page .artist-about {
+  background: var(--artist-deep);
+}
+:root .artist-page .artist-about-art { opacity: .12; }
+:root .library-artist-page { background: linear-gradient(180deg, var(--artist-base), var(--artist-deep) min(55%, 520px), #09090b min(100%, 940px)); }
+:root .library-artist-page .collection-playback-actions .button.primary { color: var(--artist-deep); background: #fff; box-shadow: 0 8px 24px #0004; }
+:root .library-artist-page .track-row.selected .track-title { color: #fff; }
+@media (hover: hover) {
+  :root .library-artist-page .track-row:hover { background: var(--artist-surface); }
+}
+:root .library-artist-page .track-row.selected { background: var(--artist-surface); }

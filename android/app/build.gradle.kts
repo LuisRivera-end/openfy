@@ -20,7 +20,7 @@ android {
         minSdk = 29
         targetSdk = 37
         versionCode = providers.gradleProperty("openfyBuild").orElse("1").get().toInt()
-        versionName = providers.gradleProperty("openfyVersion").orElse("0.5.3").get()
+        versionName = providers.gradleProperty("openfyVersion").orElse("0.5.5").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }

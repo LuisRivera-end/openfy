@@ -4,7 +4,7 @@
  * agree) and falls back to the tab root on a cold start. On phones it is a sticky bar whose compact title fades in
  * once the page's own title has scrolled away (scroll-driven animation where supported).
  */
-const props = withDefaults(defineProps<{ title?: string; fallback: string; phoneOnly?: boolean; labels?: Record<string, string> }>(), { title: '', phoneOnly: false, labels: () => ({}) })
+const props = withDefaults(defineProps<{ title?: string; fallback: string; phoneOnly?: boolean; labels?: Record<string, string>; tint?: string }>(), { title: '', phoneOnly: false, labels: () => ({}) })
 const router = useRouter()
 const names: Record<string, string> = { '/': 'Inicio', '/search': 'Buscar', '/library': 'Tu biblioteca', '/downloads': 'Descargas', '/favorites': 'Tus favoritas', '/most-played': 'Más reproducidas' }
 const previous = ref<string | null>(null)
@@ -25,7 +25,7 @@ function back() {
 </script>
 
 <template>
-  <div class="detail-bar" :class="{ 'detail-bar-phone': phoneOnly }">
+  <div class="detail-bar" :class="{ 'detail-bar-phone': phoneOnly }" :style="tint ? { background: tint } : undefined">
     <button class="detail-back" :aria-label="`Volver a ${label}`" @click="back"><OIcon name="back" :size="24" /><span>{{ label }}</span></button>
     <span v-if="title" class="detail-bar-title" aria-hidden="true">{{ title }}</span>
   </div>

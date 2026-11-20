@@ -148,36 +148,46 @@ private val PlayCountEndPadding=4.dp
     artworkSize: Dp = 48.dp,
     status: (@Composable ()->Unit)? = null,
     actions: (@Composable ()->Unit)? = null,
-    menu: (@Composable ()->Unit)? = null
+    menu: (@Composable ()->Unit)? = null,
+    artistColors: ArtistPageColors? = null
 ) {
     val isCurrent=current==song.id
+    val rowShape = RoundedCornerShape(Radii.row)
+    var focused by remember { mutableStateOf(false) }
+    val accent = if (artistColors == null) Green else Color.White
+    val secondary = if (artistColors == null) Muted else ArtistSecondaryText
+    val artistRow = if (artistColors == null) Modifier else Modifier
+        .background(if (isCurrent) artistColors.surface else Color.Transparent)
+        .border(2.dp, if (focused) Color.White else Color.Transparent, rowShape)
+        .onFocusChanged { focused = it.isFocused }
     Row(
-        Modifier.fillMaxWidth().heightIn(min=64.dp).clip(RoundedCornerShape(Radii.row))
+        Modifier.fillMaxWidth().heightIn(min=64.dp).clip(rowShape).then(artistRow)
             .combinedClickable(onClickLabel="Reproducir",onLongClickLabel="Abrir opciones",
                 onClick=play,onLongClick=more)
             .semantics { if(isCurrent) stateDescription="Canción actual" },
         verticalAlignment=Alignment.CenterVertically
     ) {
         if(trackNumber==null) {
-            Cover(song.artwork,Modifier.size(artworkSize).clip(RoundedCornerShape(Radii.row)),artworkSize)
+            Cover(song.artwork,Modifier.size(artworkSize).clip(RoundedCornerShape(Radii.row)),artworkSize,
+                artistColors?.surface ?: Surface)
         } else {
-            Text("$trackNumber",Modifier.width(24.dp),color=Muted,style=MaterialTheme.typography.bodySmall,
+            Text("$trackNumber",Modifier.width(24.dp),color=secondary,style=MaterialTheme.typography.bodySmall,
                 textAlign=TextAlign.Center,maxLines=1)
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f).padding(vertical=6.dp),verticalArrangement=Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                if(isCurrent) Box(Modifier.size(5.dp).background(Green,CircleShape))
-                Text(song.title,color=if(isCurrent) Green else TextColor,style=MaterialTheme.typography.titleSmall,
+                if(isCurrent) Box(Modifier.size(5.dp).background(accent,CircleShape))
+                Text(song.title,color=if(isCurrent) accent else TextColor,style=MaterialTheme.typography.titleSmall,
                     maxLines=1,overflow=TextOverflow.Ellipsis)
             }
             Row(verticalAlignment=Alignment.CenterVertically) {
                 if(song.offlineReady) {
-                    Icon(Icons.Default.Download,"Disponible sin conexión",Modifier.size(12.dp),tint=Green)
+                    Icon(Icons.Default.Download,"Disponible sin conexión",Modifier.size(12.dp),tint=accent)
                     Spacer(Modifier.width(4.dp))
                 }
                 if(song.artist.isNotBlank()) {
-                    Text(song.artist,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1,
+                    Text(song.artist,color=secondary,style=MaterialTheme.typography.bodySmall,maxLines=1,
                         overflow=TextOverflow.Ellipsis)
                 }
             }
@@ -185,7 +195,7 @@ private val PlayCountEndPadding=4.dp
         }
         if(showFavorite && song.favorite) {
             Spacer(Modifier.width(8.dp))
-            Icon(Icons.Default.Favorite,"Favorita",Modifier.size(14.dp),tint=Green)
+            Icon(Icons.Default.Favorite,"Favorita",Modifier.size(14.dp),tint=accent)
         }
         actions?.invoke()
         Box {
@@ -198,7 +208,7 @@ private val PlayCountEndPadding=4.dp
                 Modifier.width(48.dp).padding(end=PlayCountEndPadding).clearAndSetSemantics {
                     contentDescription=if(plays==1) "1 reproducción" else "$plays reproducciones"
                 },
-                textAlign=TextAlign.End,color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1
+                textAlign=TextAlign.End,color=secondary,style=MaterialTheme.typography.bodySmall,maxLines=1
             )
         }
     }
@@ -282,30 +292,33 @@ internal val FavoriteArtworkColor=Color(0xff1c3528)
     placeholder: String,
     modifier: Modifier = Modifier,
     height: Dp = 48.dp,
-    clearLabel: String = "Borrar"
+    clearLabel: String = "Borrar",
+    artistColors: ArtistPageColors? = null
 ) {
     val fieldStyle=MaterialTheme.typography.bodyLarge.copy(color=TextColor,fontSize=16.sp)
     val keyboard=LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
-    val focusBorder=if(focused) Modifier.border(2.dp,Green,CircleShape) else Modifier
+    val accent = if (artistColors == null) Green else Color.White
+    val secondary = if (artistColors == null) Muted else ArtistSecondaryText
+    val focusBorder=if(focused) Modifier.border(2.dp,accent,CircleShape) else Modifier
     BasicTextField(
         value=query,onValueChange=onQuery,
-        modifier=modifier.heightIn(min=height).clip(CircleShape).background(Raised).then(focusBorder)
+        modifier=modifier.heightIn(min=height).clip(CircleShape).background(artistColors?.deep ?: Raised).then(focusBorder)
             .onFocusChanged { focused=it.isFocused }.semantics { contentDescription=placeholder },
-        textStyle=fieldStyle,singleLine=true,cursorBrush=SolidColor(Green),
+        textStyle=fieldStyle,singleLine=true,cursorBrush=SolidColor(accent),
         keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Search),
         keyboardActions=KeyboardActions(onSearch={ keyboard?.hide() }),
         decorationBox={ input ->
             Row(Modifier.padding(start=14.dp,end=if(query.isEmpty()) 14.dp else 0.dp),
                 verticalAlignment=Alignment.CenterVertically) {
-                Icon(Icons.Default.Search,null,Modifier.size(20.dp),tint=Muted)
+                Icon(Icons.Default.Search,null,Modifier.size(20.dp),tint=secondary)
                 Spacer(Modifier.width(10.dp))
                 Box(Modifier.weight(1f).padding(vertical=8.dp)) {
-                    if(query.isEmpty()) Text(placeholder,style=fieldStyle,color=Muted,maxLines=1,
+                    if(query.isEmpty()) Text(placeholder,style=fieldStyle,color=secondary,maxLines=1,
                         overflow=TextOverflow.Ellipsis)
                     input()
                 }
-                if(query.isNotEmpty()) ActionIcon(Icons.Default.Close,clearLabel,tint=Muted) { onQuery("") }
+                if(query.isNotEmpty()) ActionIcon(Icons.Default.Close,clearLabel,tint=secondary) { onQuery("") }
             }
         }
     )
@@ -313,22 +326,24 @@ internal val FavoriteArtworkColor=Color(0xff1c3528)
 
 internal fun LazyListScope.collectionFilterItem(
     key: String,query: String,onQuery: (String)->Unit,onFilters: ()->Unit,
-    filtersActive: Boolean,filteredCount: Int? = null,placeholder: String = "Buscar en esta colección"
+    filtersActive: Boolean,filteredCount: Int? = null,placeholder: String = "Buscar en esta colección",
+    artistColors: ArtistPageColors? = null
 ) {
     gutterItem(key) {
         Row(verticalAlignment=Alignment.CenterVertically) {
-            SearchPill(query,onQuery,placeholder,Modifier.weight(1f))
+            SearchPill(query,onQuery,placeholder,Modifier.weight(1f),artistColors=artistColors)
             Spacer(Modifier.width(4.dp))
             IconButton(onClick=onFilters,modifier=Modifier.size(48.dp)) {
                 Box {
                     Icon(Icons.Default.Tune,if(filtersActive) "Filtros y orden, filtros activos" else "Filtros y orden")
-                    if(filtersActive) Box(Modifier.align(Alignment.TopEnd).size(7.dp).background(Green,CircleShape))
+                    if(filtersActive) Box(Modifier.align(Alignment.TopEnd).size(7.dp)
+                        .background(if (artistColors == null) Green else Color.White,CircleShape))
                 }
             }
         }
         if(filteredCount!=null) {
             Text(if(filteredCount==1) "1 coincidencia" else "$filteredCount coincidencias",
-                Modifier.padding(start=14.dp,top=8.dp,bottom=4.dp),color=Muted,
+                Modifier.padding(start=14.dp,top=8.dp,bottom=4.dp),color=if (artistColors == null) Muted else ArtistSecondaryText,
                 style=MaterialTheme.typography.bodySmall)
         }
     }
@@ -337,7 +352,7 @@ internal fun LazyListScope.collectionFilterItem(
 internal fun LazyListScope.songItems(tracks: List<Song>,songMap: Map<String,Song>,currentId: String?,play: (Song)->Unit,
     onSongActions: (Song)->Unit,stats: Map<String,List<ListeningRow>> = emptyMap(),
     keyPrefix: String = "songs",trackNumbers: Map<String,Int> = emptyMap(),showFavorite: Boolean = true,
-    artworkSize: Dp = 48.dp) {
+    artworkSize: Dp = 48.dp,artistColors: ArtistPageColors? = null) {
     val occurrences=mutableMapOf<String,Int>()
     val rows=tracks.map { song ->
         val occurrence=(occurrences[song.id] ?: 0)+1
@@ -349,7 +364,7 @@ internal fun LazyListScope.songItems(tracks: List<Song>,songMap: Map<String,Song
         SongRow(
             song.copy(favorite=saved?.favorite ?: song.favorite,offlineReady=saved?.offlineReady ?: song.offlineReady),
             currentId,{ play(song) },{ onSongActions(song) },stats[song.id]?.sumOf { it.plays },
-            trackNumber=trackNumbers[song.id],showFavorite=showFavorite,artworkSize=artworkSize
+            trackNumber=trackNumbers[song.id],showFavorite=showFavorite,artworkSize=artworkSize,artistColors=artistColors
         )
     }
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { songCount } from '../shared/utils/text'
+import './assets/artist-chrome.css'
 useAppearanceStore()
 const library = useLibraryStore()
 const downloads = useDownloadsStore()
@@ -7,6 +8,13 @@ const player = usePlayerStore()
 const lyrics = useLyricsStore()
 watch(() => library.connected, (connected) => { if (connected) void lyrics.backfill().catch(() => {}) })
 const route = useRoute()
+const artistPalette = useArtistShellPalette()
+const artistChrome = computed(() => artistPalette.value?.path === route.path ? artistPalette.value.theme : undefined)
+const artistChromeStyle = computed(() => artistChrome.value && {
+  '--artist-base': artistChrome.value.base,
+  '--artist-secondary': artistChrome.value.secondary,
+  '--artist-deep': artistChrome.value.deep,
+})
 const importOpen = useState('importOpen', () => false)
 const playlistOpen = useState('playlistOpen', () => false)
 const playlistName = ref('')
@@ -101,7 +109,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll', trackScroll); cance
 <template>
   <NuxtPwaManifest />
   <StartupScreen @retry="open" @revealed="revealed" />
-  <div class="app-shell" :inert="startup.blocked" :aria-hidden="startup.blocked ? true : undefined" :class="{ 'motion-paused': hidden, 'has-queue': player.queueOpen, 'has-mini': !!player.current, 'dock-compact': phone && compactDock, 'startup-pending': startup.visible, 'startup-revealing': startup.phase === 'revealing' }">
+  <div class="app-shell" :style="artistChromeStyle" :inert="startup.blocked" :aria-hidden="startup.blocked ? true : undefined" :class="{ 'artist-chrome': artistChrome, 'motion-paused': hidden, 'has-queue': player.queueOpen, 'has-mini': !!player.current, 'dock-compact': phone && compactDock, 'startup-pending': startup.visible, 'startup-revealing': startup.phase === 'revealing' }">
     <a href="#main" class="skip-link">Ir al contenido</a>
     <div class="status-backdrop" aria-hidden="true" />
     <aside class="sidebar glass" aria-label="Navegación principal">

@@ -1,6 +1,17 @@
 {
   "releases": [
     {
+      "version": "0.5.5",
+      "date": "2026-11-20",
+      "summary": "Cada artista tiene ahora su propio color en Windows, la web y Android.",
+      "items": [
+        { "type": "new", "text": "La página de cada artista toma su color de la foto del artista: toda la página se tiñe y el tono cambia en la discografía y al final mientras te desplazas." },
+        { "type": "new", "text": "Si Apple Music tiene un vídeo del artista, se reproduce en bucle y sin sonido en la cabecera, en lugar de la imagen fija. Se desactiva con «Portadas animadas», con el movimiento reducido o con datos limitados." },
+        { "type": "improved", "text": "«Resultado más relevante» en la búsqueda es una tarjeta más grande con los colores del artista, del álbum o de la canción, y un botón para reproducir." },
+        { "type": "improved", "text": "Los artistas de tu biblioteca también usan el color de su foto." }
+      ]
+    },
+    {
       "version": "0.5.3",
       "date": "2026-11-17",
       "items": [

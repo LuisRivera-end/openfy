@@ -38,6 +38,7 @@ public sealed partial class MainWindow
         var homeOffset = model.Page == "home" && renderedCatalogPage == "home" ? pageScroll.VerticalOffset : 0;
         var homeFocus = model.Page == "home" && root.XamlRoot != null && Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(root.XamlRoot) is FrameworkElement focused ? AutomationProperties.GetAutomationId(focused) : null;
         DetachCatalog();
+        if (model.Page == "localartist") _ = LoadArtistThemeAsync(ArtistThemeKey, model.CatalogArtwork);
         lastCatalogBuild = DateTime.UtcNow;
         refreshCatalogFilter = null;
         if (renderedCatalogPage != model.Page) pageScroll.ChangeView(null, 0, null, true);
@@ -92,6 +93,8 @@ public sealed partial class MainWindow
             cachedFavoritesRefresh = refreshCatalogFilter; catalog.Children.Clear();
         } else ClearCatalogPanel(catalog);
         ClearCatalogPanel(catalogTail);
+        // Every way out of a page passes here (search, errors, rebuilds): the artist wash and video follow the new page.
+        SyncArtistSurface();
     }
 
     private static void ClearCatalogPanel(Panel panel)
@@ -231,12 +234,16 @@ public sealed partial class MainWindow
         hero.SizeChanged += resize; Ui.OnRelease(hero, () => hero.SizeChanged -= resize); return hero;
     }
 
-    private static FrameworkElement CatalogSectionHeading(string title, string? actionLabel = null, Action? action = null)
+    private FrameworkElement CatalogSectionHeading(string title, string? actionLabel = null, Action? action = null)
     {
         var heading = new Grid { Margin = new Thickness(0, 20, 0, 7), ColumnSpacing = 15 };
         heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var text = Ui.Text(title, 19, true); text.VerticalAlignment = VerticalAlignment.Center; heading.Children.Add(text);
-        if (actionLabel != null && action != null) { var button = Ui.Button(actionLabel, action); button.FontSize = 11; button.Background = Ui.Brush("#00000000"); button.BorderThickness = new Thickness(0); Grid.SetColumn(button, 1); heading.Children.Add(button); }
+        if (actionLabel != null && action != null) {
+            var button = Ui.Button(actionLabel, action); button.FontSize = 11; button.Background = Ui.Brush("#00000000"); button.BorderThickness = new Thickness(0);
+            if (ArtistSurfacePage) StyleArtistCatalogButton(button);
+            Grid.SetColumn(button, 1); heading.Children.Add(button);
+        }
         return heading;
     }
 
@@ -245,6 +252,7 @@ public sealed partial class MainWindow
         var empty = new StackPanel { Spacing = 16, Padding = new Thickness(24, 46, 24, 52), HorizontalAlignment = HorizontalAlignment.Center, MaxWidth = 480 };
         var symbol = Ui.Icon(icon, 42); symbol.HorizontalAlignment = HorizontalAlignment.Center; symbol.Opacity = .5; empty.Children.Add(symbol);
         var heading = Ui.Text(title, 22, true); heading.TextAlignment = TextAlignment.Center; empty.Children.Add(heading); var description = Ui.Muted(text, 13); description.TextAlignment = TextAlignment.Center; description.LineHeight = 23; empty.Children.Add(description);
+        if (ArtistSurfacePage) description.Foreground = Ui.Brush(ArtistSecondaryText);
         if (import) { var button = Ui.PrimaryButton("Importar música", () => _ = model.RunAsync(ImportAsync)); button.HorizontalAlignment = HorizontalAlignment.Center; empty.Children.Add(button); } return empty;
     }
 
@@ -253,7 +261,10 @@ public sealed partial class MainWindow
         catalogCardsCreated++;
         var button = Ui.Button(title, action); button.Padding = new Thickness(8); button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.HorizontalAlignment = HorizontalAlignment.Stretch; button.VerticalAlignment = VerticalAlignment.Top; button.Background = Ui.Brush("#00000000"); button.BorderThickness = new Thickness(0); button.CornerRadius = new CornerRadius(9);
         var panel = new StackPanel { Spacing = 9 }; var artwork = CatalogArtworkView(url, 148, round); artwork.Width = double.NaN; artwork.HorizontalAlignment = HorizontalAlignment.Stretch; artwork.Margin = new Thickness(0, 0, 0, 4); panel.Children.Add(artwork);
-        panel.Children.Add(CatalogTruncatedText(title, 13, true)); panel.Children.Add(CatalogTruncatedText(subtitle, 12)); button.Content = panel; ToolTipService.SetToolTip(button, title);
+        panel.Children.Add(CatalogTruncatedText(title, 13, true));
+        var detail = CatalogTruncatedText(subtitle, 12);
+        if (ArtistSurfacePage) { detail.Foreground = Ui.Brush(ArtistSecondaryText); StyleArtistCatalogButton(button); }
+        panel.Children.Add(detail); button.Content = panel; ToolTipService.SetToolTip(button, title);
         SizeChangedEventHandler resize = (_, args) => artwork.Height = Math.Max(80, args.NewSize.Width - 16);
         button.SizeChanged += resize; Ui.OnRelease(button, () => button.SizeChanged -= resize); return button;
     }

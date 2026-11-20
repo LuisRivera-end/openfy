@@ -156,6 +156,117 @@ internal fun MotionArtwork(
     }
 }
 
+@Composable
+internal fun MotionArtistArtwork(
+    artist: String?,
+    albums: List<String>,
+    fallback: String?,
+    playing: Boolean,
+    modifier: Modifier,
+    shape: Shape = androidx.compose.ui.graphics.RectangleShape,
+    artistId: String? = null,
+    onVideoReady: (Boolean) -> Unit = {}
+) {
+    val app = LocalContext.current.applicationContext as OpenfyApplication
+    val repository = app.motion
+    val playback = repository.playback
+    val priority = LocalMotionPriority.current
+    val reducedMotion = rememberReducedMotion()
+    val preferenceFlow = remember(app) {
+        app.preferences.data.map { (it[Effects] ?: true) && (it[Motion] ?: true) }.distinctUntilChanged()
+    }
+    val enabled by preferenceFlow.collectAsStateWithLifecycle(initialValue = false)
+    var onScreen by remember { mutableStateOf(false) }
+    val lease = remember { Any() }
+    val eligible = enabled && !reducedMotion && onScreen && !artist.isNullOrBlank() && albums.isNotEmpty()
+    LifecycleStartEffect(lease, eligible, priority) {
+        if (eligible) playback.request(lease, priority)
+        onStopOrDispose { playback.cancel(lease) }
+    }
+
+    Box(modifier.clip(shape).onGloballyPositioned { coordinates ->
+        val bounds = coordinates.boundsInWindow()
+        onScreen = bounds.width > 0f && bounds.height > 0f
+    }) {
+        if (fallback != null) Cover(fallback, Modifier.matchParentSize(), sizePx = 1024)
+        if (eligible && playback.owner === lease) {
+            key(artistId, artist, albums) {
+                MotionArtistVideoLayer(app, repository, lease, artist, albums, playing, Modifier.matchParentSize(), shape, artistId, onVideoReady)
+            }
+        }
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun MotionArtistVideoLayer(
+    app: OpenfyApplication,
+    repository: MotionRepository,
+    lease: Any,
+    artist: String,
+    albums: List<String>,
+    playing: Boolean,
+    modifier: Modifier,
+    shape: Shape,
+    artistId: String?,
+    onVideoReady: (Boolean) -> Unit
+) {
+    val network = remember(app) { app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
+    val changes = remember(network) {
+        callbackFlow {
+            fun refresh() { trySend(!network.isActiveNetworkMetered) }
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+                override fun onLost(network: Network) = refresh()
+            }
+            network.registerDefaultNetworkCallback(callback)
+            refresh()
+            awaitClose { network.unregisterNetworkCallback(callback) }
+        }.distinctUntilChanged()
+    }
+    val networkUnmetered by changes.collectAsStateWithLifecycle(initialValue = !network.isActiveNetworkMetered)
+    val qaUnmetered = app.isDebuggable && app.qaUnmetered
+    val unmetered = networkUnmetered || qaUnmetered
+    if (!unmetered) return
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    key(unmetered) {
+        val errors = remember { Channel<MotionVideoFailure>(Channel.CONFLATED) }
+        val attempt by produceState<MotionAttempt?>(null, lifecycle) {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var replacement: MotionVideo? = null
+                while (true) {
+                    val result = replacement?.let { MotionLookup(it) } ?: repository.resolveArtist(artist, albums, unmetered, artistId)
+                    replacement = null
+                    val current = result.video?.let { MotionAttempt(it, repository.decoderSelector(it.maxEdge)) }
+                    value = current
+                    if (current != null) {
+                        var error = errors.receive()
+                        while (error.attempt !== current) error = errors.receive()
+                        value = null
+                        val allowNetwork = unmetered && (!network.isActiveNetworkMetered || qaUnmetered)
+                        if (error.isDecodingError) {
+                            replacement = if (repository.retryWithAnotherDecoder(current.video, current.selector, error.cause)) current.video
+                                else repository.smallerVideoArtist(artist, albums, current.video, allowNetwork, artistId)
+                            if (replacement != null) continue
+                        }
+                        if (!allowNetwork) return@repeatOnLifecycle
+                        waitForMotionRetry(repository.videoFailedArtist(artist, albums, current.video, artistId))
+                    } else {
+                        val retry = result.retryAt ?: return@repeatOnLifecycle
+                        waitForMotionRetry(retry)
+                    }
+                }
+            }
+        }
+        attempt?.let { loaded ->
+            key(loaded) {
+                MotionTexture(repository, lease, loaded, unmetered, playing, modifier, shape,
+                    onError = { errors.trySend(MotionVideoFailure(loaded, it)) }, onVideoReady = onVideoReady)
+            }
+        }
+    }
+}
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 private fun MotionVideoLayer(
@@ -250,7 +361,8 @@ private fun MotionTexture(
     playing: Boolean,
     modifier: Modifier,
     shape: Shape,
-    onError: (PlaybackException) -> Unit
+    onError: (PlaybackException) -> Unit,
+    onVideoReady: ((Boolean) -> Unit)? = null
 ) {
     val video = attempt.video
     val context = LocalContext.current
@@ -258,6 +370,7 @@ private fun MotionTexture(
     val layoutDirection = LocalLayoutDirection.current
     val latestPlaying by rememberUpdatedState(playing)
     val latestOnError by rememberUpdatedState(onError)
+    val latestOnVideoReady by rememberUpdatedState(onVideoReady)
     var player by remember(video) { mutableStateOf<ExoPlayer?>(null) }
     var firstFrame by remember(video) { mutableStateOf(false) }
     var videoSize by remember(video) { mutableStateOf(VideoSize(video.width, video.height)) }
@@ -268,10 +381,14 @@ private fun MotionTexture(
             .setMediaCodecSelector(attempt.selector)
         val engine = ExoPlayer.Builder(context, renderers).build()
         val listener = object : Player.Listener {
-            override fun onRenderedFirstFrame() { firstFrame = true }
+            override fun onRenderedFirstFrame() {
+                firstFrame = true
+                latestOnVideoReady?.invoke(true)
+            }
             override fun onVideoSizeChanged(size: VideoSize) { videoSize = size }
             override fun onPlayerError(error: PlaybackException) {
                 firstFrame = false
+                latestOnVideoReady?.invoke(false)
                 latestOnError(error)
             }
         }
@@ -281,6 +398,7 @@ private fun MotionTexture(
             engine.removeListener(listener)
             engine.release()
             firstFrame = false
+            latestOnVideoReady?.invoke(false)
             player = null
         }
         repository.playback.attach(lease, release)

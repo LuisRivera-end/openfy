@@ -139,10 +139,9 @@ test.describe('Motion art', () => {
     await expect(dialog.locator('.motion-art')).toHaveCount(0)
   })
 
-  test('offers the switch in settings on desktop only', async ({ page }, info) => {
+  test('offers the motion switch in settings on desktop and phones', async ({ page }) => {
     await page.goto('/settings')
     const toggle = page.getByRole('switch', { name: 'Activar portadas animadas' }).or(page.getByRole('checkbox', { name: 'Activar portadas animadas' }))
-    if (isPhone(info)) { await expect(page.getByRole('heading', { name: 'Movimiento ambiental' })).toBeVisible(); await expect(toggle).toHaveCount(0); return }
     await expect(toggle).toBeChecked()
     await page.getByText('Portadas animadas', { exact: true }).locator('xpath=ancestor::div[contains(@class,"setting-row")]').locator('.switch').click()
     await expect(toggle).not.toBeChecked()

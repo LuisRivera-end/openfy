@@ -196,9 +196,9 @@ public sealed partial class MainWindow
             var artist = model.Artists.FirstOrDefault(item => Normalize(item.Name) == needle);
             var song = model.Songs.FirstOrDefault(item => Normalize(item.Title) == needle);
             var album = model.Albums.FirstOrDefault(item => Normalize(item.Title) == needle);
-            FrameworkElement? result = artist != null ? SearchArtistCard(artist) : song != null ? SearchSongRow(song) : album != null ? SearchAlbumCard(album)
-                : model.Songs.FirstOrDefault() is { } firstSong ? SearchSongRow(firstSong) : model.Artists.FirstOrDefault() is { } firstArtist ? SearchArtistCard(firstArtist) : model.Albums.FirstOrDefault() is { } firstAlbum ? SearchAlbumCard(firstAlbum) : null;
-            if (result != null) { result.MaxWidth = result is Button ? 180 : double.PositiveInfinity; result.HorizontalAlignment = HorizontalAlignment.Left; featured.Children.Add(result); }
+            FrameworkElement? result = artist != null ? SearchFeatured(artist: artist) : song != null ? SearchFeatured(song: song) : album != null ? SearchFeatured(album: album)
+                : model.Songs.FirstOrDefault() is { } firstSong ? SearchFeatured(song: firstSong) : model.Artists.FirstOrDefault() is { } firstArtist ? SearchFeatured(artist: firstArtist) : model.Albums.FirstOrDefault() is { } firstAlbum ? SearchFeatured(album: firstAlbum) : null;
+            if (result != null) featured.Children.Add(result);
             else featured.Children.Add(Ui.Muted("No hay coincidencias disponibles. Prueba con otra búsqueda."));
         }
         var songs = new StackPanel { Spacing = 4 }; songs.Children.Add(CatalogSectionHeading("Canciones", "Ver todas", () => SelectSearchCategory("song")));

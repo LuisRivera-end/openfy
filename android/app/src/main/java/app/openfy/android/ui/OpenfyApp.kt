@@ -121,6 +121,23 @@ import java.time.ZoneId
         val route=page?.let { "${it.kind}:${it.id}" } ?: "tab:$tab:$libraryMode"
         val scrolls=remember { linkedMapOf<String,LazyListState>() }
         val scroll=scrolls.getOrPut(route) { LazyListState() }
+        val artistPage = page?.takeIf { it.kind == "artist" || it.kind == "localartist" }
+        val artistKey = artistPage?.let { if (it.kind == "artist") "youtube:${it.id}" else "local:${it.id}" }
+        val artistImage = artistPage?.let { artist ->
+            artist.banner?.takeIf(String::isNotBlank) ?: artist.artwork?.takeIf(String::isNotBlank)
+                ?: source.firstNotNullOfOrNull { it.artwork?.takeIf(String::isNotBlank) }
+        }
+        LaunchedEffect(artistKey, artistImage) {
+            if (artistKey != null) vm.loadArtistTheme(context, artistKey, artistImage)
+        }
+        val artistTheme = artistKey?.let { vm.artistThemes[it] ?: NEUTRAL }
+        val artistColors = remember(artistTheme) { artistTheme?.let(::ArtistPageColors) }
+        val reducedArtistMotion = artistColors != null && rememberReducedMotion()
+        val density = LocalDensity.current
+        val toolbarBottom = WindowInsets.statusBars.getTop(density) + with(density) { 56.dp.toPx() }
+        val artistToolbar by remember(scroll, artistColors, reducedArtistMotion, toolbarBottom) {
+            derivedStateOf { artistColors?.at(scroll.layoutInfo, toolbarBottom, reducedArtistMotion) }
+        }
         val availableRelease=update.release
         var heroTitleBottomBelowBar by remember(route) { mutableIntStateOf(0) }
         val showCompactTitle by remember(scroll) {
@@ -148,7 +165,7 @@ import java.time.ZoneId
             }
             val back: (() -> Unit)?=if(page!=null) ({ vm.back() }) else null
             key(page?.kind,page?.id) {
-                OpenfyTopBar(title,back,back!=null && showCompactTitle) { settings=true }
+                OpenfyTopBar(title,back,back!=null && showCompactTitle, artistToolbar) { settings=true }
             }
         },bottomBar={
             Column(Modifier.navigationBarsPadding()) {
@@ -167,7 +184,8 @@ import java.time.ZoneId
             )
             val release=availableRelease
             val updateNotice: (@Composable ()->Unit)?=if(release==null) null else {{ UpdateNotice(release.version) { settings=true } }}
-            LazyColumn(state=scroll,modifier=Modifier.fillMaxSize().padding(listPadding),
+            val artistBackdrop = artistColors?.run { Modifier.backdrop(scroll) } ?: Modifier
+            LazyColumn(state=scroll,modifier=Modifier.fillMaxSize().padding(listPadding).then(artistBackdrop),
                 contentPadding=PaddingValues(bottom=24.dp),verticalArrangement=Arrangement.spacedBy(if(page==null && tab==2) 2.dp else 6.dp)) {
                 if(page!=null) {
                     detailItems(vm,page,playlist,tracks,songMap,current?.id,stats,period,onPeriod={ period=it },
@@ -175,7 +193,8 @@ import java.time.ZoneId
                         onRename={ rename=it; create=true },onDelete={ deletePlaylist=it },onSongActions={ actions=it },
                         fullTracks=source,filtersActive=filters.hasActiveFilters,onClearFilters=::clearFilters,
                         onHeroTitleMeasured={ heroTitleBottomBelowBar=it-heroTopPaddingPx },
-                        heroTopPadding=heroTopPadding,updateNotice=updateNotice,albumYear=page.year,albumArtist=page.artist)
+                        heroTopPadding=heroTopPadding,updateNotice=updateNotice,albumYear=page.year,albumArtist=page.artist,
+                        artistColors=artistColors)
                 } else {
                     if(updateNotice!=null) gutterItem(content=updateNotice)
                     when(tab) {
@@ -235,8 +254,8 @@ import java.time.ZoneId
     }
 }
 
-@Composable private fun OpenfyTopBar(title: String,back: (() -> Unit)?,showCompactTitle: Boolean,settings: ()->Unit) {
-    val detailBar=if(back==null) Modifier else {
+@Composable private fun OpenfyTopBar(title: String,back: (() -> Unit)?,showCompactTitle: Boolean,artistTint: Color?,settings: ()->Unit) {
+    val detailBar=if(artistTint!=null) Modifier.background(artistTint) else if(back==null) Modifier else {
         val background=animateColorAsState(
             targetValue=Ink.copy(alpha=if(showCompactTitle) 1f else 0f),
             animationSpec=tween(150),label="detail toolbar background"

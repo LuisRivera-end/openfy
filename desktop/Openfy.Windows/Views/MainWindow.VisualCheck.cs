@@ -31,8 +31,42 @@ public sealed partial class MainWindow
             Require(bitmap.PixelWidth > 0 && bitmap.PixelHeight > 0, "La vista no produjo píxeles.");
             steps[name] = new { width = bitmap.PixelWidth, height = bitmap.PixelHeight, page = model.Page, songs = model.Songs.Count };
         }
+        async Task CheckArtists()
+        {
+            int artistsArg = Array.IndexOf(arguments, "--visual-artists");
+            if (artistsArg >= 0 && artistsArg + 1 < arguments.Length)
+            {
+                // Opt-in artist identity review with real search results: featured result, header and the section tones.
+                AppWindow.Resize(WindowsIntegration.Scaled(this, 1360, 940));
+                var artistStates = new List<object>(); int index = 0;
+                foreach (var name in arguments[artistsArg + 1].Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    string slug = "artist-" + (++index).ToString("00");
+                    model.EmptySearch(); restoringSearch = true; search.Text = model.Query = name; restoringSearch = false;
+                    await model.SearchAsync();
+                    for (int wait = 0; wait < 60 && !model.SearchSettled; wait++) await Task.Delay(100);
+                    await Task.Delay(1500); await Capture(slug + "-search");
+                    var found = model.Artists.FirstOrDefault(artist => string.Equals(artist.Name, name, StringComparison.OrdinalIgnoreCase)) ?? model.Artists.FirstOrDefault();
+                    Require(found != null, "La búsqueda de " + name + " no devolvió artistas.");
+                    await model.ArtistAsync(found!.Id); Require(model.Page == "artist", "No se abrió el artista " + name + ".");
+                    for (int wait = 0; wait < 80 && CurrentArtistTheme == null; wait++) await Task.Delay(100);
+                    await Task.Delay(2500); await Capture(slug + "-hero");
+                    pageScroll.ChangeView(null, pageScroll.ScrollableHeight * .5, null, true); await Task.Delay(700); await Capture(slug + "-middle");
+                    pageScroll.ChangeView(null, pageScroll.ScrollableHeight, null, true); await Task.Delay(700); await Capture(slug + "-end");
+                    pageScroll.ChangeView(null, 0, null, true);
+                    var theme = CurrentArtistTheme;
+                    artistStates.Add(new { name, artist = found.Name, banner = model.CatalogBanner != null, theme, video = ArtistVideoVisible });
+                }
+                steps["artists"] = artistStates;
+            }
+        }
         try
         {
+            if (arguments.Contains("--visual-artists-only")) {
+                await CheckArtists();
+                await File.WriteAllTextAsync(Path.Combine(directory, "visual-check.json"), JsonSerializer.Serialize(new { passed = true, steps }, Contracts.Json));
+                return;
+            }
             if (arguments.Contains("--visual-collections-only")) {
                 await CheckCollectionsAsync(Capture, steps);
                 await File.WriteAllTextAsync(Path.Combine(directory, "visual-check.json"), JsonSerializer.Serialize(new { passed = true, dpi = WindowsIntegration.Dpi(this), steps }, Contracts.Json));
@@ -112,6 +146,7 @@ public sealed partial class MainWindow
                 Require(searchCategory == "song" && Math.Abs(actualTrack - expectedTrack) < 2, $"No se restauró el desplazamiento de canciones ({actualTrack}/{expectedTrack})."); steps["search-restoration"] = new { actualTrack, expectedTrack, category = searchCategory };
 
             }
+            await CheckArtists();
             Require(string.IsNullOrEmpty(model.Error), model.Error);
             await File.WriteAllTextAsync(Path.Combine(directory, "visual-check.json"), JsonSerializer.Serialize(new { passed = true, steps }, Contracts.Json));
         }

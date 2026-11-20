@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile, copyFile } from
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { AppleMotion, MotionProviderError, motionParts, motionUrl, motionVariant, type MotionProvider, type MotionSignature, type MotionLookup } from '../../server/utils/apple-motion'
+import { AppleMotion, MotionProviderError, motionParts, motionUrl, motionVariant, type ArtistMotionSignature, type MotionProvider, type MotionSignature, type MotionLookup } from '../../server/utils/apple-motion'
 import { MotionCache, completeNextMotionArt, motionArtChanged, motionArtDelay, motionKey, pinnedMotion, setMotionCache, songMotionSignature, trackMotionSignature } from '../../server/utils/motion-art'
 import { closeDatabase, getDatabase } from '../../server/database'
 import { tracks, youtubeAudio, youtubeSongs } from '../../server/database/schema'
@@ -163,6 +163,90 @@ describe('Apple motion provider', () => {
   })
 })
 
+const artistSignature: ArtistMotionSignature = { kind: 'artist', name: 'ÍVE', albums: ['REVIVE+'] }
+const wide = { motionArtistWide16x9: { video: `${HOST}wide.m3u8` } }
+const fullscreen = { motionArtistFullscreen16x9: { video: `${HOST}fullscreen.m3u8` } }
+const artistRow = (id = 21, name = 'IVE') => ({ id: String(id), type: 'artists', attributes: { name } })
+const artistDetail = (titles: string[], editorialVideo: object | null = wide) => Response.json({ data: [{
+  attributes: { editorialVideo },
+  relationships: { albums: { data: titles.map(name => ({ attributes: { name } })) } },
+}] })
+const artistMaster = [
+  '#EXTM3U',
+  '#EXT-X-STREAM-INF:BANDWIDTH=3000000,CODECS="avc1.640020",RESOLUTION=1280x1200', 'taller.m3u8',
+  '#EXT-X-STREAM-INF:BANDWIDTH=5031816,CODECS="avc1.640020",RESOLUTION=1920x1080', 'v1920.m3u8',
+  '#EXT-X-STREAM-INF:BANDWIDTH=5031816,CODECS="hvc1.2",RESOLUTION=1920x1080', 'hevc.m3u8',
+  '#EXT-X-STREAM-INF:BANDWIDTH=5355283,CODECS="avc1.640033",RESOLUTION=2048x1080', 'v2048.m3u8',
+].join('\n')
+
+function artistProvider(candidates = [artistRow()], detail: (id: string) => Response | Promise<Response> = () => artistDetail(['REVIVE+ - EP'])) {
+  const fallback = provider().request
+  const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input))
+    if (url.hostname === 'amp-api.music.apple.com') {
+      if (url.pathname.endsWith('/search')) return Response.json({ results: { artists: { data: candidates } } })
+      if (url.pathname.includes('/artists/')) return detail(url.pathname.split('/').pop()!)
+    }
+    if (url.href === `${HOST}wide.m3u8`) return new Response(artistMaster)
+    if (url.href === `${HOST}v1920.m3u8`) return new Response(playlist)
+    return fallback(input, init)
+  })
+  return { request, client: new AppleMotion(request as typeof fetch, 'us') }
+}
+
+describe('Apple artist header videos', () => {
+  it('requires the exact normalized name and an overlapping album or single', async () => {
+    const { client, request } = artistProvider([artistRow(20, 'IVE & Guests'), artistRow(21), artistRow(22)], id =>
+      artistDetail(id === '21' ? ['Another album'] : ['Revive+ - Single']))
+    expect(await client.findArtist(artistSignature)).toMatchObject({ status: 'ready', source: { artistId: 22, master: wide.motionArtistWide16x9.video } })
+    const catalog = request.mock.calls.map(([url]) => String(url)).filter(url => url.includes('amp-api'))
+    expect(catalog).toEqual([
+      'https://amp-api.music.apple.com/v1/catalog/us/search?term=%C3%8DVE&types=artists&limit=10',
+      'https://amp-api.music.apple.com/v1/catalog/us/artists/21?extend=editorialVideo&include=albums',
+      'https://amp-api.music.apple.com/v1/catalog/us/artists/22?extend=editorialVideo&include=albums',
+    ])
+  })
+
+  it('rejects namesakes without title overlap and skips searches without album titles', async () => {
+    const { client, request } = artistProvider([artistRow()], () => artistDetail(['REVIVE+ (Deluxe)']))
+    expect(await client.findArtist(artistSignature)).toEqual({ status: 'unmatched' })
+    request.mockClear()
+    expect(await client.findArtist({ ...artistSignature, albums: [] })).toEqual({ status: 'unmatched' })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('handles artist and album titles composed of symbols', async () => {
+    const { client } = artistProvider([artistRow(20, '!!!'), artistRow(21, '¥$')], () => artistDetail(['? - Single']))
+    expect(await client.findArtist({ kind: 'artist', name: '¥$', albums: ['?'] })).toMatchObject({ status: 'ready', source: { artistId: 21 } })
+  })
+
+  it('prefers the wide video and falls back to the fullscreen one', async () => {
+    const both = artistProvider([artistRow()], () => artistDetail(['REVIVE+'], { ...fullscreen, ...wide }))
+    expect(await both.client.findArtist(artistSignature)).toMatchObject({ status: 'ready', source: { master: wide.motionArtistWide16x9.video } })
+    const onlyFullscreen = artistProvider([artistRow()], () => artistDetail(['REVIVE+'], fullscreen))
+    expect(await onlyFullscreen.client.findArtist(artistSignature)).toMatchObject({ status: 'ready', source: { master: fullscreen.motionArtistFullscreen16x9.video } })
+  })
+
+  it('reports none for a verified artist without video and treats a 404 as missing', async () => {
+    const verified = artistProvider([artistRow()], () => artistDetail(['REVIVE+'], null))
+    expect(await verified.client.findArtist(artistSignature)).toEqual({ status: 'none', artistIds: [21] })
+    const missing = artistProvider([artistRow()], () => new Response(null, { status: 404 }))
+    expect(await missing.client.findArtist(artistSignature)).toEqual({ status: 'unmatched' })
+  })
+
+  it('limits detail lookups to three matching candidates', async () => {
+    const { client, request } = artistProvider([artistRow(21), artistRow(22), artistRow(23), artistRow(24)], id =>
+      artistDetail(id === '24' ? ['REVIVE+'] : []))
+    expect(await client.findArtist(artistSignature)).toEqual({ status: 'unmatched' })
+    expect(request.mock.calls.filter(([url]) => String(url).includes('/artists/'))).toHaveLength(3)
+  })
+
+  it('chooses the widest H.264 rendition within 1920 pixels', () => {
+    expect(motionVariant(artistMaster, `${HOST}wide.m3u8`, 'artist'))
+      .toEqual({ url: `${HOST}v1920.m3u8`, width: 1920, height: 1080, bandwidth: 5031816 })
+  })
+})
+
 describe('motion cache', () => {
   let root: string, staging: string
   beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'openfy-motion-')); staging = await mkdtemp(join(tmpdir(), 'openfy-motion-staging-')) })
@@ -274,6 +358,77 @@ describe('motion cache', () => {
     expect(source.find).toHaveBeenCalledTimes(1)
     expect(motionArtDelay()).toBeNull()
   })
+
+  it('deduplicates artist downloads, uses the remuxed dimensions and checks album overlap on reuse', async () => {
+    const started = Promise.withResolvers<void>(), proceed = Promise.withResolvers<void>()
+    const { client, request } = artistProvider([artistRow()], async () => {
+      started.resolve()
+      await proceed.promise
+      return artistDetail(['REVIVE+ - EP'])
+    })
+    const cache = new MotionCache(root, staging, () => new Set(), client, async (raw, output) => {
+      await copyFile(raw, output)
+      return { width: 1888, height: 1062 }
+    })
+    const namesake = { ...artistSignature, albums: ['Another album'] }
+    const original = cache.lookup(artistSignature)
+    await Promise.race([started.promise, original])
+    const pending = Promise.all([
+      original,
+      cache.lookup({ ...artistSignature, name: 'ive', albums: ['REVIVE - Single'] }),
+      cache.lookup(namesake),
+    ])
+    proceed.resolve()
+    const [first, second, unrelated] = await pending
+    expect(first).toMatchObject({ status: 'ready', art: { width: 1888, height: 1062 } })
+    expect(second).toEqual(first)
+    expect(unrelated).toMatchObject({ status: 'unmatched' })
+    expect(await cache.lookup(namesake)).toMatchObject({ status: 'unmatched' })
+    expect(await cache.lookup({ ...artistSignature, albums: [] })).toMatchObject({ status: 'unmatched' })
+    expect(request.mock.calls.filter(([url]) => String(url).includes('/artists/21?'))).toHaveLength(2)
+    expect(request.mock.calls.filter(([url]) => String(url) === `${HOST}v1920.m3u8`)).toHaveLength(1)
+  })
+
+  it('backs off after a failed artist detail even if another candidate had a verified absence', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    let online = false
+    const { client, request } = artistProvider([artistRow(), artistRow(22)], id =>
+      id === '21' ? artistDetail(['REVIVE+'], null) : online ? artistDetail(['REVIVE+']) : new Response(null, { status: 503 }))
+    const cache = new MotionCache(root, staging, () => new Set(), client, remux)
+    await expect(cache.lookup(artistSignature)).rejects.toThrow(MotionProviderError)
+    expect(await readdir(root)).toEqual([])
+    online = true
+    await expect(cache.lookup(artistSignature)).rejects.toThrow(MotionProviderError)
+    expect(request.mock.calls.filter(([url]) => String(url).includes('/artists/22?'))).toHaveLength(1)
+    vi.setSystemTime(Date.now() + 16 * 60_000)
+    // Both namesakes share a release title, so neither face is shown.
+    expect(await cache.lookup(artistSignature)).toMatchObject({ status: 'unmatched' })
+  })
+
+  it('keeps the banner when two namesakes both match a release and have videos', async () => {
+    const { client } = artistProvider([artistRow(), artistRow(22)], () => artistDetail(['REVIVE+']))
+    const cache = new MotionCache(root, staging, () => new Set(), client, remux)
+    expect(await cache.lookup(artistSignature)).toMatchObject({ status: 'unmatched' })
+  })
+
+  it('evicts artist videos even if their key is marked pinned', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const { client } = artistProvider()
+    const key = motionKey(artistSignature)
+    const cache = new MotionCache(root, staging, () => new Set([key]), client, remux, 0)
+    expect(await cache.resolve(artistSignature)).toMatchObject({ key })
+    vi.setSystemTime(Date.now() + 180_000)
+    await cache.prune()
+    expect(await cache.file(key)).toBeNull()
+  })
+
+  it('makes no artist provider requests when disabled', async () => {
+    process.env.OPENFY_MOTION_ART = 'off'
+    const { client, request } = artistProvider()
+    const cache = new MotionCache(root, staging, () => new Set(), client, remux)
+    expect(await cache.lookup(artistSignature)).toMatchObject({ status: 'unmatched' })
+    expect(request).not.toHaveBeenCalled()
+  })
 })
 
 describe('motion signatures and background completion', () => {
@@ -297,6 +452,23 @@ describe('motion signatures and background completion', () => {
     expect(songMotionSignature({ artists: ['XXXTENTACION'], album: '?' })).not.toBeNull()
     expect(songMotionSignature({ artists: ['¥$'], album: 'VULTURES 1' })).not.toBeNull()
     expect(motionKey({ artists: ['XXXTENTACION'], album: '?' })).not.toBe(motionKey({ artists: ['XXXTENTACION'], album: '!!!' }))
+  })
+
+  it('uses a reserved key for artists and leaves them out of the album backfill', async () => {
+    const key = motionKey(artistSignature)
+    expect(key).toBe(motionKey({ ...artistSignature, name: 'ive', albums: ['REVIVE - Single', 'REVIVE+'] }))
+    expect(key).not.toBe(motionKey({ ...artistSignature, albums: ['Another album'] }))
+    expect(motionKey({ ...artistSignature, artistId: 'UC-A' })).not.toBe(motionKey({ ...artistSignature, artistId: 'UC-B' }))
+    expect(key).not.toBe(motionKey(signature))
+    expect(key).not.toBe(motionKey({ artists: ['Artist'], album: 'IVE' }))
+    addTrack('REVIVE+', 'IVE')
+    const { client, request } = artistProvider()
+    const cache = new MotionCache(join(root, 'motion-cache'), join(root, 'staging'), () => new Set(pinnedMotion().keys()), client, copyFile)
+    setMotionCache(cache)
+    await cache.resolve(artistSignature)
+    expect(pinnedMotion().has(key)).toBe(false)
+    await completeNextMotionArt()
+    expect(request.mock.calls.filter(([url]) => String(url).includes('/artists/'))).toHaveLength(1)
   })
 
   it('backfills twelve previously downloaded songs with one shared video and reuses it after restarting', async () => {

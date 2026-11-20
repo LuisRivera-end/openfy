@@ -15,6 +15,9 @@ public sealed partial class MainWindow
 {
     private readonly StackPanel catalogTail = new() { Spacing = 18 };
     private readonly StackPanel trackSection = new();
+    private readonly TextBlock trackNumberHeading = Ui.Muted("#", 11);
+    private readonly Grid trackTableHeading = new() { Height = 42, Padding = new(12, 0, 12, 0), ColumnSpacing = 12, BorderBrush = Ui.Brush("#FFFFFF0D"), BorderThickness = new(0, 0, 0, 1) };
+    private readonly ScrollViewer trackScroll;
     private readonly StackPanel shellNotices = new() { Padding = new(36, 0, 36, 0) };
 
     private readonly ScrollViewer pageScroll;
@@ -71,9 +74,9 @@ public sealed partial class MainWindow
         var error = Ui.Text("", 13); error.Foreground = Ui.Brush("#FFA3A3"); Ui.Bind(error, TextBlock.TextProperty, model, nameof(model.Error)); error.Margin = new(0, 0, 0, 12); error.Visibility = Visibility.Collapsed; AutomationProperties.SetLiveSetting(error, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite); shellNotices.Children.Add(error);
         main.RowDefinitions.Insert(1, new() { Height = GridLength.Auto }); Grid.SetRow(shellNotices, 1); main.Children.Add(shellNotices);
         page.Children.Add(loading); page.Children.Add(catalog);
-        var tableHeading = new Grid { Height = 42, Padding = new(12, 0, 12, 0), ColumnSpacing = 12, BorderBrush = Ui.Brush("#FFFFFF0D"), BorderThickness = new(0, 0, 0, 1) };
+        var tableHeading = trackTableHeading;
         foreach (var width in new[] { new GridLength(28), new GridLength(2, GridUnitType.Star), new GridLength(64), new GridLength(1, GridUnitType.Star), new GridLength(1, GridUnitType.Star), new GridLength(90), new GridLength(38), new GridLength(100), new GridLength(64), new GridLength(36) }) tableHeading.ColumnDefinitions.Add(new() { Width = width });
-        var numberHeading = Ui.Muted("#", 11); numberHeading.VerticalAlignment = VerticalAlignment.Center; tableHeading.Children.Add(numberHeading);
+        trackNumberHeading.VerticalAlignment = VerticalAlignment.Center; tableHeading.Children.Add(trackNumberHeading);
         int column = 1;
         foreach (var (key, label) in new[] { ("title", "Título"), ("duration", "Duración"), ("artist", "Artista"), ("album", "Álbum"), ("genre", "Género"), ("favorite", "☆"), ("plays", "Reproducciones"), ("minutes", "Minutos") })
         {
@@ -88,10 +91,10 @@ public sealed partial class MainWindow
         // A horizontal ScrollViewer measures its content with infinite width, which lets every row size its star columns
         // to its own text (long albums pushed the other columns aside and never trimmed). A finite width keeps all rows
         // and the heading on the same columns; below the minimum the table still scrolls horizontally.
-        var trackScroll = new ScrollViewer { Content = trackSection, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        trackScroll = new ScrollViewer { Content = trackSection, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
         trackScroll.SizeChanged += (_, args) => trackSection.Width = Math.Max(trackSection.MinWidth, args.NewSize.Width);
         page.Children.Add(trackScroll); page.Children.Add(catalogTail);
-        pageScroll = new ScrollViewer { Content = page, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; Grid.SetRow(pageScroll, 2); main.Children.Add(pageScroll);
+        pageScroll = new ScrollViewer { Content = page, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; Grid.SetRow(pageScroll, 2); main.Children.Add(pageScroll); AttachArtistWash(main, page);
         BuildSearchSurface(main);
         ObserveSearchScroll(searchSongRows, "song");
         sidePanel = new Border { Child = side, Background = Ui.Glass(), CornerRadius = new(12), BorderBrush = Ui.Brush("#FFFFFF0B"), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Right, Width = 340, Visibility = Visibility.Collapsed }; Grid.SetColumnSpan(sidePanel, 2); body.Children.Add(sidePanel); Canvas.SetZIndex(sidePanel, 10);
@@ -229,6 +232,7 @@ public sealed partial class MainWindow
         if (args.ItemContainer.ContentTemplateRoot is not Grid template) { if (args.Phase == 0) args.RegisterUpdateCallback(PrepareTrack); return; }
         if (template.FindName("TrackNumber") is TextBlock number) number.Text = (args.ItemIndex + 1).ToString();
         if (args.Phase == 0) {
+            StyleTrackRow(args.ItemContainer, template);
             if (template.FindName("DownloadIndicator") is ContentControl indicator) indicator.Visibility = Visibility.Collapsed;
             foreach (var slotName in new[] { "ArtistSlot", "AlbumSlot" })
                 if (template.FindName(slotName) is ContentControl { Content: TrackLink link }) link.Set("", null);
@@ -239,17 +243,24 @@ public sealed partial class MainWindow
         if (template.FindName("ArtistSlot") is ContentControl artistSlot) {
             if (artistSlot.Content is not TrackLink artistLink) artistSlot.Content = artistLink = NewArtistLink(11, "#9999A2");
             artistLink.Set(song.Artist, ArtistTarget(song));
+            artistLink.SetPageForeground(ArtistSurfacePage ? artistTrackText : null);
         }
         if (template.FindName("AlbumSlot") is ContentControl albumSlot) {
             if (albumSlot.Content is not TrackLink albumLink) albumSlot.Content = albumLink = NewAlbumLink(11, "#9999A2");
             albumLink.Set(song.Album, AlbumTarget(song));
+            albumLink.SetPageForeground(ArtistSurfacePage ? artistTrackText : null);
         }
         foreach (var button in template.Children.OfType<Button>().Where(button => Grid.GetColumn(button) is 6 or 9))
         {
             Ui.ReleaseTree(button); bool favorite = Grid.GetColumn(button) == 6; button.Foreground = Ui.Brush("#A1A1AA"); Ui.SetIcon(button, favorite ? "heart" : "more", 17); button.Visibility = Visibility.Visible;
-            if (favorite) Ui.SetActive(button, model.Library.IsFavorite(song.Entry));
+            void TintAction()
+            {
+                if (favorite) Ui.SetActive(button, model.Library.IsFavorite(song.Entry));
+                if (ArtistSurfacePage && button.Content is FrameworkElement icon) Ui.Tint(icon, artistTrackText);
+            }
+            TintAction();
             AutomationProperties.SetName(button, favorite ? "Marcar favorito: " + song.Title : "Opciones de " + song.Title); ToolTipService.SetToolTip(button, favorite ? "Favorito" : "Opciones");
-            RoutedEventHandler handler = (_, _) => { if (favorite) _ = model.RunAsync(async () => { await model.FavoriteAsync(song); Ui.SetActive(button, model.Library.IsFavorite(song.Entry)); }); else SongMenu(song).ShowAt(button); }; button.Click += handler; Ui.OnRelease(button, () => button.Click -= handler);
+            RoutedEventHandler handler = (_, _) => { if (favorite) _ = model.RunAsync(async () => { await model.FavoriteAsync(song); TintAction(); }); else SongMenu(song).ShowAt(button); }; button.Click += handler; Ui.OnRelease(button, () => button.Click -= handler);
         }
         Appearance.Apply(template);
     }

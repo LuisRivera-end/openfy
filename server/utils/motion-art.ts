@@ -6,14 +6,17 @@ import { eq } from 'drizzle-orm'
 import ffmpegPath from 'ffmpeg-static'
 import { dataPaths, getDatabase } from '../database'
 import { tracks, youtubeAudio, youtubeSongs } from '../database/schema'
-import { AppleMotion, MotionProviderError, motionMetadataKey, type MotionProvider, type MotionSignature } from './apple-motion'
+import { AppleMotion, MotionProviderError, artistAlbumKey, motionMetadataKey, type ArtistMotionSignature, type MotionKind, type MotionProvider, type MotionSignature } from './apple-motion'
 import { diagnosticError, sessionDiagnostic } from './session-diagnostics'
 import type { Track, YouTubeSong } from '../../shared/types/music'
 
 export interface MotionArt { key: string; path: string; bytes: number; width: number; height: number }
 export type MotionResolution = { status: 'ready'; art: MotionArt } | { status: 'none' | 'unmatched'; retryAfterMs: number }
-interface Metadata { version: 1; resolverRevision?: number; status: 'ready' | 'none' | 'unmatched'; albumId?: number; albumIds?: number[]; bytes?: number; width?: number; height?: number; checkedAt: number; accessed: number }
-type Remux = (raw: string, output: string) => Promise<void>
+type MotionArtSignature = MotionSignature | ArtistMotionSignature
+type CacheResolution = MotionResolution & { artistAlbumKeys?: string[] }
+interface Metadata { version: 1; resolverRevision?: number; status: 'ready' | 'none' | 'unmatched'; kind?: 'artist'; albumId?: number; albumIds?: number[]; artistId?: number; artistIds?: number[]; artistAlbumKeys?: string[]; bytes?: number; width?: number; height?: number; checkedAt: number; accessed: number }
+type VideoSize = Pick<MotionArt, 'width' | 'height'>
+type Remux = (raw: string, output: string) => Promise<void | VideoSize>
 
 const ABSENT_FOR = 30 * 24 * 3_600_000
 const UNMATCHED_FOR = 24 * 3_600_000
@@ -33,35 +36,50 @@ function motionSignature(artists: string[], album: string | null | undefined): M
   if (!album || !motionMetadataKey(album) || !artists[0] || !motionMetadataKey(artists[0])) return null
   return { artists, album }
 }
-/** One entry per album of a main artist, however its songs credit their guests. */
-export const motionKey = (signature: MotionSignature) =>
-  createHash('sha256').update(`${motionMetadataKey(signature.artists[0]!)}\n${motionMetadataKey(signature.album)}`).digest('hex')
+/** An artist header belongs to the source profile and the release evidence used to identify it. */
+export function motionKey(signature: MotionArtSignature) {
+  const hash = createHash('sha256')
+  if ('kind' in signature) {
+    const albums = [...new Set(signature.albums.map(artistAlbumKey).filter(Boolean))].sort()
+    return hash.update('artist\n' + JSON.stringify([signature.artistId ?? null, motionMetadataKey(signature.name), albums])).digest('hex')
+  }
+  const artist = motionMetadataKey(signature.artists[0]!)
+  // Reserve the artist prefix even if an album is credited to an artist named "Artist".
+  const prefix = artist === 'artist' ? 'album\nartist' : artist
+  return hash.update(prefix + '\n' + motionMetadataKey(signature.album)).digest('hex')
+}
 
-function ffmpeg(args: string[]) {
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn(process.env.OPENFY_FFMPEG || ffmpegPath || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', ...args],
+function ffmpeg(args: string[], inspect = false) {
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(process.env.OPENFY_FFMPEG || ffmpegPath || 'ffmpeg', ['-hide_banner', '-loglevel', inspect ? 'info' : 'error', '-nostdin', '-nostats', ...args],
       { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
     let failure: Error | undefined
-    child.stderr.on('data', () => {})
+    let details = ''
+    child.stderr.on('data', chunk => { if (inspect && details.length < 16_384) details += chunk.toString() })
     child.on('error', error => { failure = error })
-    child.on('close', code => failure ? reject(failure) : code === 0 ? resolve() : reject(new MotionProviderError('Motion video')))
+    child.on('close', code => failure ? reject(failure) : code === 0 ? resolve(details) : reject(new MotionProviderError('Motion video')))
   })
 }
 /** A plain, seekable MP4 without audio: both `<video loop>` and the Windows player restart it cleanly. */
-export async function remuxMotion(raw: string, output: string) {
+export async function remuxMotion(raw: string, output: string, kind: MotionKind = 'album'): Promise<void | VideoSize> {
   await ffmpeg(['-y', '-i', raw, '-map', '0:v:0', '-an', '-c:v', 'copy', '-movflags', '+faststart', '-f', 'mp4', output])
-  await ffmpeg(['-xerror', '-i', output, '-map', '0:v:0', '-c', 'copy', '-f', 'null', '-'])
+  const details = await ffmpeg(['-xerror', '-i', output, '-map', '0:v:0', '-c', 'copy', '-f', 'null', '-'], kind === 'artist')
+  if (kind === 'artist') {
+    const size = /Stream #0:\d+[^:\r\n]*: Video:[^\r\n]*?, ([1-9]\d*)x([1-9]\d*)\b/.exec(details)
+    if (!size) throw new MotionProviderError('Dimensiones del vídeo no disponibles')
+    return { width: Number(size[1]), height: Number(size[2]) }
+  }
 }
 
-/** One writer per album, atomic files, permanent entries for the library and a budget for the rest. */
+/** One writer per key, atomic files, permanent album entries for the library and a budget for the rest. */
 export class MotionCache {
-  private pending = new Map<string, Promise<MotionResolution>>()
+  private pending = new Map<string, Promise<CacheResolution>>()
   private retry = new Map<string, number>()
   private failures = new Map<string, number>()
   private cleaning: Promise<void> = Promise.resolve()
   private lastCleanup = 0
   constructor(private root: string, private staging: string, private pins: () => Set<string>, private provider: MotionProvider,
-    private remux: Remux = remuxMotion, private budget = 1024 ** 3, private now: () => number = Date.now) {}
+    private remux?: Remux, private budget = 1024 ** 3, private now: () => number = Date.now) {}
 
   private async atomic(path: string, data: string) {
     const temporary = `${path}.${randomUUID()}.tmp`
@@ -103,21 +121,29 @@ export class MotionCache {
   }
 
   /** Convenience for callers that only need the stored file. */
-  async resolve(signature: MotionSignature): Promise<MotionArt | null> {
+  async resolve(signature: MotionArtSignature): Promise<MotionArt | null> {
     const result = await this.lookup(signature)
     return result.status === 'ready' ? result.art : null
   }
 
-  /** Distinguishes a verified absence from an album that neither search could resolve. */
-  async lookup(signature: MotionSignature): Promise<MotionResolution> {
-    const key = motionKey(signature), meta = await this.metadata(key), existing = await this.ready(key, meta)
+  /** Distinguishes a verified absence from a search without a confirmed match. */
+  async lookup(signature: MotionArtSignature): Promise<MotionResolution> {
+    const albums = 'kind' in signature ? new Set(signature.albums.map(artistAlbumKey).filter(Boolean)) : undefined
+    const unmatched = { status: 'unmatched', retryAfterMs: UNMATCHED_FOR } as const
+    if (albums?.size === 0) return unmatched
+    // A name can identify several artists. Require album overlap even when reusing a video.
+    const verified = (keys: string[] | undefined) => !albums || keys?.some(key => albums.has(key))
+    const key = motionKey(signature), stored = await this.metadata(key)
+    const meta = stored?.kind === ('kind' in signature ? signature.kind : undefined) ? stored : undefined
+    const existing = await this.ready(key, meta)
     if (existing) {
+      if (!verified(meta?.artistAlbumKeys)) return unmatched
       if (this.now() - meta!.accessed > 60_000) await this.atomic(join(this.root, key, 'metadata.json'), JSON.stringify({ ...meta, accessed: this.now() })).catch(() => {})
       return { status: 'ready', art: existing }
     }
     const expires = this.expires(meta)
     if (expires > this.now() && (meta?.status === 'none' || meta?.status === 'unmatched')) return { status: meta.status, retryAfterMs: expires - this.now() }
-    if (!motionArtEnabled()) return { status: 'unmatched', retryAfterMs: UNMATCHED_FOR }
+    if (!motionArtEnabled()) return unmatched
     const retry = this.retry.get(key) || 0
     if (retry > this.now()) throw new MotionProviderError('Motion retry later', retry - this.now())
     let work = this.pending.get(key)
@@ -129,21 +155,28 @@ export class MotionCache {
         if (this.now() - this.lastCleanup > 60_000) { this.lastCleanup = this.now(); void this.prune().catch(() => {}) }
       })
     }
-    return work
+    const result = await work
+    if (result.status !== 'ready') return result
+    return verified(result.artistAlbumKeys) ? { status: 'ready', art: result.art } : unmatched
   }
 
-  private async fetch(signature: MotionSignature, key: string): Promise<MotionResolution> {
+  private async fetch(signature: MotionArtSignature, key: string): Promise<CacheResolution> {
     const started = performance.now(), target = key.slice(0, 12)
     const raw = join(this.staging, `${key}.motion.part`), output = join(this.staging, `${key}.motion.mp4`)
     sessionDiagnostic('motion.resolve', 'started', { target })
     try {
       const directory = join(this.root, key)
-      const lookup = await this.provider.find(signature), now = this.now()
+      const lookup = 'kind' in signature ? await this.provider.findArtist?.(signature) : await this.provider.find(signature)
+      if (!lookup) throw new MotionProviderError('Proveedor de vídeo de artista no disponible')
+      const artist = 'kind' in signature
+      const kind = artist ? { kind: 'artist' as const } : {}
+      const now = this.now()
       if (lookup.status !== 'ready') {
         await mkdir(directory, { recursive: true })
         await rm(join(directory, 'motion.mp4'), { force: true }).catch(() => {})
         await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision: RESOLVER_REVISION,
-          status: lookup.status, ...('albumIds' in lookup ? { albumIds: lookup.albumIds } : {}), checkedAt: now, accessed: now } satisfies Metadata))
+          status: lookup.status, ...kind, ...('albumIds' in lookup ? { albumIds: lookup.albumIds } : {}),
+          ...('artistIds' in lookup ? { artistIds: lookup.artistIds } : {}), checkedAt: now, accessed: now } satisfies Metadata))
         this.retry.delete(key); this.failures.delete(key)
         const retryAfterMs = lookup.status === 'none' ? ABSENT_FOR : UNMATCHED_FOR
         sessionDiagnostic('motion.resolve', lookup.status, { target, retryAfterMs, elapsedMs: Math.round(performance.now() - started) })
@@ -151,16 +184,19 @@ export class MotionCache {
       }
       const source = lookup.source
       await mkdir(this.staging, { recursive: true })
-      const size = await this.provider.download(source.master, raw)
-      await this.remux(raw, output)
+      const rendition = artist ? await this.provider.download(source.master, raw, undefined, 'artist') : await this.provider.download(source.master, raw)
+      const measured = this.remux ? await this.remux(raw, output) : await remuxMotion(raw, output, artist ? 'artist' : 'album')
+      const size = measured || rendition
       const bytes = (await stat(output)).size
       if (!bytes) throw new MotionProviderError('Motion empty')
       await mkdir(directory, { recursive: true })
       await rename(output, join(directory, 'motion.mp4'))
-      await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision: RESOLVER_REVISION, status: 'ready', albumId: source.albumId, bytes, ...size, checkedAt: now, accessed: now } satisfies Metadata))
+      const identity = 'artistId' in source ? { artistId: source.artistId, artistAlbumKeys: source.albumKeys } : { albumId: source.albumId }
+      await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision: RESOLVER_REVISION,
+        status: 'ready', ...kind, ...identity, bytes, ...size, checkedAt: now, accessed: now } satisfies Metadata))
       this.retry.delete(key); this.failures.delete(key)
       sessionDiagnostic('motion.resolve', 'ready', { target, bytes, elapsedMs: Math.round(performance.now() - started) })
-      return { status: 'ready', art: { key, path: join(directory, 'motion.mp4'), bytes, ...size } }
+      return { status: 'ready', art: { key, path: join(directory, 'motion.mp4'), bytes, ...size }, artistAlbumKeys: identity.artistAlbumKeys }
     } catch (error) {
       const failures = (this.failures.get(key) || 0) + 1
       this.failures.set(key, failures)
@@ -180,9 +216,9 @@ export class MotionCache {
       const pinned = this.pins() // If the library cannot be read, do not evict anything.
       const candidates: { key: string; bytes: number; accessed: number }[] = []
       for (const key of await this.keys()) {
-        if (pinned.has(key) || this.pending.has(key)) continue
+        if (this.pending.has(key)) continue
         const meta = await this.metadata(key)
-        if (!meta) continue
+        if (!meta || (meta.kind !== 'artist' && pinned.has(key))) continue
         if (meta.status !== 'ready') { if (this.expires(meta) <= this.now()) await rm(join(this.root, key), { recursive: true, force: true }).catch(() => {}) }
         else candidates.push({ key, bytes: meta.bytes || 0, accessed: meta.accessed })
       }

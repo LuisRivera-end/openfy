@@ -13,6 +13,7 @@ public sealed class TrackLink : Button
 {
     private readonly TextBlock text;
     private readonly Brush rest;
+    private Brush? pageForeground;
     private readonly Brush hover = Ui.Brush("#F4F4F5");
     private readonly string action;
     private Func<Task>? target;
@@ -45,10 +46,16 @@ public sealed class TrackLink : Button
         Highlight(false);
     }
 
+    public void SetPageForeground(Brush? foreground)
+    {
+        pageForeground = foreground;
+        Highlight(FocusState == FocusState.Keyboard);
+    }
+
     private void Highlight(bool on)
     {
         bool active = on && target != null;
-        text.Foreground = active ? hover : rest;
+        text.Foreground = active ? hover : pageForeground ?? rest;
         text.TextDecorations = active ? global::Windows.UI.Text.TextDecorations.Underline : global::Windows.UI.Text.TextDecorations.None;
     }
 }

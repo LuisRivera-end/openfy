@@ -1,6 +1,7 @@
 package app.openfy.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.shape.CircleShape
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import app.openfy.android.data.ListeningRow
 import app.openfy.android.data.PlaylistRow
 import app.openfy.android.data.Song
+import kotlinx.serialization.json.*
 import kotlin.math.roundToInt
 
 internal fun LazyListScope.detailItems(
@@ -44,7 +47,7 @@ internal fun LazyListScope.detailItems(
     onRename: (PlaylistRow)->Unit,onDelete: (PlaylistRow)->Unit,onSongActions: (Song)->Unit,
     fullTracks: List<Song>,filtersActive: Boolean,onClearFilters: ()->Unit,onHeroTitleMeasured: (Int)->Unit,
     heroTopPadding: Dp,updateNotice: (@Composable ()->Unit)?,
-    albumYear: Int? = null,albumArtist: String? = null
+    albumYear: Int? = null,albumArtist: String? = null,artistColors: ArtistPageColors? = null
 ) {
     val route="detail:${detail.kind}:${detail.id}"
     val isAlbum=detail.kind=="album" || detail.kind=="localalbum"
@@ -72,86 +75,203 @@ internal fun LazyListScope.detailItems(
         isArtist -> "Artista"
         else -> "Playlist · $trackCount"
     }
-    item(key="$route:header") {
-        val rankingArtwork=if(isTop) fullTracks.take(4).mapNotNull { it.artwork } else emptyList()
-        val tint=if(isFavorites) FavoriteArtworkColor else artworkTint(if(isTop) rankingArtwork.firstOrNull() else artwork)
-        val measurement=remember { HeroTitleMeasurement() }
-        val titleModifier=Modifier.onGloballyPositioned {
-            measurement.title=it
-            measurement.bottomPx()?.let(onHeroTitleMeasured)
-        }
-        val actions: @Composable ()->Unit = {
-            CollectionActions(vm,playlist,tracks,fullTracks,songMap,requestNotifications,onRename,onDelete)
-        }
-        Box(Modifier.fillMaxWidth().collectionBackdrop(tint,heroTopPadding).onGloballyPositioned {
-            measurement.hero=it
-            measurement.bottomPx()?.let(onHeroTitleMeasured)
-        }) {
-            Column(Modifier.fillMaxWidth().padding(top=heroTopPadding)) {
-                if(updateNotice!=null) {
-                    Box(Modifier.padding(horizontal=Gutter)) { updateNotice() }
+    if (artistColors != null) {
+        val hasReleases = detail.albums.isNotEmpty() || detail.singles.isNotEmpty() || detail.moreAlbums || detail.moreSingles
+        val hasDetails = (isRemoteArtist && detail.subtitle.isNotBlank()) || detail.artists.isNotEmpty()
+        val releaseStart = "$route:artist-discography"
+        val detailsStart = "$route:artist-details"
+
+        item(key = "$route:header") {
+            val measurement = remember { HeroTitleMeasurement() }
+            val titleModifier = Modifier.onGloballyPositioned {
+                measurement.title = it
+                measurement.bottomPx()?.let(onHeroTitleMeasured)
+            }
+            Column(Modifier.fillMaxWidth().onGloballyPositioned {
+                measurement.hero = it
+                measurement.bottomPx()?.let(onHeroTitleMeasured)
+            }.padding(top = heroTopPadding)) {
+                if (updateNotice != null) {
+                    Box(Modifier.padding(horizontal = Gutter)) { updateNotice() }
                     Spacer(Modifier.height(6.dp))
                 }
-                if(isTop) {
-                    RankingHeader(title,rankingArtwork,period,onPeriod,listenedMs,plays,titleModifier,actions)
+                val banner = detail.banner?.takeIf(String::isNotBlank)
+                if (isRemoteArtist) {
+                    val albumTitles = remember(detail.albums, detail.singles) {
+                        (detail.albums + detail.singles).mapNotNull {
+                            (it["title"] ?: it["name"])?.jsonPrimitive?.contentOrNull
+                        }
+                    }
+                    var videoReady by remember(detail.id) { mutableStateOf(false) }
+                    val hasWideMedia = banner != null || videoReady
+                    Box(Modifier.fillMaxWidth().then(if (hasWideMedia) Modifier.aspectRatio(16f / 9f) else Modifier)) {
+                        MotionArtistArtwork(
+                            artist = title, albums = albumTitles, fallback = banner,
+                            playing = true, modifier = Modifier.matchParentSize(), artistId = detail.id,
+                            onVideoReady = { videoReady = it }
+                        )
+                        if (hasWideMedia) Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.42f to Color.Transparent,
+                            0.83f to artistColors.base.copy(alpha = 0.82f),
+                            1f to artistColors.base
+                        )))
+                        else ArtistPortraitHeader(title, "Artista", artwork, artistColors, titleModifier)
+                    }
+                    if (hasWideMedia) ArtistHeading(title, "Artista", titleModifier, Modifier.padding(horizontal = Gutter))
                 } else {
-                    CollectionHeader(title,subtitle,artwork,isArtist,isFavorites,isAlbum,artist,titleModifier,
-                        description=detail.subtitle.takeIf { isArtist && !isRemoteArtist }.orEmpty(),actions=actions)
+                    ArtistPortraitHeader(title, "Artista en tu biblioteca", artwork, artistColors, titleModifier)
+                }
+                Spacer(Modifier.height(16.dp))
+                ArtistActions(
+                    tracks = tracks,
+                    deepColor = artistColors.deep,
+                    onPlay = { tracks.firstOrNull()?.let { vm.play(it, tracks) } },
+                    onShuffle = { tracks.firstOrNull()?.let { vm.play(it, tracks, true) } }
+                )
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+
+        val error = detail.error
+        collectionFilterItem("$route:filter", query, onQuery, onFilters, filtersActive, if (isFiltered) tracks.size else null,
+            artistColors = artistColors)
+        if (error != null) gutterItem("$route:error") {
+            Text(error, color = ArtistSecondaryText, style = MaterialTheme.typography.bodyMedium)
+            ArtistTextButton("Reintentar") { vm.back(); vm.openRemote(detail.kind, detail.id, detail.title) }
+        }
+        if (isRemoteArtist && fullTracks.isNotEmpty()) gutterItem("$route:popular") {
+            SectionTitle("Canciones populares")
+        }
+        when {
+            detail.loading && fullTracks.isEmpty() -> skeletons("$route:loading")
+            tracks.isEmpty() && error == null && !detail.loading -> {
+                if (isFiltered) gutterItem("$route:no-matches") {
+                    SectionTitle("Sin coincidencias")
+                    ArtistTextButton("Limpiar filtros", action = onClearFilters)
+                }
+                else gutterItem("$route:empty") { EmptyCollection("Aún no hay canciones") }
+            }
+        }
+        songItems(tracks, songMap, currentId, { vm.play(it, tracks) }, onSongActions,
+            keyPrefix = "$route:song", showFavorite = true, artistColors = artistColors)
+        if (detail.moreSongs) gutterItem("$route:more-songs") {
+            ArtistTextButton("Ver más canciones", enabled = !detail.loading, action = vm::artistSongs)
+        }
+
+        if (hasReleases) {
+            item(key = "$route:fade-discography") { Spacer(Modifier.height(48.dp)) }
+            val latest = (detail.albums + detail.singles).maxByOrNull { it["year"]?.jsonPrimitive?.intOrNull ?: 0 }
+            if (latest != null) gutterItem("$releaseStart:latest") {
+                SectionTitle("Último lanzamiento")
+                ArtistLatestRelease(latest, artistColors, vm::openRemote)
+            }
+            artistReleaseShelf(releaseStart, "albums", "Álbumes", detail.albums, detail.moreAlbums, vm)
+            artistReleaseShelf(releaseStart, "singles", "Singles y EPs", detail.singles, detail.moreSingles, vm)
+        }
+        if (hasDetails) {
+            val transition = if (hasReleases) releaseStart else route
+            item(key = "$transition:fade-details") { Spacer(Modifier.height(48.dp)) }
+        }
+        if (isRemoteArtist && detail.subtitle.isNotBlank()) gutterItem("$detailsStart:bio") {
+            SectionTitle("Acerca de")
+            Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(Radii.card)).background(artistColors.surface).padding(16.dp)) {
+                ExpandableBiography(detail.subtitle, collapsedLines = 3, expandLabel = "Leer más", artist = true)
+            }
+        }
+        if (detail.artists.isNotEmpty()) {
+            gutterItem("$detailsStart:related-heading") { SectionTitle("Fans también escuchan") }
+            item(key = "$detailsStart:related") { Cards(detail.artists, "artist", vm::openRemote) }
+        }
+        val last = when {
+            hasDetails -> detailsStart
+            hasReleases -> releaseStart
+            else -> route
+        }
+        if (!isRemoteArtist && !hasDetails) item(key = "$route:fade-details") { Spacer(Modifier.height(48.dp)) }
+        item(key = "${if (isRemoteArtist) last else detailsStart}:fade-end") { Spacer(Modifier.height(48.dp)) }
+    } else {
+        item(key="$route:header") {
+            val rankingArtwork=if(isTop) fullTracks.take(4).mapNotNull { it.artwork } else emptyList()
+            val tint=if(isFavorites) FavoriteArtworkColor else artworkTint(if(isTop) rankingArtwork.firstOrNull() else artwork)
+            val measurement=remember { HeroTitleMeasurement() }
+            val titleModifier=Modifier.onGloballyPositioned {
+                measurement.title=it
+                measurement.bottomPx()?.let(onHeroTitleMeasured)
+            }
+            val actions: @Composable ()->Unit = {
+                CollectionActions(vm,playlist,tracks,fullTracks,songMap,requestNotifications,onRename,onDelete)
+            }
+            Box(Modifier.fillMaxWidth().collectionBackdrop(tint,heroTopPadding).onGloballyPositioned {
+                measurement.hero=it
+                measurement.bottomPx()?.let(onHeroTitleMeasured)
+            }) {
+                Column(Modifier.fillMaxWidth().padding(top=heroTopPadding)) {
+                    if(updateNotice!=null) {
+                        Box(Modifier.padding(horizontal=Gutter)) { updateNotice() }
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    if(isTop) {
+                        RankingHeader(title,rankingArtwork,period,onPeriod,listenedMs,plays,titleModifier,actions)
+                    } else {
+                        CollectionHeader(title,subtitle,artwork,isArtist,isFavorites,isAlbum,artist,titleModifier,
+                            description=detail.subtitle.takeIf { isArtist && !isRemoteArtist }.orEmpty(),actions=actions)
+                    }
                 }
             }
         }
-    }
 
-    val error=detail.error
-    collectionFilterItem("$route:filter",query,onQuery,onFilters,filtersActive,if(isFiltered) tracks.size else null)
-    if(error!=null) {
-        gutterItem("$route:error") {
-            Retry(error) { vm.back(); vm.openRemote(detail.kind,detail.id,detail.title) }
+        val error=detail.error
+        collectionFilterItem("$route:filter",query,onQuery,onFilters,filtersActive,if(isFiltered) tracks.size else null)
+        if(error!=null) {
+            gutterItem("$route:error") {
+                Retry(error) { vm.back(); vm.openRemote(detail.kind,detail.id,detail.title) }
+            }
         }
-    }
-    if(isRemoteArtist && fullTracks.isNotEmpty()) {
-        gutterItem("$route:popular") { SectionTitle("Canciones populares") }
-    }
-    when {
-        detail.loading && fullTracks.isEmpty() -> skeletons("$route:loading")
-        noListening -> gutterItem("$route:no-listening") {
-            EmptyCollection("Sin escuchas en este período",if(period!="all") "Ver todo" else null) { onPeriod("all") }
+        if(isRemoteArtist && fullTracks.isNotEmpty()) {
+            gutterItem("$route:popular") { SectionTitle("Canciones populares") }
         }
-        tracks.isEmpty() && error==null && !detail.loading -> {
-            if(isFiltered) noCollectionMatches("$route:no-matches",onClearFilters)
-            else gutterItem("$route:empty") { EmptyCollection("Aún no hay canciones") }
+        when {
+            detail.loading && fullTracks.isEmpty() -> skeletons("$route:loading")
+            noListening -> gutterItem("$route:no-listening") {
+                EmptyCollection("Sin escuchas en este período",if(period!="all") "Ver todo" else null) { onPeriod("all") }
+            }
+            tracks.isEmpty() && error==null && !detail.loading -> {
+                if(isFiltered) noCollectionMatches("$route:no-matches",onClearFilters)
+                else gutterItem("$route:empty") { EmptyCollection("Aún no hay canciones") }
+            }
         }
-    }
 
-    if(isTop && tracks.isNotEmpty()) {
-        gutterItem("$route:plays-heading") {
-            Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.CenterEnd) { PlayCountHeading() }
+        if(isTop && tracks.isNotEmpty()) {
+            gutterItem("$route:plays-heading") {
+                Box(Modifier.fillMaxWidth(),contentAlignment=Alignment.CenterEnd) { PlayCountHeading() }
+            }
         }
-    }
-    val trackNumbers=if(isAlbum) fullTracks.mapIndexed { index,song -> song.id to (index+1) }.toMap() else emptyMap()
-    songItems(tracks,songMap,currentId,{ vm.play(it,tracks) },onSongActions,if(isTop) stats else emptyMap(),
-        keyPrefix="$route:song",trackNumbers=trackNumbers,showFavorite=!isFavorites)
-    if(detail.moreSongs) gutterItem("$route:more-songs") {
-        TextButton(onClick=vm::artistSongs,enabled=!detail.loading) { Text("Ver más canciones") }
-    }
-    if(detail.albums.isNotEmpty()) {
-        gutterItem("$route:albums-title") { SectionTitle("Álbumes y lanzamientos") }
-        item(key="$route:albums") { Cards(detail.albums,"album",vm::openRemote) }
-    }
-    if(detail.moreAlbums) gutterItem("$route:more-albums") {
-        TextButton(onClick={ vm.artistReleases("albums") }) { Text("Ver más álbumes") }
-    }
-    if(detail.moreSingles) gutterItem("$route:more-singles") {
-        TextButton(onClick={ vm.artistReleases("singles") }) { Text("Ver más singles y EPs") }
-    }
-    if(detail.artists.isNotEmpty()) {
-        gutterItem("$route:artists-title") { SectionTitle("Artistas similares") }
-        item(key="$route:artists") { Cards(detail.artists,"artist",vm::openRemote) }
-    }
-    if(isRemoteArtist && detail.subtitle.isNotBlank()) {
-        gutterItem("$route:bio") {
-            SectionTitle("Acerca de")
-            ExpandableBiography(detail.subtitle,collapsedLines=2,expandLabel="Leer más")
+        val trackNumbers=if(isAlbum) fullTracks.mapIndexed { index,song -> song.id to (index+1) }.toMap() else emptyMap()
+        songItems(tracks,songMap,currentId,{ vm.play(it,tracks) },onSongActions,if(isTop) stats else emptyMap(),
+            keyPrefix="$route:song",trackNumbers=trackNumbers,showFavorite=!isFavorites)
+        if(detail.moreSongs) gutterItem("$route:more-songs") {
+            TextButton(onClick=vm::artistSongs,enabled=!detail.loading) { Text("Ver más canciones") }
+        }
+        if(detail.albums.isNotEmpty()) {
+            gutterItem("$route:albums-title") { SectionTitle("Álbumes y lanzamientos") }
+            item(key="$route:albums") { Cards(detail.albums,"album",vm::openRemote) }
+        }
+        if(detail.moreAlbums) gutterItem("$route:more-albums") {
+            TextButton(onClick={ vm.artistReleases("albums") }) { Text("Ver más álbumes") }
+        }
+        if(detail.moreSingles) gutterItem("$route:more-singles") {
+            TextButton(onClick={ vm.artistReleases("singles") }) { Text("Ver más singles y EPs") }
+        }
+        if(detail.artists.isNotEmpty()) {
+            gutterItem("$route:artists-title") { SectionTitle("Artistas similares") }
+            item(key="$route:artists") { Cards(detail.artists,"artist",vm::openRemote) }
+        }
+        if(isRemoteArtist && detail.subtitle.isNotBlank()) {
+            gutterItem("$route:bio") {
+                SectionTitle("Acerca de")
+                ExpandableBiography(detail.subtitle,collapsedLines=2,expandLabel="Leer más")
+            }
         }
     }
 }
@@ -254,6 +374,111 @@ private fun Modifier.collectionBackdrop(tint: Color,heroTopPadding: Dp) = drawWi
     fontSize=26.sp,fontWeight=FontWeight.Bold,lineHeight=31.sp
 )
 
+@Composable
+private fun ArtistPortraitHeader(title: String, label: String, artwork: String?, colors: ArtistPageColors, titleModifier: Modifier) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = Gutter, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        BoxWithConstraints {
+            val coverSize = if (maxWidth < 370.dp) 104.dp else 128.dp
+            Cover(artwork, Modifier.size(coverSize).clip(CircleShape), coverSize, colors.surface)
+        }
+        ArtistHeading(title, label, titleModifier, Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun ArtistHeading(title: String, label: String, titleModifier: Modifier, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(label, color = ArtistSecondaryText, style = MaterialTheme.typography.labelMedium)
+        Text(
+            title, titleModifier, color = Color.White, maxLines = 3, overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 32.sp, lineHeight = 36.sp)
+        )
+    }
+}
+
+@Composable
+private fun ArtistTextButton(label: String, enabled: Boolean = true, action: () -> Unit) {
+    TextButton(onClick = action, enabled = enabled, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
+        Text(label)
+    }
+}
+
+private fun LazyListScope.artistReleaseShelf(
+    sectionKey: String, kind: String, title: String, cards: List<JsonObject>, more: Boolean, vm: OpenfyViewModel
+) {
+    if (cards.isNotEmpty()) {
+        gutterItem("$sectionKey:$kind-heading") { SectionTitle(title) }
+        item(key = "$sectionKey:$kind-cards") { Cards(cards, "album", vm::openRemote) }
+    }
+    if (more) gutterItem("$sectionKey:$kind-more") {
+        val label = if (kind == "albums") "Ver más álbumes" else "Ver más singles y EPs"
+        ArtistTextButton(label) { vm.artistReleases(kind) }
+    }
+}
+
+@Composable
+private fun ArtistLatestRelease(item: JsonObject, colors: ArtistPageColors, open: (String, String, String) -> Unit) {
+    val id = item["id"]?.jsonPrimitive?.contentOrNull ?: return
+    val title = (item["title"] ?: item["name"])?.jsonPrimitive?.contentOrNull ?: return
+    val artwork = item["artwork"]?.jsonPrimitive?.contentOrNull
+    val year = item["year"]?.jsonPrimitive?.intOrNull
+    val shape = RoundedCornerShape(Radii.card)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(colors.deep)
+            .clickable { open("album", id, title) }.padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Cover(artwork, Modifier.size(64.dp).clip(RoundedCornerShape(Radii.tile)), 64.dp, colors.surface)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (year != null) Text(year.toString(), color = ArtistSecondaryText, style = MaterialTheme.typography.bodySmall)
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = ArtistSecondaryText)
+    }
+}
+
+@Composable
+private fun ArtistActions(
+    tracks: List<Song>,
+    deepColor: Color,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = Gutter),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        IconButton(
+            onClick = onPlay,
+            enabled = tracks.isNotEmpty(),
+            modifier = Modifier
+                .size(56.dp)
+                .background(Color.White, CircleShape)
+                .semantics { contentDescription = "Reproducir" }
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = deepColor, modifier = Modifier.size(32.dp))
+        }
+        FilledTonalButton(
+            onClick = onShuffle,
+            enabled = tracks.isNotEmpty(),
+            modifier = Modifier.height(48.dp),
+            colors = ButtonDefaults.filledTonalButtonColors(
+                containerColor = Color.White.copy(alpha = 0.12f).compositeOver(deepColor),
+                contentColor = Color.White
+            ),
+        ) {
+            Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Aleatorio")
+        }
+    }
+}
+
 @Composable private fun CollectionActions(
     vm: OpenfyViewModel,playlist: PlaylistRow?,tracks: List<Song>,fullTracks: List<Song>,songMap: Map<String,Song>,
     requestNotifications: ()->Unit,onRename: (PlaylistRow)->Unit,onDelete: (PlaylistRow)->Unit
@@ -332,13 +557,14 @@ private fun Modifier.collectionBackdrop(tint: Color,heroTopPadding: Dp) = drawWi
     }
 }
 
-@Composable private fun ExpandableBiography(description: String,collapsedLines: Int,expandLabel: String) {
+@Composable private fun ExpandableBiography(description: String,collapsedLines: Int,expandLabel: String,artist: Boolean = false) {
     var expanded by rememberSaveable(description) { mutableStateOf(false) }
     var hasOverflow by remember(description) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
-        Text(description,color=Muted,style=MaterialTheme.typography.bodyMedium,maxLines=if(expanded) Int.MAX_VALUE else collapsedLines,
+        Text(description,color=if(artist) ArtistSecondaryText else Muted,style=MaterialTheme.typography.bodyMedium,maxLines=if(expanded) Int.MAX_VALUE else collapsedLines,
             overflow=TextOverflow.Ellipsis,onTextLayout={ if(!expanded) hasOverflow=it.hasVisualOverflow })
-        if(expanded || hasOverflow) TextButton(onClick={ expanded=!expanded },modifier=Modifier.heightIn(min=48.dp)) {
+        if(expanded || hasOverflow) TextButton(onClick={ expanded=!expanded },modifier=Modifier.heightIn(min=48.dp),
+            colors=ButtonDefaults.textButtonColors(contentColor=if(artist) Color.White else MaterialTheme.colorScheme.primary)) {
             Text(if(expanded) "Leer menos" else expandLabel)
         }
     }

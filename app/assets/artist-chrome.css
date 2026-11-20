@@ -1,0 +1,119 @@
+:root .app-shell.artist-chrome {
+  --muted: #ededf0;
+  --artist-glass: color-mix(in srgb, var(--artist-deep) 85%, white);
+  --artist-chrome-dark: color-mix(in srgb, var(--artist-deep) 78%, #131319);
+  --artist-line: #ffffff32;
+}
+
+:root .artist-chrome .topbar {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+
+:root .artist-chrome .topbar :is(.search-field, .avatar, .import-top) {
+  color: #fff;
+  background: var(--artist-glass);
+  border: 1px solid var(--artist-line);
+}
+
+:root .artist-chrome .topbar .search-field :is(svg, .icon-button),
+:root .artist-chrome .topbar .search-field input::placeholder {
+  color: #ededf0;
+  opacity: 1;
+}
+
+:root .artist-chrome .topbar .search-field:focus-within {
+  outline-color: #fff;
+}
+
+:root .artist-chrome > .sidebar {
+  color: #fff;
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--artist-base) 60%, #121218),
+    var(--artist-chrome-dark) 64%);
+  border: 1px solid #ffffff16;
+}
+
+:root .app-shell.artist-chrome > :is(.player-bar, .mobile-nav).glass {
+  color: #fff;
+  background: linear-gradient(115deg,
+    color-mix(in srgb, var(--artist-base) 44%, var(--artist-chrome-dark)),
+    var(--artist-chrome-dark) 70%);
+  border-color: #ffffff22;
+}
+
+:root .artist-chrome .status-backdrop { background: var(--artist-chrome-dark); }
+:root .artist-chrome :is(.sidebar-library header, .sidebar-empty span, .connection, .seek-row, .now-playing-artist, .player-tools, .player-bar .icon-button, .mobile-nav a) { color: var(--muted); }
+:root .artist-chrome .sidebar :is(nav .current, footer .current, .collection-link.current),
+:root .artist-chrome .mobile-nav a.current { color: #fff; background: var(--artist-glass); }
+:root .artist-chrome .player-bar .icon-button.active { color: var(--artist-deep); background: #ededf0; }
+:root .artist-chrome .now-playing-open:disabled ~ .now-playing-artist { opacity: 1; }
+:root .artist-chrome .player-bar :focus-visible,
+:root .artist-chrome .topbar :focus-visible,
+:root .artist-chrome .sidebar :focus-visible,
+:root .artist-chrome .mobile-nav :focus-visible { outline-color: #fff; }
+
+:root .artist-page .artist-stage { --artist-glow-gutter: var(--artist-bleed); overflow: visible; }
+:root .artist-page .artist-stage-content { flex: 1 1 auto; min-width: 0; }
+:root .artist-page .artist-backdrop {
+  inset-block-start: calc(-1 * var(--artist-cover-offset, 0px));
+  overflow: hidden;
+  border-radius: 15px 15px 0 0;
+  mask-image: linear-gradient(#000 58%, #0000 100%);
+}
+
+:root .artist-page .has-media .artist-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, #09090bd4, #09090b3d 34%, transparent 54%);
+}
+
+:root .artist-page .detail-bar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+:root .artist-page .detail-back {
+  gap: 5px;
+  width: max-content;
+  margin: 0;
+  padding-inline: 5px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--artist-deep) 89%, white);
+}
+
+:root .artist-page .artist-stage-content { position: relative; isolation: isolate; }
+:root .artist-page .has-media .catalog-artist-copy::before { content: none; }
+:root .artist-page .has-media .artist-stage-content::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -110px calc(-1 * var(--artist-glow-gutter)) calc(-1 * var(--artist-stage-padding));
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--artist-deep) 76%, transparent) 110px, var(--artist-base));
+  pointer-events: none;
+}
+
+:root .artist-page .catalog-artist-hero .artist-actions { padding-inline: 0; padding-top: 14px; gap: 12px; flex-wrap: wrap; }
+:root .artist-page .artist-play { flex: 0 0 56px; }
+.artist-page .artist-info-button {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 44px;
+  height: 44px;
+  color: #fff;
+  background: var(--artist-glass, #252635);
+  border: 1px solid #ffffff48;
+  border-radius: 50%;
+}
+
+@media (hover: hover) {
+  .artist-page .artist-info-button:hover { background: color-mix(in srgb, var(--artist-deep) 75%, white); }
+}
+
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  :root .artist-page .artist-backdrop { border-radius: 0; }
+  :root .artist-page .artist-stage { --artist-glow-gutter: var(--gutter, 16px); }
+  :root .artist-page .catalog-artist-hero .artist-stage { min-height: clamp(300px, 88vw, 370px); }
+  :root .artist-page .has-portrait .artist-stage { align-items: center; }
+  :root .artist-page .catalog-artist-hero .artist-actions { gap: 8px; }
+  :root .artist-page .has-portrait .artist-stage .artist-portrait { width: clamp(76px, 25vw, 112px); }
+  :root .artist-page .has-portrait .artist-stage .artist-play { flex-basis: 44px; width: 44px; height: 44px; }
+}

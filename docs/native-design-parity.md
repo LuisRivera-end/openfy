@@ -96,3 +96,6 @@ Verificado:
 
 Pendiente: revisión en iPhone físico; las ejecuciones WebKit emuladas no la sustituyen. `Openfy.Audio.Tests` no se ejecutó en esta revisión.
 
+## Identidad de artista (20 de noviembre de 2026)
+
+Windows replica la página de artista de la web: `MainWindow.Artist.cs` pinta un lavado detrás de todo el panel (barra superior incluida) que sigue al desplazamiento por secciones, y la cabecera ocupa todo el ancho del panel con el banner o el vídeo (`LoopingVideo.cs`) fundidos en `base`. `ArtistThemes.cs` muestrea la portada preparada a 16 × 16 con `BitmapDecoder` y guarda la paleta por artista durante la sesión, para que «Resultado más relevante» (`MainWindow.SearchFeatured.cs`) use los mismos colores. La comprobación `--visual-check <dir> --visual-artists-only --visual-artists "Bad Bunny;Lady Gaga;Rauw Alejandro"` captura búsqueda, cabecera, mitad y final de cada artista con datos reales; las comprobaciones apagan el vídeo.

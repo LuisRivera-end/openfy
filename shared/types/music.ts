@@ -188,6 +188,12 @@ export type NowPlaying = Pick<Track, 'id' | 'title' | 'artist' | 'album' | 'artw
 }
 
 /** The looping video that replaces the cover in the desktop Big Picture, when the album has one. */
+/** Body of POST /api/motion/resolve for an artist's editorial header video (16:9). Album titles disambiguate namesakes. */
+export interface ArtistMotionEntry { source: 'artist'; artistId?: string; name: string; albums: string[] }
+
+/** Page colours of an artist, from shared/utils/artist-theme.ts (pinned by tests/fixtures/artist-theme-contract.json). */
+export interface ArtistTheme { base: string; secondary: string; deep: string; surface: string; neutral: boolean }
+
 export type MotionArtResult = { status: 'ready'; url: string; width: number; height: number }
   | { status: 'none'; retryAfterMs?: number } | { status: 'unmatched'; retryAfterMs: number }
 

@@ -2,6 +2,7 @@ package app.openfy.android.ui
 
 import android.app.Application
 import android.content.ComponentName
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -21,6 +22,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.*
 import java.io.IOException
+import coil3.toBitmap
+import coil3.request.allowHardware
 
 data class LibraryState(val songs: List<Song> = emptyList(),val playlists: List<PlaylistRow> = emptyList(),
     val downloads: List<DownloadRow> = emptyList(),val listening: List<ListeningRow> = emptyList(),val recents: List<RecentContext> = emptyList(),
@@ -36,7 +39,7 @@ data class DetailState(val kind: String,val id: String,val title: String,val sub
     val songs: List<Song> = emptyList(),val albums: List<JsonObject> = emptyList(),val artists: List<JsonObject> = emptyList(),
     val loading: Boolean = false,val error: String? = null,val cursor: String? = null,val moreSongs: Boolean = false,
     val moreAlbums: Boolean = false,val moreSingles: Boolean = false,val releaseCursors: Map<String,String> = emptyMap(),
-    val year: Int? = null,val artist: String? = null)
+    val year: Int? = null,val artist: String? = null,val banner: String? = null,val singles: List<JsonObject> = emptyList())
 
 @Serializable
 private data class DiscoveryCache(val songs: List<Song>, val albums: List<JsonObject>, val fetchedAt: Long)
@@ -115,6 +118,47 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
     }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val tab=MutableStateFlow(0)
+    val artistThemes = mutableStateMapOf<String, ArtistThemeColors>()
+    private val themeSources = mutableMapOf<String, String>()
+
+    private suspend fun sampleTheme(context: android.content.Context, artworkUrl: String): ArtistThemeColors? = withContext(Dispatchers.IO) {
+        val sized = ArtworkUrls.sized(artworkUrl, 128) ?: artworkUrl
+        val data = java.io.File(sized).takeIf { it.isAbsolute } ?: sized
+        val request = coil3.request.ImageRequest.Builder(context).data(data).size(64).allowHardware(false).build()
+        val image = (coil3.SingletonImageLoader.get(context).execute(request) as? coil3.request.SuccessResult)?.image ?: return@withContext null
+        val bitmap = image.toBitmap()
+        val scaled = android.graphics.Bitmap.createScaledBitmap(bitmap, 16, 16, true)
+        val pixels = IntArray(256)
+        try {
+            scaled.getPixels(pixels, 0, 16, 0, 0, 16, 16)
+            artistTheme(pixels)
+        } finally {
+            if (scaled !== bitmap) scaled.recycle()
+        }
+    }
+
+    suspend fun loadArtistTheme(context: android.content.Context, key: String, artworkUrl: String?): ArtistThemeColors {
+        if (artworkUrl.isNullOrBlank()) return artistThemes[key] ?: NEUTRAL
+        if (themeSources[key] == artworkUrl && artistThemes.containsKey(key)) {
+            return artistThemes.getValue(key)
+        }
+        val theme = sampleTheme(context, artworkUrl) ?: return artistThemes[key] ?: NEUTRAL
+        themeSources[key] = artworkUrl
+        artistThemes[key] = theme
+        return theme
+    }
+
+    suspend fun loadSearchTheme(context: android.content.Context, artistId: String?, artworkUrl: String?): ArtistThemeColors {
+        if (artistId != null) {
+            val artistKey = "youtube:$artistId"
+            artistThemes[artistKey]?.let { return it }
+        }
+        if (artworkUrl.isNullOrBlank()) return NEUTRAL
+        artistThemes[artworkUrl]?.let { return it }
+        val theme = sampleTheme(context, artworkUrl) ?: return NEUTRAL
+        artistThemes[artworkUrl] = theme
+        return theme
+    }
     private var searchJob: Job?=null
     private var detailJob: Job?=null
     private var lyricsJob: Job?=null
@@ -199,26 +243,67 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
         if (updated != previous) player.value = updated.copy(position = now)
         positionClock.value = now
     }
-    fun selectTab(value: Int) { tab.value=value; detailJob?.cancel(); detail.value=null; history.clear() }
+    fun selectTab(value: Int) { cancelFeaturedPlayback(); tab.value=value; detailJob?.cancel(); detail.value=null; history.clear() }
     fun back(): Boolean {
         if(detail.value==null) return false
         detailJob?.cancel(); generation++
         detail.value=if(history.isEmpty()) null else history.removeAt(history.lastIndex)
         return true
     }
-    fun play(song: Song, songs: List<Song> = listOf(song), shuffled: Boolean = false) = run {
+    fun play(song: Song, songs: List<Song> = listOf(song), shuffled: Boolean = false, explicitContext: RecentContext? = null) = run {
         val c=controller ?: error("El reproductor se está preparando")
         val playable=songs.filter { it.source=="youtube" || it.path!=null }
         app.database.withTransaction { for(row in playable) if(row.source=="youtube") app.repository.saveRemote(Json.parseToJsonElement(row.metadata).jsonObject) }
         if(playable.isEmpty()) return@run
         val source=detail.value
-        val context=source?.let { page ->
+        val context=explicitContext ?: source?.let { page ->
             val kind=when(page.kind) { "playlist","favorites" -> page.kind; "album","localalbum" -> "album"; "artist","localartist" -> "artist"; else -> "song" }
             if(kind=="song") null else RecentContext(kind,if(page.kind in setOf("album","artist")) "youtube:${page.id}" else if(page.kind.startsWith("local")) "local:${page.id}" else page.id,
                 library.value.playlists.find { it.id==page.id }?.name ?: page.title,page.subtitle,page.artwork ?: playable.firstOrNull()?.artwork)
         }
         c.setMediaItems(playable.map { value -> val item=PlaybackService.mediaItem(value); if(context==null) item else PlaybackService.withContext(item,Json.parseToJsonElement(Json.encodeToString(context)).jsonObject) },playable.indexOfFirst { it.id==song.id }.coerceAtLeast(0),0)
         c.shuffleModeEnabled=shuffled; c.prepare(); c.play()
+    }
+
+    private var featuredPlayJob: Job? = null
+    private var featuredPlayGeneration = 0L
+
+    private fun cancelFeaturedPlayback() {
+        featuredPlayJob?.cancel()
+        featuredPlayGeneration++
+    }
+
+    private fun currentFeaturedThemeKey(): String? {
+        val s = search.value
+        return when (s.kind) {
+            "songs" -> s.songs.firstOrNull()?.id
+            "artists" -> s.cards.firstOrNull()?.get("id")?.jsonPrimitive?.contentOrNull?.let { "youtube:$it" }
+            "albums" -> s.cards.firstOrNull()?.get("id")?.jsonPrimitive?.contentOrNull?.let { "youtube:album:$it" }
+            else -> null
+        }
+    }
+
+    fun playFeatured(featured: FeaturedSearchResult, fallbackSongs: List<Song> = emptyList()) {
+        cancelFeaturedPlayback()
+        val id = when (featured) {
+            is FeaturedSearchResult.SongResult -> {
+                play(featured.song, fallbackSongs.ifEmpty { listOf(featured.song) })
+                return
+            }
+            is FeaturedSearchResult.Artist -> featured.id
+            is FeaturedSearchResult.Album -> featured.id
+        }
+        val kind = if (featured.isArtist) "artist" else "album"
+        val token = featuredPlayGeneration
+        featuredPlayJob = run {
+            val value = app.provider.call(kind, buildJsonObject { put("id", id) })
+            if (token != featuredPlayGeneration || currentFeaturedThemeKey() != featured.themeKey) return@run
+            val songs = (value[if (featured.isArtist) "topSongs" else "songs"] as? JsonArray)
+                .orEmpty().map { remoteSong(it.jsonObject) }
+            val first = songs.firstOrNull() ?: error("No hay canciones disponibles para reproducir.")
+            val context = RecentContext(kind, "youtube:$id", featured.title, featured.subtitle, featured.artwork ?: first.artwork)
+            play(first, songs, explicitContext = context)
+        }
     }
     fun toggle() { controller?.let { if(it.isPlaying) it.pause() else { it.prepare(); it.play() } } }
     fun openRecent(card: RecentContext) {
@@ -264,6 +349,7 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
         val before = search.value
         if (value == before.query && kind == before.kind) return
         searchJob?.cancel()
+        cancelFeaturedPlayback()
         if (value.trim().length < 2) {
             search.value = SearchState(query = value, kind = kind)
             return
@@ -303,10 +389,12 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
     fun openLocal(kind: String,id: String,title: String,songs: List<Song>,artwork: String? = null) {
+        cancelFeaturedPlayback()
         detail.value?.let(history::add); detailJob?.cancel(); generation++
         detail.value=DetailState(kind,id,title,artwork=artwork,songs=songs)
     }
     fun openRemote(kind: String,id: String,title: String) {
+        cancelFeaturedPlayback()
         detail.value?.let(history::add); detailJob?.cancel(); val token=++generation
         detail.value=DetailState(kind,id,title,loading=true)
         detailJob=run {
@@ -316,13 +404,15 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                 detail.value=DetailState(kind,id,value["title"]?.jsonPrimitive?.content ?: value["name"]?.jsonPrimitive?.content ?: title,
                     value["description"]?.jsonPrimitive?.contentOrNull.orEmpty(),value["artwork"]?.jsonPrimitive?.contentOrNull,
                     (value["songs"] ?: value["topSongs"])?.jsonArray?.map { remoteSong(it.jsonObject) }.orEmpty(),
-                    (value["albums"]?.jsonArray.orEmpty()+value["singles"]?.jsonArray.orEmpty()).map { it.jsonObject },
+                    value["albums"]?.jsonArray.orEmpty().map { it.jsonObject },
                     value["similar"]?.jsonArray?.map { it.jsonObject }.orEmpty(),
                     moreSongs=value["expandable"]?.jsonObject?.get("songs")?.jsonPrimitive?.booleanOrNull ?: false,
                     moreAlbums=value["expandable"]?.jsonObject?.get("albums")?.jsonPrimitive?.booleanOrNull ?: false,
                     moreSingles=value["expandable"]?.jsonObject?.get("singles")?.jsonPrimitive?.booleanOrNull ?: false,
                     year=value["year"]?.jsonPrimitive?.intOrNull,
-                    artist=value["artists"]?.jsonArray?.mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull ?: (it as? JsonPrimitive)?.contentOrNull }?.joinToString(", ")?.ifBlank { null })
+                    artist=value["artists"]?.jsonArray?.mapNotNull { (it as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull ?: (it as? JsonPrimitive)?.contentOrNull }?.joinToString(", ")?.ifBlank { null },
+                    banner=value["banner"]?.jsonPrimitive?.contentOrNull,
+                    singles=value["singles"]?.jsonArray.orEmpty().map { it.jsonObject })
             } catch(error: Exception) {
                 if(error is CancellationException) throw error
                 if(token==generation) detail.value=detail.value?.copy(loading=false,error="No se pudo abrir esta página. Reintenta.")
@@ -337,8 +427,9 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
             detail.value=old.copy(loading=true)
             try {
                 val value=app.provider.call("artistSongs",buildJsonObject { put("id",old.id); old.cursor?.let { put("cursor",it) } })
+                val cursor=value["nextCursor"]?.jsonPrimitive?.contentOrNull
                 if(token==generation) detail.value=old.copy(songs=(old.songs+value.getValue("songs").jsonArray.map { remoteSong(it.jsonObject) }).distinctBy { it.id },
-                    cursor=value["nextCursor"]?.jsonPrimitive?.contentOrNull,moreSongs=value["nextCursor"] !is JsonNull,loading=false)
+                    cursor=cursor,moreSongs=cursor!=null,loading=false,error=null)
             } catch(error: Exception) { if(error is CancellationException) throw error; if(token==generation) detail.value=old.copy(error="No se pudieron cargar más canciones.") }
         }
     }
@@ -351,7 +442,11 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val value=app.provider.call("artistReleases",buildJsonObject { put("id",old.id); put("kind",kind); old.releaseCursors[kind]?.let { put("cursor",it) } })
                 val cursor=value["nextCursor"]?.jsonPrimitive?.contentOrNull
-                if(token==generation) detail.value=old.copy(albums=(old.albums+value.getValue("albums").jsonArray.map { it.jsonObject }).distinctBy { it["id"] },loading=false,
+                val additions=value.getValue("albums").jsonArray.map { it.jsonObject }
+                if(token==generation) detail.value=old.copy(
+                    albums=if(kind=="albums") (old.albums+additions).distinctBy { it["id"] } else old.albums,
+                    singles=if(kind=="singles") (old.singles+additions).distinctBy { it["id"] } else old.singles,
+                    loading=false,error=null,
                     moreAlbums=if(kind=="albums") cursor!=null else old.moreAlbums,moreSingles=if(kind=="singles") cursor!=null else old.moreSingles,
                     releaseCursors=if(cursor==null) old.releaseCursors-kind else old.releaseCursors+(kind to cursor))
             } catch(error: Exception) { if(error is CancellationException) throw error; if(token==generation) detail.value=old.copy(error="No se pudieron cargar más lanzamientos.") }

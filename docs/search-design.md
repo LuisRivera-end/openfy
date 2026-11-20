@@ -19,7 +19,7 @@ Escritorio
 | Biblioteca   | Todo   Canciones   Artistas   Álbumes            |
 | Colecciones  |                                                |
 |              | Resultado más relevante | Canciones             |
-|              | [presentación existente]| [4 filas]             |
+|              | [panel con su color]    | [4 filas]             |
 |              |                                                |
 |              | Artistas                           Ver todos   |
 |              | [hasta 6 cards en una fila horizontal]          |
@@ -34,7 +34,7 @@ openfy.                                              ajustes
 [ ¿Qué quieres escuchar?                           × ]
 Todo   Canciones   Artistas   Álbumes
 Resultado más relevante
-[presentación existente]
+[panel con su color]
 Canciones                                            Ver todas
 [4 filas]
 Artistas / Álbumes: filas horizontales de cards
@@ -43,7 +43,7 @@ Artistas / Álbumes: filas horizontales de cards
 
 El acceso superior se convierte en el único campo editable; desaparecen el campo interior, el título grande y Buscar del lateral. En móvil, ese mismo campo ocupa una segunda fila de cabecera, sin remontarse al navegar. En resultados, cabecera y categorías permanecen accesibles al desplazar. Se respetan zonas seguras, controles táctiles de 44 px, campos de 16 px, foco visible y preferencias de movimiento reducido. La web mide la altura real de la cabecera para situar las categorías sin solapamientos.
 
-Todo usa columnas 1:2 desde 800 px de ancho útil; por debajo se apilan destacado y canciones. Las cards no se estiran para imitar el destacado de Spotify: se usa la card actual de artista/álbum o una fila de canción. Las filas compactas reorganizan los campos conservando portada, enlaces, duración y opciones. «Ver todas/todos» cambia a la categoría correspondiente.
+Todo usa columnas 1:2 desde 800 px de ancho útil; por debajo se apilan destacado y canciones. Desde la 0.5.5, el destacado es un panel que ocupa toda la columna, con un degradado `base → deep` de la paleta del resultado (la misma regla que la página de artista; si el artista ya se abrió en la sesión, se reutiliza su paleta). Muestra retrato redondo o portada de 120 px, el nombre en 32 px, «Artista», «Canción · artista» o «Álbum · artista», y un botón blanco de reproducir que aparece con hover o foco y siempre en táctil. Ver [Identidad visual de artista](superpowers/specs/2026-11-19-artist-identity-design.md). Las filas compactas reorganizan los campos conservando portada, enlaces, duración y opciones. «Ver todas/todos» cambia a la categoría correspondiente.
 
 El destacado espera las tres respuestas iniciales; los demás bloques aparecen independientemente. Se elige una coincidencia exacta ignorando acentos y mayúsculas, priorizando artista, canción y álbum. Sin coincidencia exacta se toma la primera canción, artista o álbum disponible, en ese orden. Es una selección de presentación, sin modificar el orden del proveedor. Todo muestra cuatro canciones y hasta seis artistas/álbumes; no solicita continuaciones.
 

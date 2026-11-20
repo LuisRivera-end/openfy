@@ -79,6 +79,8 @@ public sealed class DesktopSettings
 public record MotionArtResult(string Status, string? Url = null, int Width = 0, int Height = 0, long RetryAfterMs = 0);
 public record ArtworkResult(string Path, string[] Palette, int Width = 0, int Height = 0, string Key = "");
 public record AssetPath(string Path);
+/// <summary>Entry of POST /api/motion/resolve for an artist header video (shared/types/music.ts ArtistMotionEntry).</summary>
+public record ArtistMotionEntry(string Name, string[] Albums, string? ArtistId = null) { public string Source => "artist"; }
 public record BackendStatus(bool Online, bool ConversionPaused, string Version, string? DesktopInstance);
 public record ImportJob(string Id, string Filename, string State, string? TrackId, string? Error, long CreatedAt);
 public record AudioAnalysis(double Time, float Bass, float Mid, float High);
