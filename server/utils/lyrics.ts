@@ -47,73 +47,77 @@ export interface LyricsDependencies {
   now: () => number
 }
 const pending = new Map<string, Promise<LyricsResult>>()
-const latestSignatures = new Map<string, string>()
+export const latestSignatures = new Map<string, string>()
 
 export async function resolveLyrics(request: LyricsRequest, dependencies: Partial<LyricsDependencies> = {}): Promise<LyricsResult> {
   const deps = { lrc: (signature: LyricsSignature) => lrcClient.get(signature), youtube: youtubeLyrics, now: Date.now, ...dependencies }
   const entry = request.entry
   const key = playbackKey(entry)
-  const downloaded = entry.source === 'youtube'
-    ? getDatabase().select().from(youtubeAudio).where(eq(youtubeAudio.videoId, entry.song.videoId)).get() : undefined
   // Record intent before asynchronous file inspection can reorder requests.
   const intent = JSON.stringify([entry, request.duration])
   latestSignatures.set(key, intent)
-  let embedded: LyricsContent | null = null
-  let signature: LyricsSignature
-  if (entry.source === 'local') {
-    const local = await localLyrics(entry.trackId)
-    embedded = local.content
-    signature = lyricsSignature(entry, local.track.metadata, request.duration)
-  } else {
-    const saved = downloaded && getDatabase().select().from(youtubeSongs).where(eq(youtubeSongs.videoId, entry.song.videoId)).get()
-    signature = lyricsSignature(saved ? { source: 'youtube', song: saved.song } : entry, undefined, downloaded?.duration ?? request.duration)
+  try {
+    const downloaded = entry.source === 'youtube'
+      ? getDatabase().select().from(youtubeAudio).where(eq(youtubeAudio.videoId, entry.song.videoId)).get() : undefined
+    let embedded: LyricsContent | null = null
+    let signature: LyricsSignature
+    if (entry.source === 'local') {
+      const local = await localLyrics(entry.trackId)
+      embedded = local.content
+      signature = lyricsSignature(entry, local.track.metadata, request.duration)
+    } else {
+      const saved = downloaded && getDatabase().select().from(youtubeSongs).where(eq(youtubeSongs.videoId, entry.song.videoId)).get()
+      signature = lyricsSignature(saved ? { source: 'youtube', song: saved.song } : entry, undefined, downloaded?.duration ?? request.duration)
+    }
+    const cached = getDatabase().select().from(lyrics).where(eq(lyrics.key, key)).get()?.result
+    const matchingCache = cached && sameLyricsSignature(cached.signature, signature) ? cached : undefined
+    // Keep useful downloaded lyrics offline regardless of age or parser version.
+    // Older downloads may have no lyrics: allow those to be completed online,
+    // and let an explicit retry refresh them without redownloading any audio.
+    if (request.localOnly || (downloaded && !request.refresh && matchingCache && matchingCache.status !== 'not_found')) {
+      if (cached && sameLyricsSignature(cached.signature, signature)) return cached
+      const now = deps.now()
+      return { key, signature, status: embedded?.lines.length ? 'synced' : embedded?.plainText ? 'plain' : 'not_found',
+        source: embedded ? 'embedded' : null, lines: embedded?.lines || [], plainText: embedded?.plainText || '',
+        attribution: embedded ? 'Letra incluida en tu archivo' : null, sourceUrl: null,
+        fetchedAt: now, expiresAt: now, format: LYRICS_FORMAT }
+    }
+    if (!request.refresh && cached && cached.format === LYRICS_FORMAT && cached.expiresAt > deps.now() && sameLyricsSignature(cached.signature, signature)) return cached
+    const pendingKey = JSON.stringify([key, signature])
+    if (pending.has(pendingKey)) return await pending.get(pendingKey)!
+    const work = (async () => {
+      let chosen: ProviderLyrics | null = null
+      let failure: unknown
+      if (!embedded?.lines.length) {
+        try { chosen = await deps.lrc(signature) } catch (error) { failure = error }
+      }
+      let content: LyricsContent | null = embedded?.lines.length ? embedded : chosen?.lines.length ? chosen : embedded
+      if (!content && chosen) content = chosen
+      let youtube: ProviderLyrics | null = null
+      if (!content && entry.source === 'youtube') {
+        try { youtube = await deps.youtube(entry.song.videoId); content = youtube } catch (error) { failure ||= error }
+      }
+      // Preserve the difference between a genuine absence and an unavailable provider.
+      if (!content && failure) {
+        if (downloaded && matchingCache && matchingCache.status !== 'not_found') return matchingCache
+        throw failure
+      }
+      const source = content === embedded && embedded ? 'embedded' : youtube ? 'youtube' : chosen ? 'lrclib' : null
+      const instrumental = source === 'lrclib' && chosen?.instrumental
+      const status = instrumental ? 'instrumental' : content?.lines.length ? 'synced' : content?.plainText ? 'plain' : 'not_found'
+      const provider = source === 'youtube' ? youtube : source === 'lrclib' ? chosen : null
+      const now = deps.now()
+      const result: LyricsResult = { key, signature, status, source, lines: content?.lines || [], plainText: content?.plainText || '',
+        attribution: source === 'embedded' ? 'Letra incluida en tu archivo' : provider?.attribution || null,
+        sourceUrl: provider?.sourceUrl || null, fetchedAt: now, expiresAt: lyricsExpiry(status, now), format: LYRICS_FORMAT }
+      // A useful fallback may be served, but must not hide a transient failure for 30 days.
+      if (!failure && latestSignatures.get(key) === intent) getDatabase().insert(lyrics).values({ key, result }).onConflictDoUpdate({ target: lyrics.key, set: { result } }).run()
+      else result.expiresAt = now
+      return result
+    })()
+    pending.set(pendingKey, work)
+    try { return await work } finally { pending.delete(pendingKey) }
+  } finally {
+    if (latestSignatures.get(key) === intent) latestSignatures.delete(key)
   }
-  const cached = getDatabase().select().from(lyrics).where(eq(lyrics.key, key)).get()?.result
-  const matchingCache = cached && sameLyricsSignature(cached.signature, signature) ? cached : undefined
-  // Keep useful downloaded lyrics offline regardless of age or parser version.
-  // Older downloads may have no lyrics: allow those to be completed online,
-  // and let an explicit retry refresh them without redownloading any audio.
-  if (request.localOnly || (downloaded && !request.refresh && matchingCache && matchingCache.status !== 'not_found')) {
-    if (cached && sameLyricsSignature(cached.signature, signature)) return cached
-    const now = deps.now()
-    return { key, signature, status: embedded?.lines.length ? 'synced' : embedded?.plainText ? 'plain' : 'not_found',
-      source: embedded ? 'embedded' : null, lines: embedded?.lines || [], plainText: embedded?.plainText || '',
-      attribution: embedded ? 'Letra incluida en tu archivo' : null, sourceUrl: null,
-      fetchedAt: now, expiresAt: now, format: LYRICS_FORMAT }
-  }
-  if (!request.refresh && cached && cached.format === LYRICS_FORMAT && cached.expiresAt > deps.now() && sameLyricsSignature(cached.signature, signature)) return cached
-  const pendingKey = JSON.stringify([key, signature])
-  if (pending.has(pendingKey)) return pending.get(pendingKey)!
-  const work = (async () => {
-    let chosen: ProviderLyrics | null = null
-    let failure: unknown
-    if (!embedded?.lines.length) {
-      try { chosen = await deps.lrc(signature) } catch (error) { failure = error }
-    }
-    let content: LyricsContent | null = embedded?.lines.length ? embedded : chosen?.lines.length ? chosen : embedded
-    if (!content && chosen) content = chosen
-    let youtube: ProviderLyrics | null = null
-    if (!content && entry.source === 'youtube') {
-      try { youtube = await deps.youtube(entry.song.videoId); content = youtube } catch (error) { failure ||= error }
-    }
-    // Preserve the difference between a genuine absence and an unavailable provider.
-    if (!content && failure) {
-      if (downloaded && matchingCache && matchingCache.status !== 'not_found') return matchingCache
-      throw failure
-    }
-    const source = content === embedded && embedded ? 'embedded' : youtube ? 'youtube' : chosen ? 'lrclib' : null
-    const instrumental = source === 'lrclib' && chosen?.instrumental
-    const status = instrumental ? 'instrumental' : content?.lines.length ? 'synced' : content?.plainText ? 'plain' : 'not_found'
-    const provider = source === 'youtube' ? youtube : source === 'lrclib' ? chosen : null
-    const now = deps.now()
-    const result: LyricsResult = { key, signature, status, source, lines: content?.lines || [], plainText: content?.plainText || '',
-      attribution: source === 'embedded' ? 'Letra incluida en tu archivo' : provider?.attribution || null,
-      sourceUrl: provider?.sourceUrl || null, fetchedAt: now, expiresAt: lyricsExpiry(status, now), format: LYRICS_FORMAT }
-    // A useful fallback may be served, but must not hide a transient failure for 30 days.
-    if (!failure && latestSignatures.get(key) === intent) getDatabase().insert(lyrics).values({ key, result }).onConflictDoUpdate({ target: lyrics.key, set: { result } }).run()
-    else result.expiresAt = now
-    return result
-  })()
-  pending.set(pendingKey, work)
-  try { return await work } finally { pending.delete(pendingKey) }
 }

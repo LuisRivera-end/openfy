@@ -20,9 +20,19 @@ public sealed partial class MainWindow
         string.Join(';', (model.Recommendations.Releases ?? []).Select(release => release.Id + release.Year)),
         string.Join(';', model.Statistics.ByTrack.Where(pair => pair.Value.ListenedMs > 0).Select(pair => pair.Key).Order()),
         string.Join(';', model.RecentListening.Items.Select(card => card.Key + card.Artwork + card.Title + card.Subtitle)),
-        string.Join(';', model.Library.Tracks.Select(track => track.Id + track.Artwork + track.Favorite + track.Title + track.Artist + track.Album + track.AddedAt)),
-        string.Join(';', model.Library.SavedSongs.Select(saved => saved.Song.VideoId + saved.Song.Artwork + saved.LocalAudio?.Artwork + saved.Favorite + saved.Song.Title + saved.Song.Album + string.Join(',', saved.Song.Artists) + saved.AddedAt)),
-        string.Join(';', model.Library.Playlists.Select(list => list.Id + list.Name + list.Revision)));
+        HomeLibraryKey());
+    // Every library change replaces model.Library, so the per-song part of the key is rebuilt only when the snapshot changes.
+    private object? homeLibraryKeySource;
+    private string homeLibraryKey = "";
+    private string HomeLibraryKey()
+    {
+        if (ReferenceEquals(homeLibraryKeySource, model.Library)) return homeLibraryKey;
+        homeLibraryKeySource = model.Library;
+        return homeLibraryKey = string.Join('|',
+            string.Join(';', model.Library.Tracks.Select(track => track.Id + track.Artwork + track.Favorite + track.Title + track.Artist + track.Album + track.AddedAt)),
+            string.Join(';', model.Library.SavedSongs.Select(saved => saved.Song.VideoId + saved.Song.Artwork + saved.LocalAudio?.Artwork + saved.Favorite + saved.Song.Title + saved.Song.Album + string.Join(',', saved.Song.Artists) + saved.AddedAt)),
+            string.Join(';', model.Library.Playlists.Select(list => list.Id + list.Name + list.Revision)));
+    }
 
     private static Button? FindHomeFocus(DependencyObject node, string name)
     {

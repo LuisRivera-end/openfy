@@ -137,6 +137,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public event Action? LyricsChanged;
     public MainViewModel(Action<Action> dispatch)
     {
+        Queue.CollectionChanged += (_, _) => queueRevision++;
         ui = dispatch; Host = new(Api); Engine = new(Api); Listening = new(Api, Store);
         Host.Status += value => ui(() => Status = value);
         Host.Event += (type, payload) => {
@@ -154,7 +155,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
             });
             if (type == "libraryChanged") ui(() => _ = RunAsync(RefreshAsync));
             if (type == "lyricsChanged") ui(() => { if (WantsLyrics && Current?.Key == payload.GetProperty("key").GetString()) _ = RunAsync(() => LoadLyricsAsync()); });
-            if (type == "telemetryChanged") ui(() => _ = RefreshListeningAsync());
+            if (type == "telemetryChanged") ui(QueueTelemetryRefresh);
             if (type == "importProgress") ui(() => Status = "Importando: " + payload.GetProperty("filename").GetString());
             if (type == "conversionProgress") ui(() => Status = "Preparando audio para iPhone: " + payload.GetProperty("progress").GetInt32() + "%");
             if (type == "downloadProgress") ui(() => OnDownloadProgress(payload));
@@ -585,12 +586,24 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         SampleListening();
         if (initialized && DateTime.UtcNow - lastListeningSave > TimeSpan.FromSeconds(10)) { lastListeningSave = DateTime.UtcNow; _ = SaveListeningAsync(); }
         if (Engine.Playing && Engine.Duration > 0 && engineKey == Current?.Key) { Position = Engine.Position; Duration = Engine.Duration; }
-        if (initialized && Playing && DateTime.UtcNow - lastSave > TimeSpan.FromSeconds(2.5)) { lastSave = DateTime.UtcNow; _ = PersistAsync(); }
+        // The snapshot carries the whole queue; transport changes persist immediately, so the periodic checkpoint only keeps the position fresh.
+        if (initialized && Playing && DateTime.UtcNow - lastSave > TimeSpan.FromSeconds(10)) { lastSave = DateTime.UtcNow; if (PlaybackSignature() != persistedSignature) _ = PersistAsync(); }
+        if (initialized && Playing && DateTime.UtcNow - lastActivityBeat > TimeSpan.FromSeconds(30)) { lastActivityBeat = DateTime.UtcNow; _ = ActivityAsync(); }
     }
+    private long queueRevision, persistedSignature = -1;
+    private DateTime lastActivityBeat = DateTime.MinValue;
+    private byte[]? persistedSettings;
+    private long PlaybackSignature() => HashCode.Combine(queueRevision, Queue.Count, originalQueue.Count, index, Math.Round(Position, 1), repeat, shuffle, Volume);
     public async Task PersistAsync()
     {
+        long signature = PlaybackSignature();
         await Store.WriteAsync("playback", new PlaybackSnapshot(3, Queue.Select(row => row.Entry).ToList(), index, Position, repeat, shuffle, Volume, originalQueue.Select(entry => entry.QueueId!).ToList()));
+        persistedSignature = signature;
+        // Settings rarely change: skip identical rewrites.
+        var settings = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(Settings, Contracts.Json);
+        if (persistedSettings != null && settings.AsSpan().SequenceEqual(persistedSettings)) return;
         await Store.WriteAsync("settings", Settings);
+        persistedSettings = settings;
     }
     public async Task RestoreAsync(PlaybackSnapshot saved)
     {

@@ -526,7 +526,7 @@ export const usePlayerStore = defineStore('player', () => {
       if (audio) telemetry.sample(audio.currentTime, audio.duration, !audio.paused && !audio.seeking && !buffering.value)
       void telemetry.checkpoint()
       void persist()
-      if (!playing.value && clientId) navigator.sendBeacon('/api/activity', new Blob([JSON.stringify({ clientId: activityId, playing: false, closed: true })], { type: 'application/json' }))
+      if (clientId) navigator.sendBeacon('/api/activity', new Blob([JSON.stringify({ clientId: activityId, playing: false, closed: true })], { type: 'application/json' }))
     })
     window.addEventListener('keydown', (event) => {
       if (useStartupStore().blocked) return

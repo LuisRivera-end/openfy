@@ -170,20 +170,25 @@ public sealed class DiscordPresenceService : IAsyncDisposable
                     lock (gate) { active = enabled; current = latest; }
                     session.Update(active, current);
                     session.Tick();
-                    await Task.Delay(50, lifetime.Token).ConfigureAwait(false);
+                    // Disabled: sleep until enabled or a new snapshot arrives instead of waking 20 times a second.
+                    if (active) await Task.Delay(50, lifetime.Token).ConfigureAwait(false);
+                    else await signal.WaitAsync(lifetime.Token).ConfigureAwait(false);
                 }
             } catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
             catch (Exception failure) { SessionLog.Write("discord.worker", "failed", error: new InvalidOperationException(failure.GetType().Name)); }
             finally { session.Dispose(); }
         });
     }
-    public void SetEnabled(bool value) { lock (gate) { if (!disposed) enabled = value; } }
+    private readonly SemaphoreSlim signal = new(0, 1);
+    private void Wake() { try { if (signal.CurrentCount == 0) signal.Release(); } catch (SemaphoreFullException) { } catch (ObjectDisposedException) { } }
+    public void SetEnabled(bool value) { lock (gate) { if (!disposed) enabled = value; } Wake(); }
     public void Submit(PlaybackPresenceSnapshot value)
     {
         lock (gate) {
             if (disposed || latest != null && (value.Generation < latest.Generation || value.Generation == latest.Generation && value.Sequence < latest.Sequence)) return;
             latest = value;
         }
+        Wake();
     }
     public async ValueTask DisposeAsync()
     {

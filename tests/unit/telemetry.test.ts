@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,7 @@ import { getDatabase, closeDatabase } from '../../server/database'
 import { listeningDays, listeningSessions, recommendationCache, playlists } from '../../server/database/schema'
 import { eq } from 'drizzle-orm'
 import { ingestListening, listeningSessionSchema, listeningStats, mostPlayed, recentlyPlayed } from '../../server/utils/telemetry'
+import * as library from '../../server/utils/library'
 import { ListeningAccumulator, listeningDay, periodStart } from '../../shared/utils/telemetry'
 import { contextKey, recentRoute } from '../../shared/utils/recent'
 import { filterLibrary, defaultLibraryFilters } from '../../shared/utils/library-filters'
@@ -111,6 +112,29 @@ describe('durable idempotent listening', () => {
   it('drops recent cards whose target no longer exists', () => {
     ingestListening([session(1000, { context: { kind: 'playlist', id: randomUUID() } }), session(1000, { entry: { source: 'local', trackId: randomUUID() }, context: { kind: 'song' } })])
     expect(recentlyPlayed().items).toEqual([])
+  })
+  it('reads the library and sessions once and keeps the original history metadata', () => {
+    const song = (entry as Extract<PlaybackEntry, { source: 'youtube' }>).song
+    const older = { source: 'youtube' as const, song: { ...song, artwork: 'first.jpg' } }
+    const newest = { source: 'youtube' as const, song: { ...song, title: 'Título actualizado', artwork: 'newest.jpg' } }
+    const trackKey = `youtube:${song.videoId}`
+    ingestListening([
+      session(1000, { entry: older }),
+      session(2000, { entry: newest, context: { kind: 'song' } }),
+      session(3000, { entry: { source: 'local', trackId: randomUUID() }, context: { kind: 'song' } }),
+      session(4000, { context: { kind: 'playlist', id: randomUUID() } }),
+    ])
+    const readLibrary = vi.spyOn(library, 'readLibrary')
+    const prepare = vi.spyOn(getDatabase().$client, 'prepare')
+    try {
+      expect(recentlyPlayed(1)).toEqual({ items: [{
+        kind: 'song', key: `song:${trackKey}`, id: trackKey, title: song.title, subtitle: 'Openfy', artwork: 'first.jpg', lastPlayedAt: at + 2000,
+        item: { id: trackKey, source: 'youtube', title: song.title, artist: 'Openfy', album: 'YouTube Music', artwork: 'first.jpg', duration: 100,
+          palette: ['#234d3b', '#273c4e', '#3e2849'], favorite: false, format: 'YouTube Music', genres: [], entry: older },
+      }] })
+      expect(readLibrary).toHaveBeenCalledTimes(1)
+      expect(prepare.mock.calls.filter(([sql]) => sql.includes('from "listening_sessions"'))).toHaveLength(1)
+    } finally { prepare.mockRestore(); readLibrary.mockRestore() }
   })
   it('uses a stable track key to order recent songs with equal timestamps', () => {
     const song = (entry as Extract<PlaybackEntry, { source: 'youtube' }>).song

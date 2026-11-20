@@ -121,8 +121,16 @@ public sealed partial class PlayerWindow
         }
         motionUrl = url; motionShown = false;
         motionView.OpacityTransition = null; motionView.Opacity = 0;
-        motionPlayer.Source = global::Windows.Media.Core.MediaSource.CreateFromUri(new Uri(origin, url));
+        SetMotionSource(global::Windows.Media.Core.MediaSource.CreateFromUri(new Uri(origin, url)));
         SyncMotionPlayback();
+    }
+    // MediaSource owns a Media Foundation pipeline: close the previous one now instead of waiting for its finalizer.
+    private void SetMotionSource(global::Windows.Media.Core.MediaSource? next)
+    {
+        if (motionPlayer == null) { next?.Dispose(); return; }
+        var previous = motionPlayer.Source as global::Windows.Media.Core.MediaSource;
+        motionPlayer.Source = next;
+        previous?.Dispose();
     }
 
     /// <summary>The video runs only with the music, in a visible window.</summary>
@@ -138,7 +146,7 @@ public sealed partial class PlayerWindow
         motionGeneration++; motionKey = null; motionUrl = null; motionShown = false;
         motionRetryTimer?.Stop();
         if (motionView != null) { motionView.OpacityTransition = null; motionView.Opacity = 0; }
-        if (motionPlayer != null) { motionPlayer.Pause(); motionPlayer.Source = null; }
+        if (motionPlayer != null) { motionPlayer.Pause(); SetMotionSource(null); }
         motionFramePending = false;
         motionFrame?.Dispose(); motionFrame = null;
     }
@@ -209,7 +217,7 @@ public sealed partial class PlayerWindow
         if (motionRetryTimer != null) { motionRetryTimer.Stop(); motionRetryTimer.Tick -= RetryMotion; motionRetryTimer = null; }
         if (motionPlayer == null) return;
         motionPlayer.VideoFrameAvailable -= MotionFrameAvailable; motionPlayer.MediaFailed -= MotionFailed;
-        motionPlayer.Pause(); motionPlayer.Source = null;
+        motionPlayer.Pause(); SetMotionSource(null);
         if (motionView != null) { motionView.Draw -= DrawMotion; motionView.RemoveFromVisualTree(); }
         motionFrame?.Dispose(); motionFrame = null;
         motionPlayer.Dispose(); motionPlayer = null; motionView = null; motionUrl = null; motionKey = null;

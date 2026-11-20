@@ -22,7 +22,9 @@ public sealed class AtomicStore(string root)
             Directory.CreateDirectory(Root);
             string path = Path.Combine(Root, name + ".json");
             temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(value, Contracts.Json));
+            // Stream straight to disk: large snapshots would otherwise allocate a string on the large object heap per write.
+            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
+                await JsonSerializer.SerializeAsync(stream, value, Contracts.Json);
             File.Move(temporary, path, true);
         }
         finally { if (temporary != null && File.Exists(temporary)) File.Delete(temporary); gate.Release(); }

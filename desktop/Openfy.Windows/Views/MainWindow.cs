@@ -68,7 +68,8 @@ public sealed partial class MainWindow : Window
     }
     private void BuildSide()
     {
-        foreach (var child in side.Children) Ui.ReleaseTree(child);
+        // The queue view is kept and reused (QueueView); release everything else.
+        foreach (var child in side.Children) if (!ReferenceEquals(child, queuePanel)) Ui.ReleaseTree(child);
         side.Children.Clear(); sidePanel.Visibility = queueVisible || lyricsVisible ? Visibility.Visible : Visibility.Collapsed;
         sidePanel.Width = Math.Min(lyricsVisible ? 420 : 380, Math.Max(240, root.ActualWidth - 40));
         PanelsChanged?.Invoke();

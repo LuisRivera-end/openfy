@@ -8,16 +8,28 @@ import { readStoredAudioAsync } from './stored-audio'
 
 export async function readLibraryAsync(): Promise<Library> { return readLibrary(await readStoredAudioAsync()) }
 
-export function readLibrary(verifiedAudio?: Map<string, StoredYouTubeAudio>): Library {
+export function readLibrary(verifiedAudio?: Map<string, StoredYouTubeAudio> | 'on-demand'): Library {
   const db = getDatabase()
-  const rows = db.select().from(assets).all(), paths = dataPaths()
-  const filenames = new Map(rows.map(asset => [asset.id, asset.filename]))
+  const rows = db.select().from(assets).all()
   const assetMap = new Map(rows.map(({ filename: _filename, ...asset }) => [asset.id, asset]))
-  const audioMap = verifiedAudio ?? new Map(db.select().from(youtubeAudio).all().flatMap(audio => {
+  const onDemand = verifiedAudio === 'on-demand'
+  const audioRows = !verifiedAudio || onDemand ? new Map(db.select().from(youtubeAudio).all().map(audio => [audio.videoId, audio])) : undefined
+  const filenames = audioRows?.size ? new Map(rows.map(asset => [asset.id, asset.filename])) : undefined
+  // Reuse checks within this snapshot so the next read sees downloads changed on disk.
+  const available = new Map<string, boolean>()
+  let originals: string | undefined
+  const getAudio = (videoId: string): StoredYouTubeAudio | undefined => {
+    if (verifiedAudio && verifiedAudio !== 'on-demand') return verifiedAudio.get(videoId)
+    const audio = audioRows?.get(videoId)
+    if (!audio) return
     const asset = assetMap.get(audio.assetId)
-    try { if (!asset || statSync(join(paths.originals, filenames.get(asset.id)!)).size !== asset.bytes) return [] } catch { return [] }
-    return asset ? [[audio.videoId, { asset, duration: audio.duration, artwork: audio.artwork, palette: audio.palette, downloadedAt: audio.downloadedAt }] as const] : []
-  }))
+    if (!asset) return
+    if (!available.has(asset.id)) {
+      try { available.set(asset.id, statSync(join(originals ??= dataPaths().originals, filenames!.get(asset.id)!)).size === asset.bytes) }
+      catch { available.set(asset.id, false) }
+    }
+    if (available.get(asset.id)) return { asset, duration: audio.duration, artwork: audio.artwork, palette: audio.palette, downloadedAt: audio.downloadedAt }
+  }
   return {
     tracks: db.select().from(tracks).all().map(row => ({
       ...row.metadata,
@@ -30,8 +42,16 @@ export function readLibrary(verifiedAudio?: Map<string, StoredYouTubeAudio>): Li
     })).sort((a, b) => b.addedAt - a.addedAt),
     playlists: db.select().from(playlists).orderBy(desc(playlists.updatedAt)).all(),
     youtubeSongs: db.select({ song: youtubeSongs.song, favorite: youtubeSongs.favorite, addedAt: youtubeSongs.addedAt })
-      .from(youtubeSongs).orderBy(desc(youtubeSongs.addedAt)).all().map(saved => audioMap.has(saved.song.videoId)
-        ? { ...saved, localAudio: audioMap.get(saved.song.videoId) } : saved),
+      .from(youtubeSongs).orderBy(desc(youtubeSongs.addedAt)).all().map(saved => {
+        const { videoId } = saved.song
+        if (onDemand) {
+          if (!audioRows?.has(videoId)) return saved
+          let localAudio: StoredYouTubeAudio | undefined
+          return { ...saved, get localAudio() { return localAudio ??= getAudio(videoId) } }
+        }
+        const localAudio = getAudio(videoId)
+        return localAudio ? { ...saved, localAudio } : saved
+      }),
   }
 }
 

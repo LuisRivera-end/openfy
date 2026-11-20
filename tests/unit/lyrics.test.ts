@@ -198,6 +198,17 @@ describe('persistent lyrics resolution', () => {
     expect(result.status).toBe('plain'); expect(result.expiresAt).toBe(now)
     expect(getDatabase().select().from(lyrics).where(eq(lyrics.key, entry.trackId)).get()).toBeUndefined()
   })
+  it('cleans up latestSignatures after resolution finishes or fails', async () => {
+    const entry = await importLyrics('Texto propio')
+    const { latestSignatures } = await import('../../server/utils/lyrics')
+    expect(latestSignatures.size).toBe(0)
+    await resolveLyrics({ entry }, { lrc: async () => null })
+    expect(latestSignatures.size).toBe(0)
+
+    const empty = await importLyrics('')
+    await expect(resolveLyrics({ entry: empty, refresh: true }, { lrc: async () => { throw new LyricsProviderError() } })).rejects.toBeInstanceOf(LyricsProviderError)
+    expect(latestSignatures.size).toBe(0)
+  })
   it('migrates a v1 database in place and can reopen it repeatedly', () => {
     const before = readLibrary().tracks.map(track => track.id)
     const filename = join(dataPaths().root, 'openfy.sqlite')

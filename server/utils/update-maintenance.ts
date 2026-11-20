@@ -7,14 +7,22 @@ import { workerBusy, stopWorkers, startWorkers } from './workers'
 
 interface Client { ack?: string; updated: number; playing: boolean; ready?: boolean }
 const clients = new Map<string, Client>()
+const CLIENT_TIMEOUT = 90_000
+function sweepClients(now = Date.now()) {
+  for (const [id, client] of clients) {
+    if (now - client.updated > CLIENT_TIMEOUT) clients.delete(id)
+  }
+}
 let operations = 0, frozen = process.env.OPENFY_VERIFY_UPDATE === '1', transaction: string | undefined
 let challenge: { id: string; checked: number } | undefined
 export function reportClient(id: string, playing: boolean, ready?: boolean, closed = false, ack?: string) {
-  if (closed && !playing) { clients.delete(id); return }
+  sweepClients()
+  if (closed) { clients.delete(id); return }
   clients.set(id, { playing, updated: Date.now(), ready, ack })
 }
 export function updateChallenge() { return challenge?.id }
 export function updateReadiness(owner?: string, confirm = false) {
+  sweepClients()
   const others = [...clients].filter(([id]) => id !== owner).map(([, client]) => client)
   if (confirm && others.length && (!challenge || Date.now() - challenge.checked > 45_000)) challenge = { id: randomUUID(), checked: Date.now() }
   if (confirm && challenge) challenge.checked = Date.now()
