@@ -109,6 +109,24 @@
 }
 
 :root .artist-chrome .status-backdrop { background: var(--artist-chrome-dark); }
+
+/* Phones: the artist page belongs to the header art. The shared search row is hidden (Buscar stays in the tab bar), and
+   at the top of the page the status strip turns clear so the banner or motion art reaches the screen edge (the backdrop's own
+   top shade keeps the white status bar legible). Scrolling fills it with the artist colour again before the track list
+   reaches it. Without scroll-driven animations the strip stays solid: iOS 26/27 standalone blurs that band otherwise. */
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  :root .app-shell:has(.artist-page) .topbar .global-search { display: none; }
+  :root .app-shell:has(.artist-page) .topbar { padding-bottom: 6px; }
+  @supports (animation-timeline: scroll()) {
+    :root .app-shell.artist-chrome:has(.artist-page) .status-backdrop {
+      background: transparent;
+      animation: artist-status-solid linear both;
+      animation-timeline: scroll(root);
+      animation-range: 140px 280px;
+    }
+  }
+}
+@keyframes artist-status-solid { to { background-color: var(--artist-chrome-dark); } }
 :root .artist-chrome :is(.sidebar-library header, .sidebar-empty span, .connection, .seek-row, .now-playing-artist, .player-tools, .player-bar .icon-button, .mobile-nav a) { color: var(--muted); }
 :root .artist-chrome .sidebar :is(nav .current, footer .current, .collection-link.current),
 :root .artist-chrome .mobile-nav a.current { color: #fff; background: var(--artist-glass); }

@@ -18,6 +18,8 @@ La ventana nativa de Windows mide al menos 780 px, así que no cambia. La regla 
 - **Geometría:** los tokens `--safe-top/right/bottom/left` (`env(safe-area-inset-*)`) y `--gutter` (20 px) rigen toda la sección. Las pruebas los sobrescriben para simular la Dynamic Island, porque los emuladores informan 0 px.
 - **Cabecera:** solo logo (enlace a Inicio) y ajustes, con área táctil de 44 px, bajo `--safe-top`. «Importar música» se mueve a Tu biblioteca (icono de subir) y a Ajustes.
 - **Barra de estado en iOS 26/27:** `.status-backdrop` es una franja fija y sólida de `max(6px, --safe-top)` en la parte superior. Una prueba independiente indica que así iOS pinta la barra de estado opaca en lugar del difuminado de las apps instaladas; Apple no lo documenta. Se conservan `black-translucent` y `viewport-fit=cover`.
+  - Con el reproductor ampliado abierto (también en Big Picture) la franja se oculta: aunque el `<dialog>` está en la capa superior, iOS seguía tiñendo la barra de estado con el color de la página o del artista.
+  - En la página de artista, arriba del todo, la franja es transparente (la sombra superior del banner mantiene legible la barra) para que el banner o el vídeo lleguen al borde; al desplazarse (140–280 px, animación vinculada al scroll) recupera el color del artista. Sin animaciones vinculadas al scroll queda sólida. En esa página el campo de búsqueda de la cabecera se oculta en el teléfono; Buscar sigue en la barra inferior.
 - **Barra de pestañas:** cápsula flotante de cristal (estilo de iOS 26/27), con el mini reproductor acoplado encima.
   - Al desplazarse hacia abajo se reduce a la pestaña actual y el mini reproductor pasa a su lado; al subir vuelve a su tamaño.
   - La pestaña activa se recuerda en las páginas de detalle, como las pilas de navegación de iOS.
@@ -84,6 +86,7 @@ En el iPhone, el fondo ambiental del reproductor ampliado redibujaba a la frecue
 Ni la vista de dispositivo de Edge ni WebKit emulado reproducen estos puntos:
 
 - [ ] Barra de estado sólida, sin difuminado sobre el contenido, y fondo ambiental visible bajo la barra en el reproductor ampliado.
+- [ ] Página de artista: la foto o el vídeo bajo la barra de estado sin velo de iOS arriba del todo, y la franja de color al desplazarse.
 - [ ] Cabecera, barra de pestañas y mini reproductor dentro de las zonas seguras reales, en vertical y en horizontal.
 - [ ] Ningún campo amplía la página al tocarlo.
 - [ ] Arrastrar hacia abajo (hojas y reproductor) y la pulsación larga, sin conflicto con el gesto Atrás desde el borde.
