@@ -143,6 +143,8 @@ test.describe('phone shell', () => {
     const player = page.getByRole('dialog', { name: 'Reproductor ampliado' })
     await expect(player.locator('.immersive-content')).toHaveAttribute('data-layout', 'cover')
     await expect(page).toHaveURL(/overlay=player/)
+    // iOS tints the status bar from the strip even under the top layer, so the player removes it while open.
+    await expect(page.locator('.status-backdrop')).toBeHidden()
     // A saved song shows a filled heart, not only a green outline.
     const heart = player.getByRole('button', { name: 'Marcar favorito', exact: true })
     const fill = () => heart.locator('svg').evaluate(icon => getComputedStyle(icon).fill)
@@ -156,6 +158,7 @@ test.describe('phone shell', () => {
     await expect(player.locator('.immersive-content')).toHaveAttribute('data-layout', 'stacked')
     await player.getByRole('button', { name: 'Cerrar reproductor ampliado', exact: true }).click()
     await expect(player).toBeHidden()
+    await expect(page.locator('.status-backdrop')).toBeVisible()
     await expect(page).toHaveURL(/\/library$/)
     await page.getByRole('button', { name: 'Abrir reproductor ampliado', exact: true }).click()
     await expect(player.locator('.immersive-content')).toHaveAttribute('data-layout', 'stacked')

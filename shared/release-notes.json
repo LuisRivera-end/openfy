@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.6.2",
+      "date": "2026-11-21",
+      "summary": "La imagen del artista ocupa toda la cabecera en el teléfono y la barra de pestañas de Android se ajusta mejor.",
+      "items": [
+        { "type": "improved", "text": "En el teléfono, la foto o el vídeo del artista llega hasta la barra de estado y la búsqueda se oculta en su página. Buscar sigue en la barra de pestañas." },
+        { "type": "improved", "text": "En Android, la barra de pestañas vuelve a mostrarse completa al llegar al final de una página." },
+        { "type": "fixed", "text": "En el iPhone, la barra de estado ya no toma el color de la página mientras el reproductor ampliado está abierto." }
+      ]
+    },
+    {
       "version": "0.6.1",
       "date": "2026-11-21",
       "summary": "Reproductor de cristal más amplio, cabecera de artista renovada en el teléfono y varios arreglos.",

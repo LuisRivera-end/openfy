@@ -125,8 +125,8 @@ test.describe('Artist visual identity and header motion', () => {
     const play = stage.getByRole('button', { name: 'Reproducir', exact: true })
     const controls = await play.boundingBox()
     const banner = await stage.locator('.artist-backdrop').boundingBox()
-    const search = await page.getByRole('textbox', { name: 'Buscar en YouTube Music' }).boundingBox()
-    expect(banner!.y).toBeLessThan(search!.y + search!.height / 2)
+    const back = await page.locator('.topbar .topbar-back').boundingBox()
+    expect(banner!.y).toBeLessThan(back!.y + back!.height / 2)
     expect(banner!.y + banner!.height).toBeGreaterThanOrEqual(controls!.y + controls!.height)
     await expect(page.locator('.app-shell')).toHaveClass(/\bartist-chrome\b/)
     await expect(page.locator('html')).toHaveClass(/\bpage-chrome\b/)
@@ -143,6 +143,30 @@ test.describe('Artist visual identity and header motion', () => {
 
     await page.goto('/settings')
     await expect(page.locator('.app-shell')).not.toHaveClass(/\bartist-chrome\b/)
+  })
+
+  test('on a phone the header art reaches the status bar and the search row gives way to it', async ({ page }, info) => {
+    test.skip(info.project.name !== 'mobile-webkit', 'Phone layout.')
+    await page.route('**/api/motion/resolve', route => route.fulfill({ json: { status: 'none' } satisfies MotionArtResult }))
+    await boot(page, `/music/artist/${artist.id}`)
+    await expect(page.locator('.artist-stage .artist-backdrop img')).toBeVisible()
+    await expect(page.locator('.app-shell')).toHaveClass(/\bartist-chrome\b/)
+    await expect(page.getByRole('textbox', { name: 'Buscar en YouTube Music' })).toBeHidden()
+    await expect(page.locator('.topbar .topbar-back')).toBeVisible()
+    expect((await page.locator('.artist-backdrop').boundingBox())!.y).toBeLessThanOrEqual(0)
+
+    const scrollDriven = await page.evaluate(() => CSS.supports('animation-timeline: scroll()'))
+    test.skip(!scrollDriven, 'Without scroll-driven animations the strip stays solid.')
+    const strip = page.locator('.status-backdrop')
+    // The animation interpolates towards a color-mix(), so WebKit may serialise the clear end as oklab(… / 0).
+    const clear = /(\/ 0\)|, 0\))$/
+    await expect(strip).toHaveCSS('background-color', clear)
+    await page.addStyleTag({ content: '.artist-page { padding-bottom: 2000px; }' })
+    await page.evaluate(() => window.scrollTo(0, 600))
+    await expect.poll(() => strip.evaluate(el => getComputedStyle(el).backgroundColor)).not.toMatch(clear)
+
+    await page.goto('/library')
+    await expect(page.getByRole('textbox', { name: 'Buscar en YouTube Music' })).toBeVisible()
   })
 
   test('with mocked motion ready and an mp4 route the video appears and the banner remains as fallback underneath', async ({ page }, info) => {

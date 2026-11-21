@@ -180,6 +180,11 @@ import java.time.ZoneId
                         scrollDelta = 0f
                         return Offset.Zero
                     }
+                    if (!scroll.canScrollForward) {
+                        compact = false
+                        scrollDelta = 0f
+                        return Offset.Zero
+                    }
                     if (dy < 0f) {
                         if (scrollDelta > 0f) scrollDelta = 0f
                         scrollDelta += dy
@@ -202,6 +207,14 @@ import java.time.ZoneId
                 .distinctUntilChanged()
                 .collect { nearTop ->
                     if (nearTop) compact = false
+                }
+        }
+        // At the end of the page the dock expands into the space its padding reserves.
+        LaunchedEffect(scroll, density) {
+            snapshotFlow { !scroll.canScrollForward }
+                .distinctUntilChanged()
+                .collect { atEnd ->
+                    if (atEnd && scroll.layoutInfo.totalItemsCount > 0) compact = false
                 }
         }
 
