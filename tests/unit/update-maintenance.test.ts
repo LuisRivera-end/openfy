@@ -24,6 +24,19 @@ it('requires a fresh acknowledgement before disconnecting a client and rejects a
   expect(updateReadiness(owner, true).ready).toBe(true)
 })
 
+it('expires abandoned clients after 90 seconds without a report and accepts closed beacon while playing', () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  reportClient(phone, true, false)
+  expect(updateReadiness(owner, true).ready).toBe(false)
+  vi.setSystemTime(Date.now() + 91_000)
+  expect(updateReadiness(owner, true).ready).toBe(true)
+
+  reportClient(phone, true, false)
+  expect(updateReadiness(owner, true).ready).toBe(false)
+  reportClient(phone, true, undefined, true)
+  expect(updateReadiness(owner, true).ready).toBe(true)
+})
+
 it('waits for every active transfer and ignores duplicate completion notifications', () => {
   const first = countOperation(), second = countOperation()
   try {

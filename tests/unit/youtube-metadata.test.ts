@@ -65,6 +65,33 @@ describe('genre lookup', () => {
   it('reports provider failures so the song is retried later', async () => {
     await expect(new ITunesGenres(vi.fn(async () => new Response('', { status: 403 }))).genres(song())).rejects.toThrow('iTunes HTTP 403')
   })
+
+  it('bounds artist and album caches to 200 entries evicting oldest (LRU)', async () => {
+    const fetcher = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input))
+      const entity = url.searchParams.get('entity')
+      if (entity === 'musicArtist') {
+        const term = url.searchParams.get('term')!
+        return json([{ wrapperType: 'artist', artistId: Number(term.replace(/\D/g, '')) || 1, artistName: term, primaryGenreName: 'Pop' }])
+      }
+      if (entity === 'album') {
+        const id = Number(url.searchParams.get('id'))
+        return json([{ wrapperType: 'collection', collectionName: `Album ${id}`, primaryGenreName: 'Rock' }])
+      }
+      return json([])
+    })
+    const genres = new ITunesGenres(fetcher)
+    for (let i = 1; i <= 201; i++) {
+      await genres.genres({ title: 'Song', artists: [`Artist ${i}`], album: `Album ${i}` })
+    }
+    const nonSongCalls = () => fetcher.mock.calls.filter(([url]) => new URL(String(url)).searchParams.get('entity') !== 'song').length
+    const cachedCalls = nonSongCalls()
+    expect(cachedCalls).toBe(402)
+    await genres.genres({ title: 'Song', artists: ['Artist 201'], album: 'Album 201' })
+    expect(nonSongCalls()).toBe(cachedCalls)
+    await genres.genres({ title: 'Song', artists: ['Artist 1'], album: 'Album 1' })
+    expect(nonSongCalls()).toBe(cachedCalls + 2)
+  })
 })
 
 describe('saved song completion', () => {

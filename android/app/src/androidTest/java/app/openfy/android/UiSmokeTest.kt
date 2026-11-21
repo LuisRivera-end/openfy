@@ -1,5 +1,7 @@
 package app.openfy.android
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -54,18 +56,39 @@ class UiSmokeTest {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { model.play(song) }.join()
         }
         compose.waitUntil(10000) { compose.onAllNodesWithContentDescription("Abrir reproductor").fetchSemanticsNodes().isNotEmpty() }
+        capture("mini-player")
         compose.onNodeWithContentDescription("Abrir reproductor").performClick()
         compose.onNodeWithContentDescription("Cerrar reproductor").assertIsDisplayed()
         compose.onNodeWithText("Letras").performClick()
         capture("player-lyrics")
         compose.onNodeWithText("Portada").performClick()
         capture("player-portrait")
-        compose.runOnUiThread { compose.activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
-        compose.waitUntil(10000) { compose.activity.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE }
-        android.os.SystemClock.sleep(700) // System rotation animation continues after configuration changes.
+        compose.runOnUiThread { compose.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        compose.onNodeWithContentDescription("Abrir Big Picture").performClick()
+        waitForOrientation(Configuration.ORIENTATION_LANDSCAPE)
+        compose.onNodeWithTag("mobile-big-picture").assertIsDisplayed()
         compose.onAllNodesWithContentDescription("Siguiente").onLast().assertIsDisplayed()
-        compose.onNodeWithContentDescription("Cerrar reproductor").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Salir de Big Picture").assertIsDisplayed()
         capture("player-landscape")
-        compose.runOnUiThread { compose.activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        // The Big Picture queue keeps the cover's ambient tint instead of a flat panel.
+        compose.onNodeWithContentDescription("Cola de reproducción").performClick()
+        compose.onNodeWithText("Cola de reproducción").assertIsDisplayed()
+        capture("player-landscape-queue")
+        compose.onNodeWithContentDescription("Cerrar reproductor").performClick()
+        compose.onNodeWithTag("mobile-big-picture").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Salir de Big Picture").performClick()
+        waitForOrientation(Configuration.ORIENTATION_PORTRAIT)
+        compose.onNodeWithContentDescription("Cerrar reproductor").assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+        waitForOrientation(Configuration.ORIENTATION_LANDSCAPE)
+        compose.onNodeWithContentDescription("Salir de Big Picture").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("Cerrar reproductor").assertIsDisplayed()
+        compose.runOnUiThread { compose.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT }
+        waitForOrientation(Configuration.ORIENTATION_PORTRAIT)
+    }
+    private fun waitForOrientation(orientation: Int) {
+        compose.waitUntil(10000) { compose.activity.resources.configuration.orientation == orientation }
+        // Wait for the system rotation animation after the new configuration is active.
+        android.os.SystemClock.sleep(700)
     }
 }

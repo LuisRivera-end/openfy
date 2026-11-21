@@ -9,7 +9,7 @@ import { describePlayback, playbackKey } from '../../shared/utils/playback'
 import { listeningDay, periodStart } from '../../shared/utils/telemetry'
 import { contextKey } from '../../shared/utils/recent'
 import { defaultLibraryFilters, filterLibrary } from '../../shared/utils/library-filters'
-import type { LibraryItem } from '../../shared/types/music'
+import type { Library, Track } from '../../shared/types/music'
 import type { LibraryFilters, ListeningSession, ListeningStats, MostPlayedPage, RecentCard, RecentListening, ListeningPeriod, TrackStatistics } from '../../shared/types/telemetry'
 
 const timestamp = z.number().int().nonnegative().max(8640000000000000)
@@ -81,31 +81,52 @@ export function listeningStats(period: ListeningPeriod = '30d', now = Date.now()
   return { period, byTrack, listenedMs: values.reduce((sum, value) => sum + value.listenedMs, 0), plays: values.reduce((sum, value) => sum + value.plays, 0), lastPlayedAt: Math.max(0, ...values.map(value => value.lastPlayedAt)) }
 }
 
-export function listeningItems() {
-  const library = readLibrary()
-  const items = collectionMap(library.tracks, library.youtubeSongs)
-  const locals = new Map(library.tracks.map(track => [track.id, track]))
+function readListeningSessions() {
+  return getDatabase().select({ trackKey: listeningSessions.trackKey, snapshot: listeningSessions.snapshot }).from(listeningSessions).all()
+}
+
+export function listeningItems(library: Library = readLibrary(), sessions = readListeningSessions(), keys?: ReadonlySet<string>) {
+  const items = keys ? collectionMap(library.tracks.filter(track => keys.has(track.id)), library.youtubeSongs?.filter(saved => keys.has(`youtube:${saved.song.videoId}`)))
+    : collectionMap(library.tracks, library.youtubeSongs)
+  if (keys && items.size === keys.size) return items
+  const locals = new Map<string, Track>()
   // History has its own references. Listening must never implicitly save a favorite.
-  for (const { snapshot } of getDatabase().select().from(listeningSessions).all()) {
+  for (const { snapshot } of sessions) {
+    if (snapshot.entry.source === 'local') continue
     const key = playbackKey(snapshot.entry)
-    if (items.has(key)) continue
+    if (items.has(key) || (keys && !keys.has(key))) continue
     const item = describePlayback(snapshot.entry, locals)
-    if (item) items.set(key, { ...item, genres: snapshot.entry.source === 'youtube' ? snapshot.entry.song.genres || [] : [], entry: snapshot.entry })
+    if (item) items.set(key, { ...item, genres: snapshot.entry.song.genres || [], entry: snapshot.entry })
+    if (keys && items.size === keys.size) break
   }
   return items
 }
 export function recentlyPlayed(limit = 12): RecentListening {
+  const sessions = readListeningSessions()
   const groups = new Map<string, { trackKey: string; snapshot: ListeningSession }>()
-  for (const row of getDatabase().select().from(listeningSessions).all()) {
+  for (const row of sessions) {
     if (!row.snapshot.context || row.snapshot.listenedMs <= 0) continue
     const key = contextKey(row.snapshot.context, row.trackKey)
     if (!groups.has(key) || groups.get(key)!.snapshot.updatedAt < row.snapshot.updatedAt) groups.set(key, row)
   }
-  const library = readLibrary(), music = listeningItems()
+  const library = readLibrary('on-demand')
   const lists = new Map(library.playlists.map(list => [list.id, list]))
-  const favoriteCount = [...music.values()].filter(item => item.favorite).length
+  const locals = new Set(library.tracks.map(track => track.id))
+  const selected = [...groups].filter(([, { trackKey, snapshot }]) => {
+    const context = snapshot.context!
+    if (context.kind === 'playlist') return lists.has(context.id)
+    return context.kind !== 'song' || snapshot.entry.source === 'youtube' || locals.has(trackKey)
+  }).sort(([keyA, a], [keyB, b]) => b.snapshot.updatedAt - a.snapshot.updatedAt || keyA.localeCompare(keyB)).slice(0, limit)
+  const trackKeys = new Set<string>()
+  for (const [, { trackKey, snapshot }] of selected) {
+    const context = snapshot.context!
+    if (context.kind === 'song') trackKeys.add(trackKey)
+    else if (context.kind === 'playlist') for (const id of lists.get(context.id)!.trackIds) trackKeys.add(id)
+  }
+  const music = listeningItems(library, sessions, trackKeys)
+  const favoriteCount = library.tracks.filter(track => track.favorite).length + (library.youtubeSongs?.filter(saved => saved.favorite).length ?? 0)
   const cards: RecentCard[] = []
-  for (const [key, { trackKey, snapshot }] of groups) {
+  for (const [key, { trackKey, snapshot }] of selected) {
     const context = snapshot.context!
     const base = { kind: context.kind, key, lastPlayedAt: snapshot.updatedAt }
     if (context.kind === 'song') {
@@ -113,14 +134,17 @@ export function recentlyPlayed(limit = 12): RecentListening {
       if (item) cards.push({ ...base, id: item.id, title: item.title, subtitle: item.artist, artwork: item.artwork, item })
     } else if (context.kind === 'playlist') {
       const list = lists.get(context.id)
-      if (list) cards.push({ ...base, id: list.id, title: list.name, subtitle: 'Playlist', artwork: list.trackIds.map(id => music.get(id)?.artwork).find(Boolean) || null, item: null })
+      if (!list) continue
+      let artwork: string | null = null
+      for (const id of list.trackIds) if ((artwork = music.get(id)?.artwork || null)) break
+      cards.push({ ...base, id: list.id, title: list.name, subtitle: 'Playlist', artwork, item: null })
     } else if (context.kind === 'favorites') {
       cards.push({ ...base, id: null, title: 'Tus favoritas', subtitle: `${favoriteCount} canciones`, artwork: null, item: null })
     } else {
       cards.push({ ...base, id: context.id, title: context.title, subtitle: context.subtitle || (context.kind === 'artist' ? 'Artista' : ''), artwork: context.artwork ?? null, item: null })
     }
   }
-  return { items: cards.sort((a, b) => b.lastPlayedAt - a.lastPlayedAt || a.key.localeCompare(b.key)).slice(0, limit) }
+  return { items: cards }
 }
 
 export function mostPlayed(period: ListeningPeriod, offset = 0, limit = 50, sort: 'plays' | 'minutes' = 'plays', filters: Partial<LibraryFilters> = {}): MostPlayedPage {

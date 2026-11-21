@@ -16,6 +16,8 @@ internal sealed class SectionFixtureServer : IAsyncDisposable
     private readonly Task accepting;
     private int artistRequests;
     public int ArtistRequests => Volatile.Read(ref artistRequests);
+    private int albumRequests;
+    public int AlbumRequests => Volatile.Read(ref albumRequests);
     private int searchRequests, continuations;
     public int SearchRequests => Volatile.Read(ref searchRequests);
     public int SearchContinuations => Volatile.Read(ref continuations);
@@ -38,8 +40,11 @@ internal sealed class SectionFixtureServer : IAsyncDisposable
             if (path.StartsWith("/api/music/artists/")) {
                 Interlocked.Increment(ref artistRequests);
                 if (path.EndsWith("failure")) { status = 503; body = new { message = "Servicio de prueba no disponible." }; }
-                else body = new ArtistProfile("fixture-artist", "Artista de red", null, "Biografía de prueba", songs, [], [], new());
-            } else if (path.StartsWith("/api/music/albums/")) body = new AlbumDetail("fixture-album", "Álbum de red", [], null, 2026, songs);
+                else body = new ArtistProfile("fixture-artist", "Artista de red", null, "Biografía de prueba", songs, [new("artist-album", "Álbum del artista", [], null, 2026)], [], new());
+            } else if (path.StartsWith("/api/music/albums/")) {
+                Interlocked.Increment(ref albumRequests);
+                body = new AlbumDetail(Uri.UnescapeDataString(path["/api/music/albums/".Length..]), "Álbum de red", [], null, 2026, songs);
+            } else if (path == "/api/music/recommendations") { delay = 40; body = new Recommendations([], DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), false, null); }
             else if (path == "/api/music/search") {
                 Interlocked.Increment(ref searchRequests);
                 bool more = uri.Query.Contains("cursor="); if (more) Interlocked.Increment(ref continuations);

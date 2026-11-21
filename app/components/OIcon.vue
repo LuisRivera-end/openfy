@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { House, Search, Library, Heart, Download, Settings, Plus,
-  Shuffle, Repeat, Repeat1, Volume2, ListMusic, Maximize2, ChevronDown, ChevronLeft, X, Check,
+  Shuffle, Repeat, Repeat1, Volume2, ListMusic, Maximize2, Minimize2, ChevronDown, ChevronLeft, X, Check,
   MoreHorizontal, Disc3, Music2, Wifi, WifiOff, LoaderCircle, RefreshCw, Trash2, ArrowUp, ArrowDown,
   Headphones, FolderPlus, Upload, ArrowRight, MicVocal, CircleArrowDown, Pencil, ChevronRight, ArrowUpDown } from '@lucide/vue'
 // Transport glyphs are solid and shared with the native app (scripts/create-native-icons.mjs).
@@ -10,7 +10,7 @@ const solid: Record<string, string[]> = transport
 const icons: Record<string, typeof House> = {
   home: House, search: Search, library: Library, heart: Heart, download: Download, settings: Settings,
   plus: Plus, shuffle: Shuffle,
-  repeat: Repeat, repeatOne: Repeat1, volume: Volume2, queue: ListMusic, expand: Maximize2,
+  repeat: Repeat, repeatOne: Repeat1, volume: Volume2, queue: ListMusic, expand: Maximize2, minimize: Minimize2,
   down: ChevronDown, back: ChevronLeft, close: X, check: Check, more: MoreHorizontal, disc: Disc3,
   music: Music2, online: Wifi, offline: WifiOff, loading: LoaderCircle, refresh: RefreshCw,
   trash: Trash2, up: ArrowUp, arrowDown: ArrowDown, headphones: Headphones, folder: FolderPlus,

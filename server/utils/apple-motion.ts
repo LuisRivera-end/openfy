@@ -2,11 +2,13 @@ import { createWriteStream } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { Readable, Transform } from 'node:stream'
 import { finished, pipeline } from 'node:stream/promises'
+import { decodeHTML } from 'entities'
+import type { AlbumPresentationColors } from '../../shared/types/music'
 import { metadataKey, sameArtist } from './youtube-metadata'
 import { diagnosticError, sessionDiagnostic } from './session-diagnostics'
 
 /**
- * Animated album covers ("motion art") as the Apple Music web player receives
+ * Editorial album and artist videos as the Apple Music web player receives
  * them. There is no public contract for the catalog endpoint or its token: any
  * unexpected answer is a provider failure, and callers keep the static cover.
  * Only artist and album names leave the server.
@@ -17,14 +19,22 @@ export class MotionProviderError extends Error {
 }
 
 export interface MotionSignature { artists: string[]; album: string }
+export interface ArtistMotionSignature { kind: 'artist'; artistId?: string; name: string; albums: string[] }
 export interface MotionSource { albumId: number; master: string }
-export type MotionLookup = { status: 'ready'; source: MotionSource }
-  | { status: 'none'; albumIds: number[] } | { status: 'unmatched' }
+export interface AppleAlbumMetadata { editorial?: string; colors?: AlbumPresentationColors }
+type AlbumMatch = AppleAlbumMetadata & { metadataRetryAfterMs?: number; motionRetryAfterMs?: number }
+export type MotionLookup = (AlbumMatch & ({ status: 'ready'; source: MotionSource } | { status: 'none'; albumIds: number[] }))
+  | { status: 'unmatched' }
+type ArtistMotionLookup = { status: 'ready'; source: { artistId: number; master: string; albumKeys: string[] } }
+  | { status: 'none'; artistIds: number[] } | { status: 'unmatched' }
+export type MotionKind = 'album' | 'artist'
 export interface MotionVariant { url: string; width: number; height: number; bandwidth: number }
 export interface MotionPart { url: string; start?: number; length?: number }
 export interface MotionProvider {
-  find(signature: MotionSignature): Promise<MotionLookup>
-  download(master: string, destination: string, signal?: AbortSignal): Promise<{ width: number; height: number }>
+  readonly albumStorefront?: string
+  find(signature: MotionSignature, albumId?: number): Promise<MotionLookup>
+  findArtist?(signature: ArtistMotionSignature): Promise<ArtistMotionLookup>
+  download(master: string, destination: string, signal?: AbortSignal, kind?: MotionKind): Promise<{ width: number; height: number }>
 }
 
 /** Real catalog names can consist only of symbols, such as the album "?" and the artist "¥$". */
@@ -35,13 +45,38 @@ export function motionMetadataKey(value: string) {
   return symbols ? `symbols:${symbols}` : ''
 }
 
+export const artistAlbumKey = (value: string) => motionMetadataKey(value.trim().replace(/\s+-\s+(?:single|ep)$/i, ''))
+
 type Fetcher = typeof fetch
 const AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
 const PLAYER = 'https://music.apple.com'
 const MAX_HEIGHT = 1080
+const MAX_ARTIST_WIDTH = 1920
 const MAX_BANDWIDTH = 6_000_000
 export const MAX_MOTION_BYTES = 64 * 1024 ** 2
 const MAX_CANDIDATES = 3
+
+function httpFailure(response: Response, service: string, now: number) {
+  const header = response.headers.get('Retry-After')?.trim()
+  const delay = !header ? 0 : /^\d+$/.test(header) ? Number(header) * 1000 : Date.parse(header) - now
+  return new MotionProviderError(`${service} HTTP ${response.status}`, Number.isFinite(delay) ? Math.max(15 * 60_000, delay) : undefined)
+}
+
+function editorialText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = decodeHTML(value.replace(/<(?:br\b[^>]*|\/p\s*)>/gi, '\n').replace(/<!--[\s\S]*?-->|<\/?[a-z](?:[^>"']|"[^"]*"|'[^']*')*>/gi, ''))
+  return text.replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n')
+    .trim().slice(0, 4000).replace(/[\uD800-\uDBFF]$/, '').trimEnd() || undefined
+}
+
+function albumColors(artwork?: Record<string, unknown>): AlbumPresentationColors | undefined {
+  const color = (value: unknown) => typeof value === 'string' && /^#?[\da-f]{6}$/i.test(value.trim())
+    ? '#' + value.trim().replace(/^#/, '').toUpperCase() : null
+  const background = color(artwork?.bgColor)
+  if (!background) return undefined
+  return { background, text1: color(artwork?.textColor1), text2: color(artwork?.textColor2),
+    text3: color(artwork?.textColor3), text4: color(artwork?.textColor4) }
+}
 
 /** Media is fetched only over HTTPS from Apple hosts, without credentials or ports. */
 export function motionUrl(value: string, base?: string): string {
@@ -57,8 +92,8 @@ function attributes(line: string) {
   return result
 }
 
-/** The largest H.264 rendition up to 1080 px, at the highest bitrate that stays moderate. */
-export function motionVariant(master: string, base: string): MotionVariant | null {
+/** The largest H.264 rendition within the album or artist size limit. */
+export function motionVariant(master: string, base: string, kind: MotionKind = 'album'): MotionVariant | null {
   const lines = master.split(/\r?\n/), variants: MotionVariant[] = []
   for (let index = 0; index < lines.length; index++) {
     if (!lines[index]!.startsWith('#EXT-X-STREAM-INF:')) continue
@@ -66,12 +101,13 @@ export function motionVariant(master: string, base: string): MotionVariant | nul
     const size = /^(\d+)x(\d+)$/.exec(values.RESOLUTION || ''), bandwidth = Number(values.BANDWIDTH)
     if (!target || !size || !/(^|,)\s*avc1\./.test(values.CODECS || '') || !Number.isFinite(bandwidth)) continue
     const width = Number(size[1]), height = Number(size[2])
-    if (height > MAX_HEIGHT || width > MAX_HEIGHT * 2) continue
+    if (kind === 'artist' ? width > MAX_ARTIST_WIDTH : height > MAX_HEIGHT || width > MAX_HEIGHT * 2) continue
     variants.push({ url: motionUrl(target.trim(), base), width, height, bandwidth })
   }
   if (!variants.length) return null
-  const height = Math.max(...variants.map(variant => variant.height))
-  const largest = variants.filter(variant => variant.height === height).sort((a, b) => a.bandwidth - b.bandwidth)
+  const dimension = kind === 'artist' ? 'width' : 'height'
+  const size = Math.max(...variants.map(variant => variant[dimension]))
+  const largest = variants.filter(variant => variant[dimension] === size).sort((a, b) => a.bandwidth - b.bandwidth)
   return largest.filter(variant => variant.bandwidth <= MAX_BANDWIDTH).pop() || largest[0]!
 }
 
@@ -116,6 +152,7 @@ export class AppleMotion implements MotionProvider {
   constructor(private fetcher: Fetcher = fetch, private store = process.env.OPENFY_MOTION_STOREFRONT || 'us', private now: () => number = Date.now) {
     if (!/^[a-z]{2}$/.test(this.store)) this.store = 'us'
   }
+  get albumStorefront() { return this.store }
 
   private async request(url: string, headers: Record<string, string> = {}, signal?: AbortSignal, redirect: RequestRedirect = 'error') {
     try {
@@ -153,16 +190,17 @@ export class AppleMotion implements MotionProvider {
     return this.tokenRequest
   }
 
-  /** Shared authentication and one token renewal for catalog searches and album details. */
-  private async catalog(path: string, query: Record<string, string> = {}) {
+  /** Shared authentication and one token renewal for catalog searches and details. */
+  private async catalog(path: string, query: Record<string, string> = {}, store = this.store) {
     for (let attempt = 0; ; attempt++) {
-      const url = new URL(`https://amp-api.music.apple.com/v1/catalog/${this.store}/${path}`)
+      const url = new URL(`https://amp-api.music.apple.com/v1/catalog/${store}/${path}`)
       url.search = new URLSearchParams(query).toString()
       const response = await this.request(url.href,
         { Authorization: `Bearer ${await this.playerToken()}`, Origin: PLAYER, Accept: 'application/json' })
       if ((response.status === 401 || response.status === 403) && attempt === 0) { this.token = undefined; continue }
-      if (response.status === 404 && path.startsWith('albums/')) return undefined
-      if (!response.ok) throw new MotionProviderError(`Motion HTTP ${response.status}`)
+      if (response.status === 404 && /^(albums|artists)\//.test(path)) return undefined
+      if (response.status === 400 && query.l === 'es-MX') return undefined
+      if (!response.ok) throw httpFailure(response, 'Motion', this.now())
       const body = await response.json().catch(() => null)
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MotionProviderError('Motion response')
       return body
@@ -179,7 +217,7 @@ export class AppleMotion implements MotionProvider {
     const url = new URL('https://itunes.apple.com/search')
     for (const [key, value] of Object.entries({ term: `${signature.artists[0]} ${signature.album}`, media: 'music', entity: 'album', limit: '25', country: this.store })) url.searchParams.set(key, value)
     const response = await this.request(url.href, { Accept: 'application/json' })
-    if (!response.ok) throw new MotionProviderError(`iTunes HTTP ${response.status}`)
+    if (!response.ok) throw httpFailure(response, 'iTunes', this.now())
     const body = await response.json().catch(() => null) as { results?: { wrapperType?: string; collectionId?: number; collectionName?: string; artistName?: string }[] } | null
     if (!Array.isArray(body?.results)) throw new MotionProviderError('iTunes response')
     return body.results.filter(result => result.wrapperType === 'collection' && this.matches(signature, result.collectionName || '', result.artistName || ''))
@@ -203,25 +241,65 @@ export class AppleMotion implements MotionProvider {
       })
   }
 
-  private async album(id: number): Promise<{ status: 'ready'; master: string } | { status: 'none' | 'missing' }> {
-    const body = await this.catalog(`albums/${id}`, { extend: 'editorialVideo' })
-    if (!body) return { status: 'missing' }
-    if (!Array.isArray(body.data)) throw new MotionProviderError('Motion album response')
-    if (!body.data.length) return { status: 'missing' }
-    const attributes = body.data[0]?.attributes
-    if (!attributes || typeof attributes !== 'object') throw new MotionProviderError('Motion album response')
-    const video = attributes.editorialVideo
-    if (video != null && (typeof video !== 'object' || Array.isArray(video))) throw new MotionProviderError('Motion video response')
-    const master = video?.motionDetailSquare?.video || video?.motionSquareVideo1x1?.video
+  private async albumAttributes(id: number, signature: MotionSignature, locale: 'es-MX' | 'en-US') {
+    const body = await this.catalog(`albums/${id}`, { extend: 'editorialVideo', l: locale }, locale === 'en-US' ? 'us' : this.store)
+    if (!body) return undefined
+    if (!Array.isArray(body.data)) throw new MotionProviderError('Respuesta de álbum inválida')
+    if (!body.data.length) return undefined
+    const row = body.data[0], attributes = row?.attributes
+    if (typeof attributes?.name !== 'string' || typeof attributes.artistName !== 'string') throw new MotionProviderError('Créditos de álbum inválidos')
+    if ((row.id !== undefined && String(row.id) !== String(id)) || !this.matches(signature, attributes.name, attributes.artistName)) return undefined
+    return attributes
+  }
+
+  private albumMaster(video: unknown) {
+    if (video == null) return undefined
+    if (typeof video !== 'object' || Array.isArray(video)) throw new MotionProviderError('Motion video response')
+    const square = video as { motionDetailSquare?: { video?: unknown }; motionSquareVideo1x1?: { video?: unknown } }
+    const master = square.motionDetailSquare?.video || square.motionSquareVideo1x1?.video
     if (master != null && typeof master !== 'string') throw new MotionProviderError('Motion video response')
-    return master ? { status: 'ready', master: motionUrl(master) } : { status: 'none' }
+    return master ? motionUrl(master) : undefined
+  }
+
+  private async album(id: number, signature: MotionSignature): Promise<Exclude<MotionLookup, { status: 'unmatched' }> | undefined> {
+    const spanish = await this.albumAttributes(id, signature, 'es-MX')
+    const notes = (attributes: typeof spanish) => editorialText(attributes?.editorialNotes?.standard) ?? editorialText(attributes?.editorialNotes?.short)
+    let editorial = notes(spanish), english: typeof spanish
+    let metadataRetryAfterMs: number | undefined, motionRetryAfterMs: number | undefined
+    if (!editorial) {
+      try {
+        english = await this.albumAttributes(id, signature, 'en-US')
+        editorial = notes(english)
+      } catch (error) {
+        if (!spanish || !(error instanceof MotionProviderError)) throw error
+        metadataRetryAfterMs = error.retryAfterMs
+      }
+    }
+    if (!spanish && !english) return undefined
+    const colors = albumColors(spanish?.artwork) ?? albumColors(english?.artwork)
+    let master: string | undefined
+    try { master = this.albumMaster(spanish?.editorialVideo) ?? this.albumMaster(english?.editorialVideo) }
+    catch (error) {
+      if (!(error instanceof MotionProviderError)) throw error
+      motionRetryAfterMs = error.retryAfterMs
+    }
+    const fields = { ...(editorial ? { editorial } : {}), ...(colors ? { colors } : {}),
+      ...(metadataRetryAfterMs ? { metadataRetryAfterMs } : {}) }
+    return master ? { status: 'ready', source: { albumId: id, master }, ...fields }
+      : { status: 'none', albumIds: [id], ...fields,
+          ...(motionRetryAfterMs || metadataRetryAfterMs ? { motionRetryAfterMs: motionRetryAfterMs || metadataRetryAfterMs } : {}) }
   }
 
   /** iTunes first, Apple Music second; every method keeps the same strict album/artist match. */
-  async find(signature: MotionSignature): Promise<MotionLookup> {
+  async find(signature: MotionSignature, albumId?: number): Promise<MotionLookup> {
     if (!motionMetadataKey(signature.album) || !signature.artists[0] || !motionMetadataKey(signature.artists[0])) return { status: 'unmatched' }
     const target = createHash('sha256').update(`${motionMetadataKey(signature.artists[0])}\n${motionMetadataKey(signature.album)}`).digest('hex').slice(0, 12)
-    const checked = new Set<number>(), verified = new Set<number>(), unresolved = new Set<number>()
+    const checked = new Set<number>()
+    if (albumId) {
+      const result = await this.album(albumId, signature)
+      if (result) return result
+      checked.add(albumId)
+    }
     let failure: unknown
     for (const method of ['itunes', 'apple-music'] as const) {
       const started = performance.now()
@@ -229,32 +307,112 @@ export class AppleMotion implements MotionProvider {
       try {
         const ids = [...new Set(await (method === 'itunes' ? this.itunes(signature) : this.apple(signature)))]
         const candidates = ids.filter(id => !checked.has(id))
-        for (const id of candidates.slice(MAX_CANDIDATES)) unresolved.add(id)
         for (const id of candidates.slice(0, MAX_CANDIDATES)) {
           checked.add(id)
           try {
-            const result = await this.album(id)
-            if (result.status === 'ready') {
-              sessionDiagnostic('motion.search', 'ready', { target, method, albumId: id, elapsedMs: Math.round(performance.now() - started) })
-              return { status: 'ready', source: { albumId: id, master: result.master } }
+            const result = await this.album(id, signature)
+            if (result) {
+              sessionDiagnostic('motion.search', result.status, { target, method, albumId: id, elapsedMs: Math.round(performance.now() - started) })
+              return result
             }
-            if (result.status === 'none') { verified.add(id); unresolved.delete(id) }
-            else unresolved.add(id)
-            sessionDiagnostic('motion.candidate', result.status, { target, method, albumId: id })
+            sessionDiagnostic('motion.candidate', 'missing', { target, method, albumId: id })
           } catch (error) { failure = error; sessionDiagnostic('motion.candidate', 'failed', { target, method, albumId: id, ...diagnosticError(error) }) }
         }
         sessionDiagnostic('motion.search', 'completed', { target, method, candidates: ids.length, elapsedMs: Math.round(performance.now() - started) })
       } catch (error) { failure = error; sessionDiagnostic('motion.search', 'failed', { target, method, ...diagnosticError(error), elapsedMs: Math.round(performance.now() - started) }) }
     }
-    // A failed method or detail lookup cannot establish that the album has no motion art.
+    // A failed method or detail lookup cannot establish that the album is unmatched.
     if (failure) throw failure instanceof MotionProviderError ? failure : new MotionProviderError('Motion search unavailable')
-    return verified.size && !unresolved.size ? { status: 'none', albumIds: [...verified] } : { status: 'unmatched' }
+    return { status: 'unmatched' }
+  }
+
+  private async artistCandidates(name: string, key: string): Promise<number[]> {
+    const body = await this.catalog('search', { term: name, types: 'artists', limit: '10' })
+    if (!body?.results || typeof body.results !== 'object' || Array.isArray(body.results)) throw new MotionProviderError('Respuesta de búsqueda de artistas inválida')
+    const artists = body.results.artists
+    if (artists === undefined) return []
+    if (!Array.isArray(artists?.data)) throw new MotionProviderError('Respuesta de búsqueda de artistas inválida')
+    const ids = new Set<number>()
+    for (const row of artists.data) {
+      if (row?.type !== 'artists') continue
+      if (typeof row.attributes?.name !== 'string') throw new MotionProviderError('Nombre de artista inválido')
+      if (motionMetadataKey(row.attributes.name) !== key) continue
+      const id = Number(row.id)
+      if (typeof row.id !== 'string' || !/^\d+$/.test(row.id) || !Number.isSafeInteger(id) || id < 1) throw new MotionProviderError('ID de artista inválido')
+      ids.add(id)
+      if (ids.size === MAX_CANDIDATES) break
+    }
+    return [...ids]
+  }
+
+  private async artist(id: number, albums: Set<string>): Promise<
+    { status: 'ready'; master: string; albumKeys: string[] } | { status: 'missing' | 'unmatched' | 'none' }
+  > {
+    const body = await this.catalog('artists/' + id, { extend: 'editorialVideo', include: 'albums' })
+    if (!body) return { status: 'missing' }
+    if (!Array.isArray(body.data)) throw new MotionProviderError('Respuesta del catálogo de artistas inválida')
+    if (!body.data.length) return { status: 'missing' }
+    const row = body.data[0]
+    const attributes = row?.attributes
+    if (!attributes || typeof attributes !== 'object' || Array.isArray(attributes)) throw new MotionProviderError('Respuesta del catálogo de artistas inválida')
+    const related = row.relationships?.albums
+    if (related === undefined) return { status: 'unmatched' }
+    if (!Array.isArray(related?.data)) throw new MotionProviderError('Respuesta de álbumes del artista inválida')
+    const albumKeys = new Set<string>()
+    for (const album of related.data) {
+      if (typeof album?.attributes?.name !== 'string') throw new MotionProviderError('Título de álbum inválido')
+      const key = artistAlbumKey(album.attributes.name)
+      if (key) albumKeys.add(key)
+    }
+    if (![...albumKeys].some(key => albums.has(key))) return { status: 'unmatched' }
+    const video = attributes.editorialVideo
+    if (video != null && (typeof video !== 'object' || Array.isArray(video))) throw new MotionProviderError('Respuesta de vídeo inválida')
+    const master = video?.motionArtistWide16x9?.video || video?.motionArtistFullscreen16x9?.video
+    if (master != null && typeof master !== 'string') throw new MotionProviderError('Respuesta de vídeo inválida')
+    return master ? { status: 'ready', master: motionUrl(master), albumKeys: [...albumKeys] } : { status: 'none' }
+  }
+
+  async findArtist(signature: ArtistMotionSignature): Promise<ArtistMotionLookup> {
+    const key = motionMetadataKey(signature.name)
+    const albums = new Set(signature.albums.map(artistAlbumKey).filter(Boolean))
+    if (!key || !albums.size) return { status: 'unmatched' }
+    const target = createHash('sha256').update('artist\n' + key).digest('hex').slice(0, 12)
+    const method = 'apple-music'
+    const started = performance.now()
+    sessionDiagnostic('motion.search', 'started', { target, method })
+    try {
+      const ids = await this.artistCandidates(signature.name, key)
+      const verified: number[] = []
+      const ready: { artistId: number; master: string; albumKeys: string[] }[] = []
+      let failure: unknown
+      // Every candidate is checked: two namesakes sharing a release title must not let provider order pick a face.
+      for (const artistId of ids) {
+        try {
+          const result = await this.artist(artistId, albums)
+          if (result.status === 'ready') ready.push({ artistId, master: result.master, albumKeys: result.albumKeys })
+          else if (result.status === 'none') verified.push(artistId)
+          sessionDiagnostic('motion.candidate', result.status, { target, method, artistId })
+        } catch (error) {
+          failure = error
+          sessionDiagnostic('motion.candidate', 'failed', { target, method, artistId, ...diagnosticError(error) })
+        }
+      }
+      if (failure) throw failure
+      sessionDiagnostic('motion.search', 'completed', { target, method, candidates: ids.length, elapsedMs: Math.round(performance.now() - started) })
+      // More than one catalogue artist matched the name and a release: with doubt, nothing is shown.
+      if (ready.length + verified.length > 1) return { status: 'unmatched' }
+      if (ready.length === 1) return { status: 'ready', source: ready[0]! }
+      return verified.length ? { status: 'none', artistIds: verified } : { status: 'unmatched' }
+    } catch (error) {
+      sessionDiagnostic('motion.search', 'failed', { target, method, ...diagnosticError(error), elapsedMs: Math.round(performance.now() - started) })
+      throw error instanceof MotionProviderError ? error : new MotionProviderError('Búsqueda de artistas no disponible')
+    }
   }
 
   /** Writes the fragmented MP4 exactly as served: initialization section followed by its segments. */
-  async download(master: string, destination: string, signal?: AbortSignal) {
+  async download(master: string, destination: string, signal?: AbortSignal, kind: MotionKind = 'album') {
     const source = motionUrl(master)
-    const variant = motionVariant(await this.text(source, 1024 ** 2, signal), source)
+    const variant = motionVariant(await this.text(source, 1024 ** 2, signal), source, kind)
     if (!variant) throw new MotionProviderError('Motion variant')
     const parts = motionParts(await this.text(variant.url, 1024 ** 2, signal), variant.url)
     const declared = parts.reduce((sum, part) => sum + (part.length || 0), 0)

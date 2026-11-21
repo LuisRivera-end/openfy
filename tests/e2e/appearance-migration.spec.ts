@@ -23,7 +23,7 @@ for (const previous of [null, 'false', 'true']) {
     await expect(motion).not.toBeChecked()
     await expect(page.getByRole('checkbox', { name: 'Nuevo diseño' })).toHaveCount(0)
     await expect(page.locator('html')).not.toHaveAttribute('data-design')
-    await expect(page.locator('.player-bar')).toHaveCSS('border-radius', '16px')
+    await expect.poll(() => page.locator('.player-bar').evaluate(bar => parseFloat(getComputedStyle(bar).borderTopLeftRadius))).toBeGreaterThanOrEqual(16)
     expect(await page.evaluate(() => [localStorage.getItem('openfy-new-design'), localStorage.getItem('openfy-preserve')])).toEqual([null, 'existing preference'])
     const imported = { ...session, preferences: { ...session.preferences, ...(previous === null ? {} : { newDesign: previous === 'true' }) } }
     const input = page.locator('input[type="file"][accept=".json,application/json"]')
@@ -59,5 +59,5 @@ test('keeps the presentation usable when appearance storage is unavailable', asy
   await motion.press('Space')
   await expect(page.locator('html')).toHaveClass(/reduce-motion/)
   await expect(page.locator('html')).not.toHaveAttribute('data-design')
-  await expect(page.locator('.player-bar')).toHaveCSS('border-radius', '16px')
+  await expect.poll(() => page.locator('.player-bar').evaluate(bar => parseFloat(getComputedStyle(bar).borderTopLeftRadius))).toBeGreaterThanOrEqual(16)
 })

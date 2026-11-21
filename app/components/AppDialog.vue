@@ -1,7 +1,16 @@
 <script setup lang="ts">
+import { turnedPlayerKey } from '../composables/useMobileBigPicture'
+
 const props = defineProps<{ open: boolean; title: string; subtitle?: string }>()
 const emit = defineEmits<{ close: [] }>()
 const element = ref<HTMLDialogElement>()
+const turned = inject(turnedPlayerKey, undefined)
+const turnedScroll = useTurnedScroll(turned, event => {
+  const target = event.target as Element
+  if (target.closest('.queue-grip')) return
+  const queue = target.closest<HTMLElement>('.queue-scroll')
+  return queue && queue.scrollHeight > queue.clientHeight ? queue : element.value
+})
 const titleId = useId()
 function sync() {
   if (props.open && !element.value?.open) element.value?.showModal()
@@ -20,9 +29,9 @@ watch(() => props.open, sync)
 </script>
 
 <template>
-  <dialog ref="element" class="app-dialog glass" :aria-labelledby="titleId" @close="emit('close')" @click="backdrop">
-    <div class="sheet-handle" v-bind="drag" aria-hidden="true"><span /></div>
-    <header v-bind="drag"><slot name="lead" /><div class="app-dialog-heading"><h2 :id="titleId">{{ title }}</h2><p v-if="subtitle" class="app-dialog-subtitle">{{ subtitle }}</p></div><button class="icon-button" aria-label="Cerrar diálogo" @click="emit('close')"><OIcon name="close" /></button></header>
+  <dialog ref="element" class="app-dialog glass" :aria-labelledby="titleId" v-bind="turnedScroll" @close="emit('close')" @click="backdrop">
+    <div class="sheet-handle" v-bind="turned ? {} : drag" aria-hidden="true"><span /></div>
+    <header v-bind="turned ? {} : drag"><slot name="lead" /><div class="app-dialog-heading"><h2 :id="titleId">{{ title }}</h2><p v-if="subtitle" class="app-dialog-subtitle">{{ subtitle }}</p></div><button class="icon-button" aria-label="Cerrar diálogo" @click="emit('close')"><OIcon name="close" /></button></header>
     <slot />
   </dialog>
 </template>

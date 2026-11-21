@@ -7,7 +7,6 @@ const loadMoreTrigger = ref<HTMLElement>()
 let observer: IntersectionObserver | undefined, resizeObserver: ResizeObserver | undefined
 let restoring = false, live = false
 const bucket = computed(() => search.category === 'all' ? null : search.buckets[search.category])
-const featuredIndex = computed(() => search.featured?.kind === 'song' ? search.songs.indexOf(search.featured.item) : -1)
 function recordPosition() { if (live && !restoring) search.positions[search.category] = window.scrollY }
 async function restorePosition() {
   restoring = true; await nextTick()
@@ -15,7 +14,8 @@ async function restorePosition() {
 }
 function selectCategory(category: SearchCategory) { if (search.category !== category) { recordPosition(); search.category = category; void restorePosition() } }
 function moveCategory(event: KeyboardEvent) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  // Modified arrows are app shortcuts (previous/next, seek, Back/Forward).
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return
   event.preventDefault()
   const index = searchCategories.findIndex(item => item.key === search.category)
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? searchCategories.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + searchCategories.length) % searchCategories.length
@@ -63,9 +63,7 @@ onBeforeUnmount(() => {
           <section class="search-featured" aria-labelledby="search-featured-title">
             <div class="section-heading"><h2 id="search-featured-title">Resultado más relevante</h2></div>
             <p v-if="!search.settled" class="muted" role="status">Buscando coincidencias…</p>
-            <SearchArtistGrid v-else-if="search.featured?.kind === 'artist'" :artists="[search.featured.item]" />
-            <MusicReleaseGrid v-else-if="search.featured?.kind === 'album'" :albums="[search.featured.item]" show-artist />
-            <YouTubeTrackList v-else-if="featuredIndex >= 0" :songs="search.songs" :start="featuredIndex" :end="featuredIndex + 1" compact label="Resultado más relevante" />
+            <SearchFeatured v-else-if="search.featured" :featured="search.featured" />
             <p v-else class="muted">No hay coincidencias disponibles. Prueba con otra búsqueda.</p>
           </section>
           <section aria-labelledby="search-songs-title"><div class="section-heading"><h2 id="search-songs-title">Canciones</h2><button class="search-see-all" @click="selectCategory('song')">Ver todas</button></div><YouTubeTrackList v-if="search.songs.length" :songs="search.songs" :end="4" compact label="Canciones principales de YouTube Music" /><SearchResultStatus kind="song" /></section>
@@ -89,7 +87,6 @@ onBeforeUnmount(() => {
 .search-categories button { flex: 0 0 auto; }
 .search-overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; margin-bottom: 32px; }
 @container (min-width: 800px) { .search-overview { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); } }
-.search-featured :deep(.album-grid) { grid-template-columns: minmax(0, 180px); }
 .search-preview { margin-block: 32px; }
 .search-see-all { color: var(--muted); min-height: 44px; padding-inline: 8px; font-size: 13px; }
 .search-see-all:hover { color: #f4f4f5; text-decoration: underline; }

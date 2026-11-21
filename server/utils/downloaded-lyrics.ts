@@ -1,6 +1,6 @@
-import { eq } from 'drizzle-orm'
 import { getDatabase } from '../database'
-import { lyrics, youtubeAudio, youtubeSongs } from '../database/schema'
+import type { YouTubeSong } from '../../shared/types/music'
+import type { LyricsResult } from '../../shared/types/lyrics'
 import { lyricsSignature, sameLyricsSignature } from '../../shared/utils/lyrics'
 import { resolveLyrics } from './lyrics'
 import { LyricsProviderError } from './lrclib'
@@ -8,8 +8,15 @@ import { diagnosticError, sessionDiagnostic } from './session-diagnostics'
 import { notifyDesktop } from './desktop-events'
 
 /** Completes old downloads independently of playback, imports and audio jobs. */
+const FAILURE_DELAY = 300_000
+const MAX_FAILURE_DELAY = 86_400_000
+
+/** Per-song wait after consecutive failures: 5 min, doubling, capped at one day. */
+export const backfillFailureDelay = (failures: number) => Math.min(MAX_FAILURE_DELAY, FAILURE_DELAY * 2 ** Math.max(0, failures - 1))
+
 export class DownloadedLyricsBackfill {
   private retries = new Map<string, number>()
+  private failures = new Map<string, number>()
   private stopped = true
   private timer?: ReturnType<typeof setTimeout>
   private running?: Promise<void>
@@ -17,14 +24,30 @@ export class DownloadedLyricsBackfill {
 
   async step(): Promise<number> {
     const now = this.now(), db = getDatabase()
-    const saved = new Map(db.select().from(lyrics).all().map(row => [row.key, row.result]))
-    const next = db.select({ song: youtubeSongs.song, duration: youtubeAudio.duration }).from(youtubeAudio)
-      .innerJoin(youtubeSongs, eq(youtubeSongs.videoId, youtubeAudio.videoId)).all().find(row => {
-        if ((this.retries.get(row.song.videoId) || 0) > now) return false
-        const cached = saved.get('youtube:' + row.song.videoId)
-        return !cached || !sameLyricsSignature(cached.signature, lyricsSignature({ source: 'youtube', song: row.song }, undefined, row.duration))
-          || cached.status === 'not_found' && cached.expiresAt <= now
-      })
+    for (const [id, until] of this.retries) {
+      if (until <= now) this.retries.delete(id)
+    }
+    const stmt = db.$client.prepare<[], { duration: number; song: string; lyrics: string | null }>(`
+      SELECT a.duration, s.song, l.result AS lyrics
+      FROM youtube_audio a
+      INNER JOIN youtube_songs s ON s.video_id = a.video_id
+      LEFT JOIN lyrics l ON l.key = 'youtube:' || a.video_id
+    `)
+    let next: { song: YouTubeSong; duration: number } | undefined
+    for (const row of stmt.iterate()) {
+      const song = JSON.parse(row.song) as YouTubeSong
+      if ((this.retries.get(song.videoId) || 0) > now) continue
+      let needsBackfill = false
+      if (!row.lyrics) needsBackfill = true
+      else {
+        const cached = JSON.parse(row.lyrics) as LyricsResult
+        if (!sameLyricsSignature(cached.signature, lyricsSignature({ source: 'youtube', song }, undefined, row.duration))
+          || (cached.status === 'not_found' && cached.expiresAt <= now)) {
+          needsBackfill = true
+        }
+      }
+      if (needsBackfill) { next = { song, duration: row.duration }; break }
+    }
     if (!next) return 60_000
     const target = next.song.videoId
     // Also pace a useful provider fallback that could not be persisted yet.
@@ -32,12 +55,16 @@ export class DownloadedLyricsBackfill {
     sessionDiagnostic('lyrics.backfill', 'started', { target })
     try {
       const result = await this.resolve({ entry: { source: 'youtube', song: next.song }, duration: next.duration })
+      this.failures.delete(target)
       sessionDiagnostic('lyrics.backfill', 'completed', { target, lyricsStatus: result.status })
       if (result.status !== 'not_found') notifyDesktop('lyricsChanged', { key: result.key })
     } catch (error) {
       const delay = error instanceof LyricsProviderError ? error.retryAfter * 1000 : 0
-      this.retries.set(target, this.now() + Math.max(300_000, delay))
-      sessionDiagnostic('lyrics.backfill', 'failed', { target, ...diagnosticError(error) })
+      const failures = (this.failures.get(target) || 0) + 1
+      this.failures.set(target, failures)
+      const wait = Math.max(backfillFailureDelay(failures), delay)
+      this.retries.set(target, this.now() + wait)
+      sessionDiagnostic('lyrics.backfill', 'failed', { target, failures, retryInMs: wait, ...diagnosticError(error) })
       // A service outage should not turn into a request for every missing song.
       return Math.max(60_000, delay)
     }

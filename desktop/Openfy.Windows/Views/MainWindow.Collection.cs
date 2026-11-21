@@ -26,10 +26,30 @@ public sealed partial class MainWindow
 
     private Panel CollectionPlaybackControls(out Action refresh)
     {
+        if (model.Page == "localartist") {
+            var record = ArtistPlayButton(() => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), context: model.PageContext)));
+            AutomationProperties.SetName(record, "Reproducir esta colección");
+            var shuffle = Ui.Button("Aleatorio", () => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), true, model.PageContext)), "Reproducir esta colección en aleatorio");
+            ArtistGlass(shuffle);
+            SetCollectionButtonContent(shuffle, "shuffle", "Aleatorio");
+            refresh = () => { record.IsEnabled = model.Songs.Count > 0; shuffle.IsEnabled = model.Songs.Count > 1; };
+            refresh(); return Ui.Wrap(record, shuffle);
+        }
         var play = Ui.PrimaryButton("Reproducir", () => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), context: model.PageContext)));
-        AutomationProperties.SetName(play, "Reproducir esta colección"); SetCollectionButtonContent(play, "play", "Reproducir");
+        AutomationProperties.SetName(play, "Reproducir esta colección");
         var mix = Ui.Button("Aleatorio", () => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), true, model.PageContext)));
-        AutomationProperties.SetName(mix, "Reproducir esta colección en aleatorio"); SetCollectionButtonContent(mix, "shuffle", "Aleatorio");
+        AutomationProperties.SetName(mix, "Reproducir esta colección en aleatorio");
+        if (AlbumSurfacePage)
+        {
+            play.Foreground = Ui.Brush("#09090B");
+            play.Resources["ButtonForegroundPointerOver"] = play.Foreground;
+            play.Resources["ButtonForegroundPressed"] = play.Foreground;
+            StyleAlbumButton(mix);
+            AlbumFocus(play);
+        }
+        SetCollectionButtonContent(play, "play", "Reproducir");
+        SetCollectionButtonContent(mix, "shuffle", "Aleatorio");
+        if (AlbumSurfacePage) play.MinHeight = mix.MinHeight = 48;
         refresh = () => { play.IsEnabled = mix.IsEnabled = model.Songs.Count > 0; };
         refresh(); return Ui.Wrap(play, mix);
     }
@@ -45,15 +65,36 @@ public sealed partial class MainWindow
         var label = Ui.Text("Solo descargadas", 14); var icon = Ui.Icon("download", 18); downloaded.Content = Ui.Row(icon, label);
         AutomationProperties.SetName(downloaded, "Solo descargadas");
         var count = Ui.Muted("", 12); count.VerticalAlignment = VerticalAlignment.Center;
+        bool artist = model.Page == "localartist";
+        bool album = model.Page == "localalbum";
+        if (artist) {
+            count.Foreground = Ui.Brush(ArtistSecondaryText);
+            ArtistFocus(downloaded);
+            ArtistFocus(input);
+        }
+        if (album)
+        {
+            count.Foreground = albumMuted;
+            if (input is Grid { Children.Count: > 0 } wrapper && wrapper.Children[0] is TextBox searchBox)
+            {
+                StyleTintedSearchBox(searchBox);
+                AlbumFocus(searchBox);
+            }
+            foreach (var state in new[] { "PointerOver", "Pressed", "Checked", "CheckedPointerOver", "CheckedPressed" })
+                downloaded.Resources["ToggleButtonBackground" + state] = albumTrackSurface;
+            AlbumFocus(downloaded);
+        }
         AutomationProperties.SetLiveSetting(count, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         var tools = Ui.Wrap(downloaded, count); Grid.SetColumn(tools, 1); toolbar.Children.Add(tools);
         refresh = () => {
             bool active = model.Filters.Downloaded;
             downloaded.IsChecked = active;
-            var color = Ui.Brush(active ? "#1ED760" : "#A1A1AA"); label.Foreground = color; Ui.Tint(icon, color);
-            downloaded.Background = Ui.Brush(active ? "#1ED76014" : "#FFFFFF0B");
-            downloaded.BorderBrush = Ui.Brush(active ? "#1ED76066" : "#FFFFFF10");
+            var color = album && !active ? albumMuted : Ui.Brush(artist ? ArtistSecondaryText : active ? "#1ED760" : "#A1A1AA");
+            label.Foreground = color; Ui.Tint(icon, color);
+            downloaded.Background = album ? albumTrackSurface : Ui.Brush(artist ? (active ? "#00000066" : "#00000026") : (active ? "#1ED76014" : "#FFFFFF0B"));
+            downloaded.BorderBrush = album ? active ? Ui.Brush("#1ED760") : albumTrackSurface : Ui.Brush(artist ? (active ? "#FFFFFF9C" : "#FFFFFF40") : (active ? "#1ED76066" : "#FFFFFF10"));
             count.Text = (model.Filters.Query.Trim().Length > 0 || active ? model.Songs.Count + " de " + model.UnfilteredSongs.Length : model.Songs.Count.ToString()) + " canciones";
+            if (album) count.Visibility = model.Filters.Query.Trim().Length > 0 || active ? Visibility.Visible : Visibility.Collapsed;
         };
         RoutedEventHandler toggle = (_, _) => {
             applyingCatalogFilter = true;
@@ -85,15 +126,21 @@ public sealed partial class MainWindow
 
     private void BuildSavedCollection()
     {
+        if (model.Page == "localalbum") { BuildAlbumPage(local: true); return; }
+        bool artist = model.Page == "localartist";
         var hero = new Grid { ColumnSpacing = 24, RowSpacing = 16, Margin = new(0, 4, 0, 0) };
+        if (artist) artistHeroStage = hero;
         hero.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); hero.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         hero.RowDefinitions.Add(new() { Height = GridLength.Auto }); hero.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var artwork = CatalogArtworkView(model.CatalogArtwork, 160, model.Page == "localartist", model.Page == "favorites"); hero.Children.Add(artwork); Grid.SetRowSpan(artwork, 2);
+        var artwork = CatalogArtworkView(model.CatalogArtwork, 160, artist, model.Page == "favorites"); hero.Children.Add(artwork); Grid.SetRowSpan(artwork, 2);
         var copy = new StackPanel { Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        copy.Children.Add(Ui.Muted(model.CatalogKind, 12));
+        var kind = Ui.Muted(model.CatalogKind, 12);
+        copy.Children.Add(kind);
         var title = Ui.Text(model.Heading, 40, true); title.Tag = "display"; title.CharacterSpacing = -30; copy.Children.Add(title);
         string time = CatalogDuration(model.UnfilteredSongs.Sum(song => song.Duration));
-        copy.Children.Add(Ui.Muted((model.CatalogSubtitle.Length > 0 ? model.CatalogSubtitle + " · " : "") + model.UnfilteredSongs.Length + " canciones" + (time.Length > 0 ? " · " + time : ""), 12));
+        var detail = Ui.Muted((model.CatalogSubtitle.Length > 0 ? model.CatalogSubtitle + " · " : "") + model.UnfilteredSongs.Length + " canciones" + (time.Length > 0 ? " · " + time : ""), 12);
+        if (artist) kind.Foreground = detail.Foreground = Ui.Brush(ArtistSecondaryText);
+        copy.Children.Add(detail);
         Grid.SetColumn(copy, 1); hero.Children.Add(copy);
         var actions = new StackPanel { Spacing = 8 }; actions.Children.Add(CollectionPlaybackControls(out var refreshPlayback));
         var secondary = Ui.Wrap();

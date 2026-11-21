@@ -22,16 +22,32 @@ let conversionProcess: ReturnType<typeof spawn> | undefined
 let metadataTimer: ReturnType<typeof setTimeout> | undefined
 let motionTimer: ReturnType<typeof setTimeout> | undefined
 let motionTimerAt = 0
-const playingClients = new Set<string>()
+const playingClients = new Map<string, number>()
+const CLIENT_TIMEOUT = 90_000
 
-export function setPlaybackActivity(clientId: string, playing: boolean) {
-  if (playing) playingClients.add(clientId)
+function sweepPlayingClients(now = Date.now()) {
+  let dropped = false
+  for (const [id, seen] of playingClients) {
+    if (now - seen > CLIENT_TIMEOUT) {
+      playingClients.delete(id)
+      dropped = true
+    }
+  }
+  if (dropped) wakeWorkers()
+}
+
+export function setPlaybackActivity(clientId: string, playing: boolean, now = Date.now()) {
+  sweepPlayingClients(now)
+  if (playing) playingClients.set(clientId, now)
   else playingClients.delete(clientId)
   if (playing && conversionProcess) conversionProcess.kill()
   if (!playing) wakeWorkers()
 }
 
-export function conversionPaused() { return playingClients.size > 0 }
+export function conversionPaused(now = Date.now()) {
+  sweepPlayingClients(now)
+  return playingClients.size > 0
+}
 export function resumeConversions() { playingClients.clear(); wakeWorkers() }
 
 export async function convertTrack(trackId: string) {
@@ -50,7 +66,7 @@ export async function convertTrack(trackId: string) {
         '-progress', 'pipe:1', '-f', 'mp4', temporary,
       ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
       conversionProcess = child
-      let pending = ''
+      let pending = '', lastProgress = -1
       child.stdout.on('data', chunk => {
         pending += chunk.toString()
         const lines = pending.split('\n')
@@ -58,7 +74,8 @@ export async function convertTrack(trackId: string) {
         for (const line of lines) {
           if (!line.startsWith('out_time_us=')) continue
           const progress = Math.min(99, Math.round(Number(line.slice(12)) / 1_000_000 / track.metadata.duration * 100))
-          if (Number.isFinite(progress)) {
+          if (Number.isFinite(progress) && progress !== lastProgress) {
+            lastProgress = progress
             db.update(tracks).set({ conversionProgress: progress }).where(eq(tracks.id, trackId)).run()
             notifyDesktop('conversionProgress', { trackId, progress })
           }

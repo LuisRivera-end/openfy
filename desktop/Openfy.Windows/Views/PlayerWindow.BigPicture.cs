@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -37,12 +38,11 @@ public sealed partial class PlayerWindow
     private bool pictureActive = true, pointerAway, mouseHeld;
     private global::Windows.Foundation.Point? lastPointer;
     private global::Windows.Foundation.Rect previewBounds, destinationBounds;
-    // The card has a docked and a compact-corner geometry; switching between them is tweened per frame
-    // so the ambient preview region stays glued to it.
+    // Entry and dock changes use one rectangle for the card and its ambient preview.
     private Immersive.CardBounds cardFrom, cardTo;
     private double cardScale = 1;
-    private long cardMoveStarted;
-    private bool cardMoving, cardPlaced;
+    private long cardMoveStarted, cardMoveEnds;
+    private bool cardMoving, cardEntering, cardPlaced;
     private bool HoldingBigPicture => Full && previewSong != null && previewSong.Entry.QueueId == model.Current?.Entry.QueueId && visualQueueId != model.Current?.Entry.QueueId;
     private bool PictureMotion => model.Settings.Effects && WindowsIntegration.AnimationsEnabled;
 
@@ -188,14 +188,15 @@ public sealed partial class PlayerWindow
         UpdatePresentation();
         if (previewSong == null || promoting) return;
         var target = CardTarget();
-        if (cardMoving) { cardTo = target; return; }
-        if (cardPlaced && PictureMotion && target.Scale != cardScale) {
-            cardFrom = new(previewBounds.X, previewBounds.Y, previewBounds.Width, previewBounds.Height, cardScale); cardTo = target;
-            cardMoveStarted = Environment.TickCount64; cardMoving = true;
-            CompositionTarget.Rendering += CardFrame; CardFrame(null, EventArgs.Empty);
+        if (!PictureMotion) { StopCardMove(); ApplyCard(target); return; }
+        if (cardMoving) {
+            if (cardEntering && cardTo != target) { cardFrom = VisibleCardBounds(); cardMoveStarted = Stopwatch.GetTimestamp(); }
+            cardTo = target;
             return;
         }
-        ApplyCard(target);
+        if (!cardPlaced) MoveCard(target with { X = pictureRoot.ActualWidth }, target, true);
+        else if (target.Scale != cardScale) MoveCard(VisibleCardBounds(), target, false);
+        else ApplyCard(target);
     }
     /// <summary>Above the dock with the controls visible; the larger bottom-right corner card in compact mode.</summary>
     private Immersive.CardBounds CardTarget()
@@ -203,7 +204,7 @@ public sealed partial class PlayerWindow
         var seek = seekBlock!.TransformToVisual(pictureRoot).TransformPoint(default);
         double contentWidth = stage?.ActualWidth ?? pictureRoot!.ActualWidth - 40;
         double right = (stage?.TransformToVisual(pictureRoot).TransformPoint(default).X ?? 20) + (stage?.ActualWidth ?? Math.Max(1, Math.Min(Immersive.CardWidth, contentWidth)));
-        return Immersive.NextCardBounds(pictureRoot!.ActualWidth, pictureRoot.ActualHeight, right, contentWidth, seek.Y, pictureIdle);
+        return Immersive.NextCardBounds(pictureRoot!.ActualWidth, pictureRoot.ActualHeight, right, contentWidth, seek.Y, pictureIdle, presentationColumnBounds?.Right, presentationColumnBounds?.Bottom);
     }
     private void ApplyCard(Immersive.CardBounds bounds)
     {
@@ -215,18 +216,31 @@ public sealed partial class PlayerWindow
         Canvas.SetLeft(nextCard, bounds.X); Canvas.SetTop(nextCard, bounds.Y);
         surface?.PositionPreview(bounds.X, bounds.Y, bounds.Width, bounds.Height, 16 * bounds.Scale);
     }
+    private Immersive.CardBounds VisibleCardBounds() => new(previewBounds.X, previewBounds.Y, previewBounds.Width, previewBounds.Height, cardScale);
+    private void MoveCard(Immersive.CardBounds from, Immersive.CardBounds to, bool entering)
+    {
+        cardFrom = from; cardTo = to; cardEntering = entering;
+        cardMoveStarted = Stopwatch.GetTimestamp();
+        var duration = entering ? Immersive.CardEnterMilliseconds : Immersive.CompactMilliseconds;
+        cardMoveEnds = cardMoveStarted + duration * Stopwatch.Frequency / 1000;
+        cardMoving = true;
+        ApplyCard(from);
+        CompositionTarget.Rendering += CardFrame;
+    }
     private void CardFrame(object? sender, object args)
     {
         if (!cardMoving || promoting || released) { StopCardMove(); return; }
-        double raw = Math.Clamp((Environment.TickCount64 - cardMoveStarted) / (double)Immersive.CompactMilliseconds, 0, 1), t = raw * raw * (3 - 2 * raw);
+        long now = Stopwatch.GetTimestamp();
+        if (now >= cardMoveEnds || !PictureMotion) { StopCardMove(); ApplyCard(cardTo); return; }
+        double raw = (now - cardMoveStarted) / (double)(cardMoveEnds - cardMoveStarted);
+        double rest = 1 - raw, t = cardEntering ? 1 - rest * rest * rest : raw * raw * (3 - 2 * raw);
         double Mix(double a, double b) => a + (b - a) * t;
         ApplyCard(new(Mix(cardFrom.X, cardTo.X), Mix(cardFrom.Y, cardTo.Y), Mix(cardFrom.Width, cardTo.Width), Mix(cardFrom.Height, cardTo.Height), Mix(cardFrom.Scale, cardTo.Scale)));
-        if (raw >= 1 || !PictureMotion) { StopCardMove(); ApplyCard(cardTo); }
     }
     private void StopCardMove()
     {
         if (!cardMoving) return;
-        cardMoving = false; CompositionTarget.Rendering -= CardFrame;
+        cardMoving = false; cardEntering = false; CompositionTarget.Rendering -= CardFrame;
     }
     private void UpdatePicture()
     {
@@ -253,18 +267,21 @@ public sealed partial class PlayerWindow
             Fade(artworkFrame, true, PictureMotion); if (info != null) Fade(info, true, PictureMotion); if (lyricsHost != null) Fade(lyricsHost, true, PictureMotion);
         }
         title.Text = model.Title; artist.Text = model.Artist;
+        if (pictureRoot.ActualWidth <= 0 || pictureRoot.ActualHeight <= 0) return;
         var seconds = Immersive.UpcomingSeconds(model.Position, model.Duration);
         var next = model.NextAutomatic;
         if (seconds == null || next == null || next.Entry.QueueId == currentId || model.RepeatMode == "one" || model.Error.Length > 0) { if (previewSong != null) CancelPreview(); return; }
         if (previewSong?.Entry.QueueId != next.Entry.QueueId || previewSong?.Artwork != next.Artwork) {
-            CancelPreview(); previewSong = next;
+            previewSong = next;
             nextTitle!.Text = next.Title; nextArtist!.Text = next.Artist; nextDuration!.Text = next.Duration > 0 ? next.Length : "";
-            nextCard!.Visibility = Visibility.Visible; nextCard.Opacity = 1;
+            nextCover!.Source = null;
+            previewPalette = ["#28483e", "#18212e", "#111113"];
+            PositionPicture(); surface?.SetPreview(Ambient.PaletteTexture(previewPalette));
+            nextCard!.Background = surface?.Failed == true ? Ui.Gradient(previewPalette[0], previewPalette[^1]) : null;
+            nextCard.OpacityTransition = null; nextCard.Opacity = 1; nextCard.Visibility = Visibility.Visible;
             AutomationProperties.SetName(nextCard, $"A continuación: {next.Title}, {next.Artist}");
             FrameworkElementAutomationPeer.FromElement(nextCard)?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
-            nextCover!.Source = null;
-            surface?.SetPreview(Ambient.PaletteTexture(["#28483e", "#18212e", "#111113"]));
-            PositionPicture(); _ = PreparePreviewAsync(next, ++previewGeneration);
+            _ = PreparePreviewAsync(next, ++previewGeneration);
         }
         nextCountdown!.Text = model.Engine.CapturePresence().State == PlaybackPresenceState.Paused ? $"En pausa · {seconds} s restantes" : model.Engine.Buffering || seconds == 0 ? "Preparando reproducción…" : !model.Playing ? $"En pausa · {seconds} s restantes" : $"Empieza en {seconds} s";
         PositionPicture();
@@ -308,6 +325,7 @@ public sealed partial class PlayerWindow
     {
         if (pictureRoot == null || previewSong == null || nextCover == null || flyingCover == null || nextCard == null) return;
         if (!PictureMotion) { FinishPromotion(); return; }
+        if (cardEntering && previewBounds.X >= pictureRoot.ActualWidth) ApplyCard(cardTo);
         StopCardMove(); UpdatePresentation();
         destinationBounds = presentationArtBounds;
         promoting = true; morphStarted = Environment.TickCount64;

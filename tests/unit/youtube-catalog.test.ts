@@ -126,8 +126,26 @@ describe('catalog recording selection and lengths', () => {
 
   it('supports older album responses without a canonical playlist', async () => {
     provider.getAlbum.mockResolvedValue(albumPage(''))
-    expect((await getYouTubeAlbum('MPRElegacy')).songs[0]?.videoId).toBe('NO7EtdR3Dyw')
+    const album = await getYouTubeAlbum('MPRElegacy')
+    expect(album.songs[0]?.videoId).toBe('NO7EtdR3Dyw')
+    expect(album.description).toBeNull()
     expect(provider.getPlaylist).not.toHaveBeenCalled()
+  })
+
+  it('reads the description from the modern header shelf with a canonical playlist', async () => {
+    const header = Object.assign(Object.create(YTNodes.MusicResponsiveHeader.prototype), {
+      title: { text: 'DATA' }, description: { description: { text: '  Texto moderno.\nSegunda línea.  ' } },
+    })
+    provider.getAlbum.mockResolvedValue({ ...albumPage(), header })
+    provider.getPlaylist.mockResolvedValue(playlist([song('RGXHqQR9XrQ', 207)]))
+    expect((await getYouTubeAlbum('MPREmodernDescription')).description).toBe('Texto moderno.\nSegunda línea.')
+  })
+
+  it('reads the classic description from the header when there is no canonical playlist', async () => {
+    const page = albumPage('')
+    page.header.description = { text: '  Texto clásico.  ' }
+    provider.getAlbum.mockResolvedValue(page)
+    expect((await getYouTubeAlbum('MPREclassicDescription')).description).toBe('Texto clásico.')
   })
 
   it('extracts only canonical album playlist identifiers', () => {

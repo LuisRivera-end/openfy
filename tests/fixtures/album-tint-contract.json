@@ -1,0 +1,27 @@
+{
+  "tint": [
+    {"name":"saturated dark red","input":"#590019","expected":{"background":"#590019","surface":"#66142B","muted":"#FAA1BF","edge":"#400012"}},
+    {"name":"already dark blue","input":"#0B0B16","expected":{"background":"#0B0B16","surface":"#1F1F29","muted":"#ACACBC","edge":"#080810"}},
+    {"name":"light cream","input":"#F2E9D8","expected":{"background":"#342D20","surface":"#443E32","muted":"#D5CEC6","edge":"#252017"}},
+    {"name":"pure black","input":"#000000","expected":{"background":"#000000","surface":"#141414","muted":"#A1A1A6","edge":"#000000"}},
+    {"name":"saturated green clipped to sRGB","input":"#00FF00","expected":{"background":"#003B00","surface":"#144B14","muted":"#A1DCA6","edge":"#002A00"}},
+    {"name":"pure white","input":"#FFFFFF","expected":{"background":"#2E2E2E","surface":"#3F3F3F","muted":"#CFCFD4","edge":"#212121"}},
+    {"name":"invalid input","input":"#123","expected":{"background":"#09090B","surface":"#1D1D1F","muted":"#AAAAB1","edge":"#060608"}},
+    {"name":"unprefixed with spaces","input":"  f2e9d8  ","expected":{"background":"#342D20","surface":"#443E32","muted":"#D5CEC6","edge":"#252017"}},
+    {"name":"Apple Music: SATURNO","input":"#CBD8F7","expected":{"background":"#242D45","surface":"#363E54","muted":"#C5CEEB","edge":"#1A2032"}},
+    {"name":"Apple Music: VICE VERSA (chroma cap)","input":"#330076","expected":{"background":"#301864","surface":"#412A70","muted":"#D1B9FF","edge":"#231148"}},
+    {"name":"Apple Music: 1989 (Taylor's Version)","input":"#A8B9C0","expected":{"background":"#223036","surface":"#344146","muted":"#C3D1DC","edge":"#182327"}},
+    {"name":"Apple Music: Cosa Nuestra (gamut clip)","input":"#A6771F","expected":{"background":"#4B2100","surface":"#593314","muted":"#ECC2A6","edge":"#361800"}},
+    {"name":"Apple Music: Un Verano Sin Ti","input":"#FB959F","expected":{"background":"#5C001A","surface":"#69142C","muted":"#FDA1C0","edge":"#420013"}},
+    {"name":"Apple Music: TRAP CAKE, VOL. 2","input":"#FFF6C7","expected":{"background":"#362E01","surface":"#463F15","muted":"#D7CFA7","edge":"#272101"}},
+    {"name":"Apple Music: good kid, m.A.A.d city","input":"#425C59","expected":{"background":"#1A3330","surface":"#2C4341","muted":"#BBD4D6","edge":"#132523"}},
+    {"name":"Apple Music: Tremendo Desastre (kept)","input":"#0F1921","expected":{"background":"#0F1921","surface":"#222B33","muted":"#B0BAC7","edge":"#0B1218"}}
+  ],
+  "dominant": [
+    {"name":"alpha cutoff","width":2,"height":2,"channels":4,"pixels":[255,0,0,127,255,0,0,1,255,0,0,0,17,33,49,128],"expected":"#112131"},
+    {"name":"all transparent","width":1,"height":1,"channels":4,"pixels":[12,34,56,0],"expected":null},
+    {"name":"lowest bucket wins the tie and uses rounded byte averages","width":2,"height":2,"channels":4,"pixels":[255,0,0,255,253,0,0,255,0,16,31,255,1,17,16,255],"expected":"#011118"},
+    {"name":"centered crop with a half-pixel offset","width":3,"height":2,"channels":4,"pixels":[80,10,10,255,8,64,32,255,80,10,10,255,80,10,10,255,10,68,34,255,80,10,10,255],"expected":"#094221"},
+    {"name":"foreground in a centered RGB crop","width":1,"height":3,"channels":3,"pixels":[255,255,255,18,52,86,255,255,255],"expected":"#123456"}
+  ]
+}

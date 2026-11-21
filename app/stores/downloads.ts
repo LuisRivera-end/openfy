@@ -4,7 +4,8 @@ import { localDatabase } from '../lib/local'
 import { assetUrl, AUDIO_CACHE, ARTWORK_CACHE } from '../../shared/utils/media'
 import { playbackKey } from '../../shared/utils/playback'
 import { collectionProgress, downloadTarget } from '../../shared/utils/offline'
-import type { Asset, DownloadRecord, Track, PlaybackEntry, OfflineCollection, AudioDownloadJob } from '../../shared/types/music'
+import type { Asset, DownloadRecord, Track, PlaybackEntry, OfflineCollection, OfflineAlbumPresentation, AudioDownloadJob } from '../../shared/types/music'
+import { getCachedPresentation } from '../composables/useAlbumPresentation'
 
 export const useDownloadsStore = defineStore('downloads', () => {
   const records = ref<Record<string, DownloadRecord>>({})
@@ -175,9 +176,18 @@ export const useDownloadsStore = defineStore('downloads', () => {
     if (previous?.enabled) { await saveCollection({ ...previous, enabled: false, updatedAt: Date.now() }); return }
     const playlist = kind === 'playlist' ? library.playlists.find(list => list.id === id) : undefined
     const entries = source?.entries || playlist?.trackIds.flatMap(key => library.collectionMap.get(key)?.entry || []) || previous?.entries || []
+    const inMemory = kind === 'album' ? getCachedPresentation(key) : undefined
+    const presentation = previous?.presentation || inMemory
     await saveCollection({ key, kind, id, title: source?.title || playlist?.name || previous?.title || 'Colección',
-      artwork: source?.artwork || previous?.artwork || null, entries, revision: playlist?.revision || null, enabled: true, updatedAt: Date.now() })
+      artwork: source?.artwork || previous?.artwork || null, entries, revision: playlist?.revision || null, enabled: true, updatedAt: Date.now(),
+      presentation })
     await downloadEntries(entries)
+  }
+  async function savePresentation(key: string, presentation: OfflineAlbumPresentation) {
+    const existing = collections.value[key]
+    if (!existing) return
+    existing.presentation = presentation
+    await localDatabase().offlineCollections.put(JSON.parse(JSON.stringify(existing)))
   }
   function progress(key: string) { return collectionProgress(collections.value[key], readyIds.value) }
 
@@ -274,5 +284,5 @@ export const useDownloadsStore = defineStore('downloads', () => {
     await updateStorage()
   }
   return { records, readyIds, usage, quota, persistent, available, storageError, collections, serverJobs, initialize, download, downloadEntries,
-    reconcile, toggleCollection, progress, preparationLabel, retry, invalidate, cancel, remove, updateStorage }
+    reconcile, toggleCollection, savePresentation, progress, preparationLabel, retry, invalidate, cancel, remove, updateStorage }
 })

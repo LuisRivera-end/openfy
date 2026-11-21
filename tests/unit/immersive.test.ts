@@ -10,7 +10,8 @@ describe('shared expanded-player layout contract', () => {
   it('places the next card above the dock or, in compact mode, in the bottom-right corner', () => {
     for (const example of fixture.cards) {
       const [vw, vh] = example.viewport as [number, number]
-      const bounds = nextCardBounds(vw, vh, example.contentRight, example.contentWidth, example.dockTop, example.idle)
+      const avoid = 'avoid' in example && Array.isArray(example.avoid) ? { right: example.avoid[0], bottom: example.avoid[1] } : null
+      const bounds = nextCardBounds(vw, vh, example.contentRight, example.contentWidth, example.dockTop, example.idle, avoid)
       const actual = [bounds.x, bounds.y, bounds.width, bounds.height, bounds.scale]
       example.bounds.forEach((value, i) => expect(actual[i], JSON.stringify(example)).toBeCloseTo(value, 6))
     }

@@ -50,6 +50,8 @@ public sealed partial class PlayerWindow : Window
     private readonly Action notifyClosed;
     private readonly ScrollViewer layer;
     private bool released, destroying;
+    // Closing only hides the window: skip lyric/artwork rebuilds while hidden and catch up in ShowView.
+    private bool hidden, lyricsStale, artworkStale;
     private bool Full => kind == "fullscreen";
     private bool LyricsOn => Full || compactLyrics != null && model.Settings.CompactLyrics;
     public new bool Visible => WindowsIntegration.Visible(WindowsIntegration.Handle(this));
@@ -183,6 +185,7 @@ public sealed partial class PlayerWindow : Window
         root.SizeChanged += resize; Ui.OnRelease(root, () => root.SizeChanged -= resize);
         KeyEventHandler keyboard = (_, args) => { if (args.Key == global::Windows.System.VirtualKey.Escape) Close(); };
         root.KeyDown += keyboard; Ui.OnRelease(root, () => root.KeyDown -= keyboard);
+        AttachShortcuts(root);
         surface = new(background, this, model);
         if (full) InitializeBigPicture(root);
         model.ArtworkChanged += ArtworkChanged; model.LyricsChanged += BuildLyrics; model.PropertyChanged += PositionChanged; model.ContentChanged += UpdatePlayback;
@@ -354,11 +357,17 @@ public sealed partial class PlayerWindow : Window
     }
     private void OnClosed(object sender, WindowEventArgs args) { ReleaseResources(); Closed -= OnClosed; }
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args) { if (!destroying) { args.Cancel = true; Close(); } }
-    public new void Close() { StopBigPicture(); PauseMotion(); AppWindow.Hide(); StopSweep(); notifyClosed(); }
+    public new void Close() { StopBigPicture(); PauseMotion(); AppWindow.Hide(); StopSweep(); hidden = true; surface?.Suspend(); notifyClosed(); }
     public void ShowView(WindowPlacement? placement = null)
     {
         if (Full && placement != null) { AppWindow.SetPresenter(AppWindowPresenterKind.Overlapped); WindowsIntegration.Restore(this, placement); AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen); }
-        AppWindow.Show(); Activate(); if (Full) { lyricsAnswered = false; model.LyricsVisible = true; if (model.Lyrics == null) _ = model.RunAsync(() => model.LoadLyricsAsync()); }
+        AppWindow.Show(); Activate();
+        if (hidden) {
+            hidden = false; surface?.Resume();
+            if (artworkStale) { artworkStale = false; ArtworkChanged(); }
+            if (lyricsStale) { lyricsStale = false; BuildLyrics(); }
+            else { active = null; PositionChanged(null, new(nameof(model.Position))); }
+        } if (Full) { lyricsAnswered = false; model.LyricsVisible = true; if (model.Lyrics == null) _ = model.RunAsync(() => model.LoadLyricsAsync()); }
         UpdateCompactVisibility(); UpdateSweep(); if (Full) { ResetBigPicture(); UpdateLyricsPane(); }
     }
     internal void SeekLyricsForCheck() { active = null; PositionChanged(null, new(nameof(model.Position))); }
@@ -402,12 +411,13 @@ public sealed partial class PlayerWindow : Window
         surface?.Dispose(); surface = null; model.ArtworkChanged -= ArtworkChanged; model.LyricsChanged -= BuildLyrics; model.PropertyChanged -= PositionChanged; model.ContentChanged -= UpdatePlayback;
         if (Content is DependencyObject root) Ui.ReleaseTree(root); Content = null;
     }
-    private void ArtworkChanged() { if (!HoldingBigPicture) Ui.Cover(artwork, model.Cover); }
+    private void ArtworkChanged() { if (hidden) { artworkStale = true; return; } if (!HoldingBigPicture) Ui.Cover(artwork, model.Cover); }
 
     private double LineSize => layout == Immersive.Split ? Math.Clamp((Content as FrameworkElement)?.ActualWidth * .026 ?? 34, 28, 42) : 24;
 
     private void BuildLyrics()
     {
+        if (hidden) { lyricsStale = true; return; }
         if (HoldingBigPicture || UpdateLyricsPane()) return;
         if (Full) {
             lyricsNeedSnap = true;
@@ -446,6 +456,7 @@ public sealed partial class PlayerWindow : Window
     {
         if (args.PropertyName is nameof(model.Playing) or nameof(model.PlayLabel) or nameof(model.Current) or nameof(model.ShuffleEnabled) or nameof(model.RepeatMode)) UpdatePlayback();
         if (HoldingBigPicture) { StopSweep(); return; }
+        if (hidden) return;
         if (args.PropertyName != nameof(model.Position) || model.Lyrics is not { Status: "synced" } lyrics || !LyricsOn) return;
         double? time = RenderPolicy.ActiveLyricsTime(lyrics.Lines, model.Position); if (time == active) return; active = time;
         int index = time == null ? -1 : Array.FindIndex(lyrics.Lines, line => line.Time == time);

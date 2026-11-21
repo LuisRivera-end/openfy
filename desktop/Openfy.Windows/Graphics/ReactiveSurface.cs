@@ -115,7 +115,22 @@ public sealed class ReactiveSurface : IDisposable
         WindowsIntegration.WatchPresentation();
         owner.AppWindow.Changed += OnWindowChanged;
     }
-    private void OnLoaded(object sender, RoutedEventArgs args) { if (disposed || rendering != null) return; try { Initialize(); UpdatePolicy(); policyTimer.Start(); rendering = Task.Run(RenderLoop); } catch (Exception error) { failure = error.Message; Debug.WriteLine(error); } }
+    private bool suspended;
+    /// <summary>A closed player window is only hidden: stop its policy timer and the desktop-wide WinEvent hooks until it is shown again.</summary>
+    public void Suspend()
+    {
+        if (disposed || suspended) return; suspended = true;
+        policyTimer.Stop(); WindowsIntegration.PresentationChanged -= OnPresentation; WindowsIntegration.UnwatchPresentation();
+        visible = false; fps = 0;
+    }
+    public void Resume()
+    {
+        if (disposed || !suspended) return; suspended = false;
+        WindowsIntegration.PresentationChanged += OnPresentation; WindowsIntegration.WatchPresentation();
+        if (rendering != null) policyTimer.Start();
+        UpdatePolicy();
+    }
+    private void OnLoaded(object sender, RoutedEventArgs args) { if (disposed || rendering != null) return; try { Initialize(); UpdatePolicy(); if (!suspended) policyTimer.Start(); rendering = Task.Run(RenderLoop); } catch (Exception error) { failure = error.Message; Debug.WriteLine(error); } }
     private void OnSizeChanged(object sender, SizeChangedEventArgs args) { width = (float)Math.Max(1, panel.ActualWidth); height = (float)Math.Max(1, panel.ActualHeight); dirty = true; wake.Set(); }
     private void OnPolicyTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args) => UpdatePolicy();
     private void OnWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args) => UpdatePolicy();
@@ -318,7 +333,7 @@ public sealed class ReactiveSurface : IDisposable
         if (disposed) return; disposed = true;
         cancellation.Cancel(); wake.Set(); policyTimer.Stop(); model.ArtworkChanged -= OnArtwork;
         panel.Loaded -= OnLoaded; panel.SizeChanged -= OnSizeChanged; window.AppWindow.Changed -= OnWindowChanged; policyTimer.Tick -= OnPolicyTick;
-        WindowsIntegration.PresentationChanged -= OnPresentation; WindowsIntegration.UnwatchPresentation();
+        if (!suspended) { WindowsIntegration.PresentationChanged -= OnPresentation; WindowsIntegration.UnwatchPresentation(); }
         rendering?.GetAwaiter().GetResult();
         if (swap != null) Attach(0);
         lock (GraphicsGate) {

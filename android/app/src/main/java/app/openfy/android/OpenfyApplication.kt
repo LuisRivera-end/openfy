@@ -11,12 +11,14 @@ import androidx.media3.datasource.cache.SimpleCache
 import androidx.room.Room
 import app.openfy.android.data.*
 import app.openfy.android.provider.YouTubeRuntime
+import app.openfy.android.playback.NowPlaying
 import app.openfy.android.playback.YouTubeDataSource
 import app.openfy.android.downloads.Downloads
 import app.openfy.android.lyrics.LyricsRepository
 import app.openfy.android.sync.SyncClient
 import app.openfy.android.ui.MotionRepository
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.OkHttpClient
 import java.io.File
 
@@ -36,6 +38,8 @@ class OpenfyApplication : Application() {
     val http by lazy { OkHttpClient.Builder().connectTimeout(15,java.util.concurrent.TimeUnit.SECONDS).readTimeout(15,java.util.concurrent.TimeUnit.SECONDS).build() }
     val cache by lazy { SimpleCache(File(filesDir,"downloads/audio"),NoOpCacheEvictor(),StandaloneDatabaseProvider(this)) }
     internal val motion by lazy { MotionRepository(this) }
+    /** Published by PlaybackService, read by the live wallpaper. */
+    internal val nowPlaying = MutableStateFlow(NowPlaying())
     /** Set only by debug design QA (DesignQaTest); release builds ignore it. */
     @Volatile internal var qaUnmetered = false
     internal val isDebuggable get() = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0

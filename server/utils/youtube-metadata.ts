@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { YTNodes } from 'youtubei.js'
 import { getDatabase } from '../database'
 import { youtubeSongs } from '../database/schema'
@@ -31,6 +31,12 @@ const RETRY_AFTER = 10 * 60000
 
 const genreOf = (result?: ITunesResult) => result?.primaryGenreName?.trim() ? [result.primaryGenreName.trim()] : []
 
+function touchLru<K, V>(map: Map<K, V>, key: K, value: V, max = 200) {
+  map.delete(key)
+  map.set(key, value)
+  if (map.size > max) map.delete(map.keys().next().value!)
+}
+
 export class ITunesGenres {
   private artists = new Map<string, Promise<{ id: number | null; genres: string[] }>>()
   private albums = new Map<number, Promise<ITunesResult[]>>()
@@ -56,23 +62,25 @@ export class ITunesGenres {
   private artist(name: string) {
     const key = metadataKey(name)
     let pending = this.artists.get(key)
-    if (!pending) {
+    if (pending) touchLru(this.artists, key, pending)
+    else {
       pending = this.request('search', { term: name, media: 'music', entity: 'musicArtist', limit: '10' }).then(results => {
         const found = results.find(result => result.wrapperType === 'artist' && metadataKey(result.artistName || '') === key)
         return { id: found?.artistId ?? null, genres: genreOf(found) }
       })
       pending.catch(() => this.artists.delete(key))
-      this.artists.set(key, pending)
+      touchLru(this.artists, key, pending)
     }
     return pending
   }
 
   private releases(artistId: number) {
     let pending = this.albums.get(artistId)
-    if (!pending) {
+    if (pending) touchLru(this.albums, artistId, pending)
+    else {
       pending = this.request('lookup', { id: String(artistId), entity: 'album', limit: '200' }).then(results => results.filter(result => result.wrapperType === 'collection'))
       pending.catch(() => this.albums.delete(artistId))
-      this.albums.set(artistId, pending)
+      touchLru(this.albums, artistId, pending)
     }
     return pending
   }
@@ -112,7 +120,8 @@ let readyAt = 0
 export function setMetadataProvider(next: ITunesGenres) { provider = next; readyAt = 0 }
 
 function nextSong() {
-  return getDatabase().select({ song: youtubeSongs.song }).from(youtubeSongs).all().find(row => !Array.isArray(row.song.genres))?.song
+  return getDatabase().select({ song: youtubeSongs.song }).from(youtubeSongs)
+    .where(sql`json_type(${youtubeSongs.song}, '$.genres') IS NOT 'array'`).limit(1).get()?.song
 }
 
 /** Milliseconds until the next song can be completed, or null when none is waiting. */

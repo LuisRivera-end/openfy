@@ -54,6 +54,7 @@ internal val Motion=booleanPreferencesKey("motionArt")
                 SectionTitle("Apariencia")
                 Row(verticalAlignment=Alignment.CenterVertically) { Text("Movimiento ambiental",Modifier.weight(1f),style=typography.bodyMedium); Switch(effects,{ vm.run { vm.app.preferences.edit { prefs -> prefs[Effects]=it } } }) }
                 Row(verticalAlignment=Alignment.CenterVertically) { Text("Portadas animadas con Wi-Fi",Modifier.weight(1f),style=typography.bodyMedium); Switch(motion,{ vm.run { vm.app.preferences.edit { prefs -> prefs[Motion]=it } } }) }
+                LiveWallpaperSettings(vm,effects)
                 SectionTitle("Vincular con Windows")
                 Text("Comparte favoritos y playlists de YouTube. Abre Ajustes → Android en el PC para obtener un código.",color=Muted,style=typography.bodyMedium)
                 Text(status,color=Green,style=typography.bodyMedium)

@@ -43,3 +43,26 @@ const press = useLongPress()
   </div>
   <SongActionsSheet :item="menu" :context="context" :playlist-id="playlistId" @close="menu = null" />
 </template>
+
+<style scoped>
+.track-row {
+  border-bottom: 1px solid var(--album-surface, transparent);
+}
+@media (hover: hover) {
+  .track-row:hover {
+    background: var(--album-surface, #ffffff07);
+  }
+}
+.track-row.selected {
+  background: var(--album-surface, #ffffff04);
+}
+.song-duration-cell,
+.song-artist-cell,
+.song-album-cell,
+.song-genre-cell,
+.song-plays-cell,
+.song-minutes-cell,
+.track-number {
+  color: var(--album-muted, var(--muted));
+}
+</style>

@@ -31,7 +31,20 @@ public static partial class Ui
         TintColor = Brush(tint).Color, TintOpacity = opacity, TintLuminosityOpacity = .9,
         FallbackColor = Brush(tint).Color
     };
-    public static TextBlock Text(string text, double size = 14, bool bold = false) => new() { Text = text, FontSize = size, FontWeight = bold ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal, TextWrapping = TextWrapping.Wrap, Foreground = Brush(244, 244, 245) };
+    // The web client uses "Segoe UI Variable" with font-optical-sizing:auto, so Chromium picks the
+    // Small/Text/Display cut from the rendered size. Mirror that here instead of pinning the Text cut everywhere.
+    private static readonly FontFamily SmallFont = new("Segoe UI Variable Small");
+    private static readonly FontFamily TextFont = new("Segoe UI Variable Text");
+    private static readonly FontFamily DisplayFont = new("Segoe UI Variable Display");
+    public static FontFamily FontForSize(double size) => size >= 20 ? DisplayFont : size < 12 ? SmallFont : TextFont;
+    public static TextBlock Text(string text, double size = 14, bool bold = false) => new()
+    {
+        Text = text, FontSize = size, FontFamily = FontForSize(size),
+        FontWeight = bold ? Microsoft.UI.Text.FontWeights.SemiBold : Microsoft.UI.Text.FontWeights.Normal,
+        // Large headings are tightened as on the web (-0.035em at display sizes).
+        CharacterSpacing = size >= 28 ? -35 : size >= 20 ? -20 : 0,
+        TextWrapping = TextWrapping.Wrap, Foreground = Brush(244, 244, 245)
+    };
     public static TextBlock Muted(string text, double size = 13) { var result = Text(text, size); result.Foreground = Brush("#A1A1AA"); return result; }
     public static Button Button(string label, Action action, string? name = null)
     {

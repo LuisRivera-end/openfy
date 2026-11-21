@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -30,7 +31,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** Shared by the Android APK and the JVM integration smoke. No Node, loopback or PC service. */
-class YouTubeRuntime(private val sources: () -> Pair<String,String>) {
+/** The provider exceeded its deadline: a failure the caller can retry, never a cancellation. */
+class ProviderTimeoutException(val method: String) : IOException("El catálogo tardó demasiado en responder. Reintenta.")
+
+class YouTubeRuntime(private val sources: () -> Pair<String,String>, private val callTimeoutMillis: Long = 60_000) {
     constructor(polyfills: String, bundle: String) : this({ polyfills to bundle })
     private val mutex = Mutex()
     // QuickJS evaluates on the caller's thread; callers include Dispatchers.Main (ANR on search).
@@ -91,11 +95,22 @@ class YouTubeRuntime(private val sources: () -> Pair<String,String>) {
     suspend fun call(method: String, params: JsonObject): JsonObject {
         require(method in setOf("probe","probeAudio","search","resolve","artist","album","artistSongs","artistReleases","lyrics","recommendations","spotifyMatch"))
         return withContext(thread) { mutex.withLock {
-            try { withTimeout(60_000) {
-                    returned = ""
-                    machine().evaluate<Any?>("__result(JSON.stringify(await openfy.$method($params)))", asModule = true)
-                    json.parseToJsonElement(returned).jsonObject
-            } } catch(error: CancellationException) {
+            try {
+                // withTimeoutOrNull keeps the provider's deadline apart from the caller's cancellation:
+                // a TimeoutCancellationException reaches callers as a cancellation and ends their job silently.
+                withTimeoutOrNull(callTimeoutMillis) {
+                    try {
+                        returned = ""
+                        machine().evaluate<Any?>("__result(JSON.stringify(await openfy.$method($params)))", asModule = true)
+                        json.parseToJsonElement(returned).jsonObject
+                    } finally {
+                        returned = ""
+                    }
+                } ?: run {
+                    withContext(NonCancellable) { vm?.close(); vm=null }
+                    throw ProviderTimeoutException(method)
+                }
+            } catch(error: CancellationException) {
                 // Interrupted SDK promises/cursors cannot be reused by a later navigation.
                 withContext(NonCancellable) { vm?.close(); vm=null }
                 throw error

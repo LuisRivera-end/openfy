@@ -87,6 +87,38 @@ public sealed partial class MainWindow
         await model.RestoreAsync(savedQueue!);
         Require(model.Queue.All(song => song.Entry.Context == contexts[song.Entry.QueueId!]) && !model.Playing, "Restaurar perdió los orígenes o inició audio.");
         steps["collection-playback"] = new { shuffled = true, restored = true, single = true, empty = true, contexts = true };
+
+        var entries = Enumerable.Range(0, 24).Select(i => rows[i % rows.Length].Entry with { QueueId = $"repeat-{i}" }).ToList();
+        var originalOrder = entries.Select(entry => entry.QueueId!).ToList();
+        var oldQueue = entries.Take(18).Concat(entries.Skip(18).Reverse()).ToList();
+        await model.RestoreAsync(new(3, oldQueue, 4, 0.5, "all", true, 0, originalOrder));
+        Require(model.Current?.Entry.QueueId == "repeat-4" && model.Position == 0.5 && !model.Playing, "La recuperación cambió la reproducción actual.");
+        Require(model.Queue.Take(5).Select(song => song.Entry.QueueId).SequenceEqual(originalOrder.Take(5)), "La recuperación cambió el historial.");
+        Require(!model.Upcoming.Select(song => song.Entry.QueueId).SequenceEqual(oldQueue.Skip(5).Select(entry => entry.QueueId)), "La recuperación conservó la cola antigua en orden.");
+        var recovered = (await model.Store.ReadAsync<PlaybackSnapshot>("playback"))!;
+        Require(recovered.OriginalOrder!.SequenceEqual(originalOrder) && recovered.RepeatShuffleMigrated, "La recuperación perdió el orden original o no se guardó.");
+        await model.RestoreAsync(recovered);
+        Require(model.Queue.Select(song => song.Entry.QueueId).SequenceEqual(recovered.Queue.Select(entry => entry.QueueId)), "Restaurar una cola recuperada volvió a cambiar el orden.");
+
+        var ended = recovered with { Index = entries.Count - 1, Position = 0 };
+        foreach (bool automatic in new[] { true, false }) {
+            await model.RestoreAsync(ended);
+            var last = model.Current?.Entry.QueueId;
+            var preview = model.NextAutomatic?.Entry.QueueId;
+            await model.AdvanceAsync(1, automatic); model.Engine.Pause();
+            Require(model.CurrentIndex == 0 && model.Current?.Entry.QueueId == preview && preview != last, "La nueva vuelta no empezó con la canción anunciada.");
+            Require(model.Queue.Select(song => song.Entry.QueueId).Order().SequenceEqual(originalOrder.Order()), "La nueva vuelta perdió apariciones.");
+            Require(!model.Queue.Select(song => song.Entry.QueueId).SequenceEqual(recovered.Queue.Select(entry => entry.QueueId)), "Repetir todo reutilizó el mismo orden.");
+            Require(model.Upcoming.SequenceEqual(model.Queue.Skip(1)), "La cola visible no muestra el orden de la nueva vuelta.");
+            var currentId = model.Current!.Entry.QueueId;
+            model.Shuffle();
+            Require(model.Current!.Entry.QueueId == currentId && model.Upcoming.Select(song => song.Entry.QueueId).SequenceEqual(originalOrder.Where(id => id != currentId)), "Desactivar aleatorio tras repetir todo perdió el orden original.");
+        }
+        await model.RestoreAsync(ended with { Repeat = "one" });
+        await model.AdvanceAsync(1, true); model.Engine.Pause();
+        Require(model.CurrentIndex == ended.Index && model.Queue.Select(song => song.Entry.QueueId).SequenceEqual(ended.Queue.Select(entry => entry.QueueId)), "Repetir una canción mezcló la cola.");
+        steps["shuffle-repeat"] = new { recoveredQueue = true, automatic = true, manual = true, repeatOne = true };
+
         // Real audio and the durable listening client must produce mixed recent cards.
         var sample = rows[0];
         var sampleTrack = model.Library.Tracks.Single(track => track.Id == sample.Entry.TrackId);

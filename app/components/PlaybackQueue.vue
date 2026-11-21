@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { formatTime } from '../../shared/utils/media'
+import { turnedPlayerKey } from '../composables/useMobileBigPicture'
 /** `panel` docks beside the page (desktop); `sheet` is the body of the queue sheet over the expanded player. */
 const props = withDefaults(defineProps<{ variant?: 'panel' | 'sheet' }>(), { variant: 'panel' })
 const sheet = computed(() => props.variant === 'sheet')
+const turned = inject(turnedPlayerKey, undefined)
 const player = usePlayerStore()
 const list = ref<HTMLElement>(), menu = ref<string>(), announcement = ref('')
 const dragging = ref<string>(), before = ref<string>(), dropped = ref(false), landed = ref<string>()
 let movedTimer: ReturnType<typeof setTimeout> | undefined
 let originY = 0, pointerY = 0, moved = false, frame = 0
+const pointerAlongList = (event: PointerEvent) => turned?.value ? -event.clientX : event.clientY
 function move(id: string, direction: number) {
   const rows = player.upcoming, i = rows.findIndex(row => row.entry.queueId === id)
   if (i < 0 || i + direction < 0 || i + direction >= rows.length) return
@@ -18,10 +21,15 @@ function tick() {
   if (!dragging.value || !list.value) return
   const rect = list.value.getBoundingClientRect()
   if (moved) {
-    const delta = pointerY < rect.top + 44 ? -10 : pointerY > rect.bottom - 44 ? 10 : 0
+    const top = turned?.value ? -rect.right : rect.top
+    const bottom = turned?.value ? -rect.left : rect.bottom
+    const delta = pointerY < top + 44 ? -10 : pointerY > bottom - 44 ? 10 : 0
     list.value.scrollTop += delta
     const rows = [...list.value.querySelectorAll<HTMLElement>('[data-queue-id]')].filter(row => row.dataset.queueId !== dragging.value)
-    before.value = rows.find(row => pointerY < row.getBoundingClientRect().top + row.offsetHeight / 2)?.dataset.queueId
+    before.value = rows.find(row => {
+      const bounds = row.getBoundingClientRect()
+      return pointerY < (turned?.value ? -bounds.right : bounds.top) + row.offsetHeight / 2
+    })?.dataset.queueId
   }
   frame = requestAnimationFrame(tick)
 }
@@ -29,13 +37,13 @@ function start(event: PointerEvent, id: string) {
   if (event.button !== 0) return
   menu.value = undefined
   window.addEventListener('keydown', cancelWithEscape, true)
-  dragging.value = id; originY = pointerY = event.clientY; moved = false; dropped.value = false
+  dragging.value = id; originY = pointerY = pointerAlongList(event); moved = false; dropped.value = false
   const handle = event.currentTarget as HTMLElement
   handle.focus({ preventScroll: true })
   handle.setPointerCapture(event.pointerId)
   frame = requestAnimationFrame(tick)
 }
-function motion(event: PointerEvent) { if (dragging.value) { pointerY = event.clientY; moved ||= Math.abs(pointerY - originY) > 6 } }
+function motion(event: PointerEvent) { if (dragging.value) { pointerY = pointerAlongList(event); moved ||= Math.abs(pointerY - originY) > 6 } }
 function cancelWithEscape(event: KeyboardEvent) {
   if (event.key !== 'Escape') return
   event.preventDefault()
@@ -55,6 +63,7 @@ function finish(cancel = false) {
   dragging.value = before.value = undefined; cancelAnimationFrame(frame)
 }
 onBeforeUnmount(() => { clearTimeout(movedTimer); cancelAnimationFrame(frame); window.removeEventListener('keydown', cancelWithEscape, true) })
+if (turned) watch(turned, () => finish(true))
 </script>
 <template>
   <component :is="sheet ? 'div' : 'aside'" :class="sheet ? 'queue-sheet-body' : 'queue-panel glass'" :aria-label="sheet ? undefined : 'Cola de reproducción'" @keydown.esc="dragging ? (finish(true), $event.stopPropagation()) : !sheet && (player.queueOpen = false)">

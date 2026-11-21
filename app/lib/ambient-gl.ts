@@ -50,7 +50,7 @@ export interface AmbientRenderer {
   setLyricsScrim(value: number, instant?: boolean): void
   setActive(active: boolean): void
   setPreview(pixels: Uint8ClampedArray | null): void
-  setPreviewRegion(rect: AmbientRect | null, radius?: number): void
+  setPreviewRegion(rect: AmbientRect | null, radius?: number, frameTime?: number): void
   resize(): void
   dispose(): void
 }
@@ -151,7 +151,14 @@ export function createAmbientRenderer(canvas: HTMLCanvasElement, onLost: () => v
       else previewScrim = -1
       schedule()
     },
-    setPreviewRegion(rect, radius = 16) { previewRect = rect; previewRadius = radius; schedule() },
+    setPreviewRegion(rect, radius = 16, frameTime) {
+      previewRect = rect; previewRadius = radius
+      if (frameTime === undefined) schedule()
+      else {
+        // The card is already in a frame callback. Paint its region in the same frame.
+        cancelAnimationFrame(frame); draw(frameTime)
+      }
+    },
     resize() {
       const width = Math.max(1, canvas.clientWidth), height = Math.max(1, canvas.clientHeight)
       // The image is deliberately soft: half the device resolution, capped like the native 1280×720.

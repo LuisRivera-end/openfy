@@ -1,0 +1,226 @@
+:root .app-shell.artist-chrome {
+  --muted: #ededf0;
+  --artist-glass: color-mix(in srgb, var(--artist-deep) 85%, white);
+  --artist-chrome-dark: color-mix(in srgb, var(--artist-deep) 78%, #131319);
+  --artist-line: #ffffff32;
+}
+
+:root .topbar-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: color-mix(in srgb, #fff 12%, transparent);
+  border: 1px solid #ffffff33;
+  box-shadow: inset 0 1px 0 #ffffff24;
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  cursor: pointer;
+  flex: 0 0 44px;
+  box-sizing: border-box;
+}
+
+@media (hover: hover) {
+  :root .topbar-back:hover {
+    background: color-mix(in srgb, #fff 20%, transparent);
+  }
+}
+
+:root .topbar-back:active {
+  background: color-mix(in srgb, #fff 20%, transparent);
+}
+
+:root .topbar-back:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+:root .artist-chrome .topbar {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+}
+
+/* Liquid glass: the header art (static or motion) shows through the controls. `.app-shell` outranks page-chrome.css. */
+:root .app-shell.artist-chrome .topbar :is(.search-field, .import-top, .avatar, .topbar-back) {
+  color: #fff;
+  background: color-mix(in srgb, var(--artist-deep) 28%, transparent);
+  border: 1px solid #ffffff33;
+  box-shadow: inset 0 1px 0 #ffffff24;
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+@media (hover: hover) {
+  :root .app-shell.artist-chrome .topbar :is(.search-field, .import-top, .avatar, .topbar-back):hover {
+    background: color-mix(in srgb, var(--artist-deep) 36%, transparent);
+  }
+}
+
+:root .app-shell.artist-chrome .topbar :is(.search-field, .import-top, .avatar, .topbar-back):active {
+  background: color-mix(in srgb, var(--artist-deep) 36%, transparent);
+}
+
+:root .app-shell.artist-chrome .topbar .avatar { background-clip: border-box; }
+
+:root .artist-chrome .topbar .search-field :is(svg, .icon-button),
+:root .artist-chrome .topbar .search-field input::placeholder {
+  color: #ededf0;
+  opacity: 1;
+}
+
+:root .artist-chrome .topbar .search-field input {
+  color: #fff;
+}
+
+:root .artist-chrome .topbar .search-field:focus-within {
+  outline-color: #fff;
+}
+
+/* stores/appearance.ts sets the class from the setting or the system preference, so "Activada" can force the glass. */
+:root.transparency-off .app-shell.artist-chrome .topbar :is(.search-field, .import-top, .avatar, .topbar-back) {
+  background: var(--artist-glass);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+:root.transparency-off .topbar-back { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+:root .artist-chrome > .sidebar {
+  color: #fff;
+  background: linear-gradient(165deg,
+    color-mix(in srgb, var(--artist-base) 60%, #121218),
+    var(--artist-chrome-dark) 64%);
+  border: 1px solid #ffffff16;
+}
+
+:root .app-shell.artist-chrome > :is(.player-bar, .mobile-nav).glass {
+  color: #fff;
+  background: linear-gradient(115deg,
+    color-mix(in srgb, var(--artist-base) 44%, var(--artist-chrome-dark)),
+    var(--artist-chrome-dark) 70%);
+  border-color: #ffffff22;
+}
+
+:root .artist-chrome .status-backdrop { background: var(--artist-chrome-dark); }
+:root .artist-chrome :is(.sidebar-library header, .sidebar-empty span, .connection, .seek-row, .now-playing-artist, .player-tools, .player-bar .icon-button, .mobile-nav a) { color: var(--muted); }
+:root .artist-chrome .sidebar :is(nav .current, footer .current, .collection-link.current),
+:root .artist-chrome .mobile-nav a.current { color: #fff; background: var(--artist-glass); }
+:root .artist-chrome .player-bar .icon-button.active { color: var(--artist-deep); background: #ededf0; }
+:root .artist-chrome .now-playing-open:disabled ~ .now-playing-artist { opacity: 1; }
+:root .artist-chrome .player-bar :focus-visible,
+:root .artist-chrome .topbar :focus-visible,
+:root .artist-chrome .sidebar :focus-visible,
+:root .artist-chrome .mobile-nav :focus-visible { outline-color: #fff; }
+
+:root .artist-page .artist-stage { --artist-glow-gutter: var(--artist-bleed); overflow: visible; }
+:root .artist-page .artist-stage-content { flex: 1 1 auto; min-width: 0; }
+:root .artist-page .artist-backdrop {
+  inset-block-start: calc(-1 * var(--artist-cover-offset, 0px));
+  overflow: hidden;
+  border-radius: 15px 15px 0 0;
+  mask-image: linear-gradient(#000 58%, #0000 100%);
+}
+
+:root .artist-page .has-media .artist-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, #09090bd4, #09090b3d 34%, transparent 54%);
+}
+
+
+:root .artist-page .artist-stage-content { position: relative; isolation: isolate; }
+:root .artist-page .has-media .catalog-artist-copy::before { content: none; }
+:root .artist-page .has-media .artist-stage-content::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -110px calc(-1 * var(--artist-glow-gutter)) calc(-1 * var(--artist-stage-padding));
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--artist-deep) 76%, transparent) 110px, var(--artist-base));
+  pointer-events: none;
+}
+
+:root .artist-page .catalog-artist-hero .artist-actions { padding-inline: 0; padding-top: 14px; gap: 12px; flex-wrap: wrap; }
+:root .artist-page .artist-play { flex: 0 0 56px; }
+/* Liquid glass: a translucent lens over the artist backdrop. The rim and the specular top edge come from
+   inset shadows and a gradient, so the shape keeps reading as glass where backdrop-filter is unavailable. */
+.artist-page .artist-glass-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  color: #fff;
+  border: 0;
+  border-radius: 50%;
+  isolation: isolate;
+  background:
+    linear-gradient(160deg, #ffffff38 0%, #ffffff0d 42%, #ffffff05 58%, #ffffff1f 100%),
+    color-mix(in srgb, var(--artist-deep, #101012) 34%, transparent);
+  box-shadow:
+    inset 0 1px 0 #ffffff66,
+    inset 0 -1px 0 #ffffff1a,
+    inset 0 0 0 1px #ffffff2e,
+    0 8px 22px #0000004d;
+  backdrop-filter: blur(18px) saturate(1.8) brightness(1.08);
+  -webkit-backdrop-filter: blur(18px) saturate(1.8) brightness(1.08);
+  transition: transform .14s ease, background-color .18s, box-shadow .18s;
+}
+.artist-page .artist-glass-button > svg { display: block; filter: drop-shadow(0 1px 1px #0000004d); }
+.artist-page .artist-glass-button:disabled { opacity: .45; }
+.artist-page .artist-glass-button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+.artist-page .artist-glass-button:active:not(:disabled) { transform: scale(.94); }
+
+@media (hover: hover) {
+  .artist-page .artist-glass-button:hover:not(:disabled) {
+    box-shadow: inset 0 1px 0 #ffffff80, inset 0 -1px 0 #ffffff26, inset 0 0 0 1px #ffffff47, 0 10px 26px #00000059;
+    background:
+      linear-gradient(160deg, #ffffff4d 0%, #ffffff17 42%, #ffffff0a 58%, #ffffff29 100%),
+      color-mix(in srgb, var(--artist-deep, #101012) 28%, transparent);
+  }
+}
+:root.transparency-off .artist-page .artist-glass-button { background: var(--artist-glass, #252635); backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  :root .artist-page .artist-backdrop { border-radius: 0; }
+  :root .artist-page .artist-stage { --artist-glow-gutter: var(--gutter, 16px); }
+  :root .artist-page .catalog-artist-hero .artist-stage { min-height: clamp(300px, 88vw, 370px); }
+  :root .artist-page .has-portrait .artist-stage { align-items: center; }
+  :root .artist-page .catalog-artist-hero .artist-actions { gap: 8px; }
+  :root .artist-page .has-portrait .artist-stage .artist-portrait { width: clamp(76px, 25vw, 112px); }
+  :root .artist-page .has-portrait .artist-stage .artist-play { flex-basis: 44px; width: 44px; height: 44px; }
+  :root .artist-page .has-portrait .artist-stage .artist-glass-button { flex-basis: 40px; width: 40px; height: 40px; }
+}
+
+/* Phones: the header centres like Apple Music's mobile web artist page. Portrait (when there is no banner), name and
+   actions stack on one axis; play takes the middle column with info on its left and shuffle on its right, and the side
+   columns keep their width when info is missing so play stays centred. */
+@media (max-width: 760px) {
+  :root .artist-page .catalog-artist-hero .artist-stage { flex-direction: column; align-items: center; justify-content: flex-end; text-align: center; }
+  :root .artist-page .catalog-artist-hero .artist-stage-content { width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; }
+  :root .artist-page .catalog-artist-hero .catalog-artist-copy { max-width: 100%; }
+  :root .artist-page .has-portrait .artist-stage .artist-portrait { width: clamp(132px, 42vw, 180px); margin-bottom: 4px; }
+  :root .artist-page .catalog-artist-hero .artist-actions {
+    display: grid;
+    grid-template-columns: 40px 56px 40px;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    padding-top: 16px;
+  }
+  :root .artist-page .catalog-artist-hero .artist-actions > .artist-play { grid-column: 2; grid-row: 1; width: 56px; height: 56px; }
+  :root .artist-page .catalog-artist-hero .artist-actions > .artist-info-button { grid-column: 1; grid-row: 1; }
+  :root .artist-page .catalog-artist-hero .artist-actions > .artist-glass-button:not(.artist-info-button) { grid-column: 3; grid-row: 1; }
+  :root .artist-page .catalog-artist-hero .artist-actions > .artist-glass-button { width: 40px; height: 40px; }
+  :root .artist-page .has-portrait .artist-stage .artist-play { flex-basis: auto; width: 56px; height: 56px; }
+  :root .artist-page .has-portrait .artist-stage .artist-glass-button { flex-basis: auto; width: 40px; height: 40px; }
+}

@@ -1,17 +1,25 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { statSync } from 'node:fs'
 import { mkdtemp, copyFile, writeFile, rm, access } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { dataPaths, getDatabase, closeDatabase } from '../../server/database'
-import { imports, tracks } from '../../server/database/schema'
+import { assets, imports, playlists, tracks, youtubeAudio, youtubeSongs } from '../../server/database/schema'
 import { importFile } from '../../server/utils/importer'
 import { convertTrack, setPlaybackActivity, resumeConversions } from '../../server/utils/workers'
-import { readLibrary } from '../../server/utils/library'
+import { readLibrary, readLibraryAsync } from '../../server/utils/library'
 import { generateAudio } from '../helpers/audio'
 import sharp from 'sharp'
 import { scanTrackGenres } from '../../server/utils/genres'
+import { ingestListening, recentlyPlayed } from '../../server/utils/telemetry'
+import { listeningDay } from '../../shared/utils/telemetry'
+
+vi.mock('node:fs', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs')>()
+  return { ...fs, statSync: vi.fn(fs.statSync) }
+})
 
 let root: string
 async function importFixture(source: string, filename: string) {
@@ -122,4 +130,47 @@ describe('local library and conversion', () => {
     expect(readLibrary().tracks.find(t => t.id === track.id)?.conversion).toBe('pending')
     resumeConversions()
   })
+})
+
+it('verifies only recent audio, once per asset, and rechecks disk changes on the next read', async () => {
+  const db = getDatabase(), { originals } = dataPaths()
+  const localFavorites = readLibrary().tracks.filter(track => track.favorite).length
+  const shared = { id: randomUUID(), filename: 'shared.m4a', bytes: 3, mime: 'audio/mp4', hash: 'shared', variant: 'original' as const }
+  const unrelated = { ...shared, id: randomUUID(), filename: 'unrelated.m4a', hash: 'unrelated' }
+  const sharedPath = join(originals, shared.filename), unrelatedPath = join(originals, unrelated.filename)
+  await writeFile(sharedPath, 'abc'); await writeFile(unrelatedPath, 'abc')
+  db.insert(assets).values([shared, unrelated]).run()
+  const songs = ['aaaaaaaaaaa', 'bbbbbbbbbbb', 'ccccccccccc'].map(videoId => ({ videoId, title: 'Horizonte', artists: ['Openfy'], album: null, artwork: 'catalog.jpg', duration: 100 }))
+  const startedAt = Date.parse('2026-11-12T07:00:00Z'), deviceId = randomUUID()
+  db.insert(youtubeSongs).values(songs.map((song, i) => ({ videoId: song.videoId, song, favorite: i === 2, addedAt: startedAt }))).run()
+  db.insert(youtubeAudio).values(songs.map((song, i) => ({ videoId: song.videoId, assetId: i === 2 ? unrelated.id : shared.id,
+    duration: 101, artwork: `download-${i}.jpg`, palette: ['#000000'], downloadedAt: startedAt }))).run()
+  const playlist = { id: randomUUID(), name: 'Para correr', trackIds: [`youtube:${songs[1]!.videoId}`, `youtube:${songs[0]!.videoId}`], revision: 1, updatedAt: startedAt }
+  db.insert(playlists).values(playlist).run()
+  ingestListening(songs.map((song, i) => ({ id: randomUUID(), deviceId, sequence: 1, entry: { source: 'youtube', song },
+    startedAt, updatedAt: startedAt + 1000 + i, durationMs: 100000, listenedMs: 1000, days: { [listeningDay(startedAt)]: 1000 }, qualifiedAt: null,
+    context: i === 1 ? { kind: 'playlist', id: playlist.id } : i === 2 ? { kind: 'favorites' } : { kind: 'song' } })))
+
+  await expect(readLibraryAsync()).resolves.toEqual(readLibrary())
+  const checkedPaths = () => vi.mocked(statSync).mock.calls.map(([path]) => path).filter(path => path === sharedPath || path === unrelatedPath)
+  vi.mocked(statSync).mockClear()
+  const result = recentlyPlayed()
+  expect(result.items).toMatchObject([
+    { key: 'favorites', subtitle: `${localFavorites + 1} canciones` },
+    { key: `playlist:${playlist.id}`, artwork: 'download-1.jpg' },
+    { key: `song:youtube:${songs[0]!.videoId}`, artwork: 'download-0.jpg', item: { artwork: 'download-0.jpg', duration: 101, palette: ['#000000'], format: 'AAC' } },
+  ])
+  expect(checkedPaths()).toEqual([sharedPath])
+
+  await writeFile(sharedPath, 'a')
+  vi.mocked(statSync).mockClear()
+  expect(recentlyPlayed().items.slice(1)).toMatchObject([
+    { artwork: 'catalog.jpg' }, { artwork: 'catalog.jpg', item: { duration: 100, format: 'YouTube Music' } },
+  ])
+  expect(checkedPaths()).toEqual([sharedPath])
+
+  await rm(sharedPath)
+  expect(recentlyPlayed().items[2]?.item?.format).toBe('YouTube Music')
+  await writeFile(sharedPath, 'abc')
+  expect(recentlyPlayed()).toEqual(result)
 })

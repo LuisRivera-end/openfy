@@ -217,6 +217,7 @@ export async function getYouTubeAlbum(id: string): Promise<YouTubeAlbumDetail> {
     if (!title) throw new MusicProviderError('NOT_FOUND', 'Este álbum no está disponible.', 404)
     const modern = header instanceof YTNodes.MusicResponsiveHeader ? header : undefined
     const classic = header instanceof YTNodes.MusicDetailHeader ? header : undefined
+    const description = musicText(modern?.description?.description ?? classic?.description) || null
     const yearText = classic?.year || musicText(header?.subtitle).match(/\b\d{4}\b/)?.[0]
     const album: YouTubeAlbum = { id, title, artists: modern ? headerArtistReferences(modern.strapline_text_one) : artistReferences(classic?.author ? [classic.author] : []),
       artwork: musicArtwork(modern?.thumbnail?.contents || classic?.thumbnails), year: yearText && /^\d{4}$/.test(yearText) ? Number(yearText) : null }
@@ -236,7 +237,7 @@ export async function getYouTubeAlbum(id: string): Promise<YouTubeAlbumDetail> {
         if (emptyBatches >= 3) throw new MusicProviderError('SEARCH_STALLED', 'No se pudieron completar las pistas del álbum. Vuelve a intentarlo.')
         batch = await batch.next()
       }
-      return { ...album, songs }
+      return { ...album, songs, description }
     }
     const songs = normalizeSongs(page.contents, album)
     const seen = new Set(songs.map(song => song.videoId))
@@ -252,6 +253,6 @@ export async function getYouTubeAlbum(id: string): Promise<YouTubeAlbumDetail> {
       if (emptyBatches >= 3 && next.continuation) throw new MusicProviderError('SEARCH_STALLED', 'No se pudieron completar las pistas del álbum. Vuelve a intentarlo.')
       continuation = next.continuation || undefined
     }
-    return { ...album, songs }
+    return { ...album, songs, description }
   })
 }

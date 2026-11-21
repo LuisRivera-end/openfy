@@ -35,6 +35,18 @@ public sealed partial class MainViewModel
         Listening.Sample(Engine.Position, Engine.Duration, Engine.Playing && !Engine.Buffering);
     }
     private async Task SaveListeningAsync() { await Listening.CheckpointAsync(); await Listening.FlushAsync(); }
+    private DateTime lastTelemetryRefresh = DateTime.MinValue;
+    private bool telemetryRefreshQueued;
+    // Every listening checkpoint (about every 10 s while playing, from any device) emits telemetryChanged, and the refresh
+    // runs history-wide queries on the server: coalesce them to at most one a minute. UI thread only.
+    private void QueueTelemetryRefresh()
+    {
+        if (telemetryRefreshQueued) return;
+        var wait = TimeSpan.FromMinutes(1) - (DateTime.UtcNow - lastTelemetryRefresh);
+        if (wait <= TimeSpan.Zero) { lastTelemetryRefresh = DateTime.UtcNow; _ = RefreshListeningAsync(); return; }
+        telemetryRefreshQueued = true;
+        _ = Task.Delay(wait).ContinueWith(_ => ui(() => { telemetryRefreshQueued = false; lastTelemetryRefresh = DateTime.UtcNow; _ = RefreshListeningAsync(); }), TaskScheduler.Default);
+    }
     public Task RefreshListeningAsync(CancellationToken cancellation = default)
     {
         if (listeningRefreshTask is { IsCompleted: false }) return listeningRefreshTask;

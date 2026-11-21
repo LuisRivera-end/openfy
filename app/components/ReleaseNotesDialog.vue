@@ -16,7 +16,7 @@ function date(value: string) {
         <h3>Versión {{ release.version }} <span>· {{ date(release.date) }}</span></h3>
         <p v-if="release.summary">{{ release.summary }}</p>
         <ul>
-          <li v-for="(item, index) in release.items" :key="index"><span class="release-tag" :class="item.type">{{ RELEASE_NOTE_LABELS[item.type] }}</span><span>{{ item.text }}</span></li>
+          <li v-for="(item, index) in release.items" :key="index"><span class="release-tag" :data-type="item.type">{{ RELEASE_NOTE_LABELS[item.type] }}</span><span>{{ item.text }}</span></li>
         </ul>
       </section>
     </div>

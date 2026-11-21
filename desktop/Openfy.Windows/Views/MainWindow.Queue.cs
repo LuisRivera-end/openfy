@@ -1,6 +1,7 @@
 ﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Openfy.Windows.ViewModels;
@@ -8,27 +9,32 @@ using Openfy.Windows.ViewModels;
 namespace Openfy.Windows.Views;
 public sealed partial class MainWindow
 {
+    // One queue view for the window's lifetime: a ListView built per opening was never collected
+    // (measured ~0.3 MB and ~2 handles per opening), so the panel is reused instead of rebuilt.
+    private Grid? queuePanel;
+    private Action? queueRefresh;
     private FrameworkElement QueueView()
     {
+        if (queuePanel != null) { queueRefresh?.Invoke(); return queuePanel; }
         var panel = new Grid { RowSpacing = 8 };
-        panel.RowDefinitions.Add(new() { Height = GridLength.Auto }); panel.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var count = Ui.Muted("", 12); panel.Children.Add(count);
+        panel.RowDefinitions.Add(new() { Height = GridLength.Auto }); panel.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
+        var count = Ui.Text("", 12); count.Foreground = panelMuted; panel.Children.Add(count);
         var rows = new ListView {
             ItemsSource = model.Upcoming, IsItemClickEnabled = true, CanDragItems = true, CanReorderItems = true, AllowDrop = true,
             SelectionMode = ListViewSelectionMode.Single, HorizontalContentAlignment = HorizontalAlignment.Stretch,
             // The right inset keeps the overlay scrollbar off the rows, so hover and selection boxes are never cut.
-            MaxHeight = Math.Max(150, root.ActualHeight - 275), Padding = new(0, 0, 14, 0)
+            Padding = new(0, 0, 14, 0)
         };
         QueueStates(rows);
         rows.ItemContainerStyle = (Style)XamlReader.Load("""
         <Style xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ListViewItem"><Setter Property="Padding" Value="8,0,4,0"/><Setter Property="Margin" Value="0,1"/><Setter Property="CornerRadius" Value="8"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="MinHeight" Value="64"/></Style>
         """);
-        rows.ItemTemplate = (DataTemplate)XamlReader.Load("""
+        rows.ItemTemplate = (DataTemplate)XamlReader.Load($$"""
         <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid Padding="0,8" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/><ColumnDefinition Width="30"/><ColumnDefinition Width="30"/></Grid.ColumnDefinitions>
-        <TextBlock Text="⠿" Foreground="#A1A1AA" VerticalAlignment="Center" FontSize="20"/>
+        <TextBlock Text="⠿" Foreground="{{PanelMutedColor}}" Opacity="0.45" VerticalAlignment="Center" FontSize="20"/>
         <ContentControl Grid.Column="1" Content="{Binding}" ContentTemplate="{StaticResource TrackCoverTemplate}" IsTabStop="False"/>
-        <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Artist}" FontSize="11" Foreground="#A1A1AA" TextTrimming="CharacterEllipsis"/></StackPanel>
-        <TextBlock Grid.Column="3" Text="{Binding Length}" FontSize="10" Foreground="#A1A1AA" VerticalAlignment="Center"/>
+        <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center"><TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Artist}" FontSize="11" Foreground="{{PanelMutedColor}}" TextTrimming="CharacterEllipsis"/></StackPanel>
+        <TextBlock Grid.Column="3" Text="{Binding Length}" FontSize="10" Foreground="{{PanelMutedColor}}" VerticalAlignment="Center"/>
         <Button Grid.Column="4" Content="⋯" Width="30" Height="44" MinWidth="0" Padding="0" Background="Transparent" BorderThickness="0"/>
         </Grid></DataTemplate>
         """);
@@ -45,6 +51,8 @@ public sealed partial class MainWindow
             if (args.ItemContainer.ContentTemplateRoot is not Grid template) return;
             if (args.InRecycleQueue) { Ui.ReleaseTree(template); return; }
             if (args.Item is not SongRow song) return;
+            if (Ui.Find<ListViewItemPresenter>(args.ItemContainer) is { } presenter) presenter.CornerRadius = new(8);
+            if (template.Children[0] is TextBlock grip) StyleQueueGrip(args.ItemContainer, grip);
             if (template.Children.OfType<Button>().FirstOrDefault() is { } options) {
                 Ui.ReleaseTree(options); AutomationProperties.SetName(options, "Opciones de " + song.Title);
                 RoutedEventHandler click = (_, _) => Menu(song, options); options.Click += click; Ui.OnRelease(options, () => options.Click -= click);
@@ -67,8 +75,34 @@ public sealed partial class MainWindow
             if (alt && rows.SelectedItem is SongRow row && args.Key is global::Windows.System.VirtualKey.Up or global::Windows.System.VirtualKey.Down) { model.MoveUpcoming(row.Entry.QueueId!, args.Key == global::Windows.System.VirtualKey.Up ? -1 : 1); args.Handled = true; }
         };
         void Refresh() { if (draggedId != null) return; count.Text = model.Upcoming.Count == 0 ? "No hay más canciones en la cola." : model.Upcoming.Count + " canciones pendientes"; }
-        model.QueueChanged += Refresh; Ui.OnRelease(panel, () => model.QueueChanged -= Refresh); Refresh();
-        Grid.SetRow(rows, 1); panel.Children.Add(rows); return panel;
+        model.QueueChanged += Refresh; Refresh();
+        Grid.SetRow(rows, 1); panel.Children.Add(rows);
+        queuePanel = panel; queueRefresh = Refresh;
+        return panel;
+    }
+
+    private static void StyleQueueGrip(SelectorItem container, TextBlock grip)
+    {
+        Ui.ReleaseTree(grip);
+        bool over = false, focused = container.FocusState != FocusState.Unfocused;
+        void Update() => grip.Opacity = over || focused ? 1 : .45;
+        PointerEventHandler entered = (_, _) => { over = true; Update(); };
+        PointerEventHandler exited = (_, _) => { over = false; Update(); };
+        RoutedEventHandler gotFocus = (_, _) => { focused = true; Update(); };
+        RoutedEventHandler lostFocus = (_, _) => { focused = false; Update(); };
+        container.PointerEntered += entered;
+        container.PointerExited += exited;
+        container.PointerCanceled += exited;
+        container.GotFocus += gotFocus;
+        container.LostFocus += lostFocus;
+        Ui.OnRelease(grip, () => {
+            container.PointerEntered -= entered;
+            container.PointerExited -= exited;
+            container.PointerCanceled -= exited;
+            container.GotFocus -= gotFocus;
+            container.LostFocus -= lostFocus;
+        });
+        Update();
     }
 
     /// <summary>
@@ -78,7 +112,7 @@ public sealed partial class MainWindow
     private static void QueueStates(ListView rows)
     {
         var states = new Dictionary<string, string> {
-            ["ListViewItemBackgroundPointerOver"] = "#FFFFFF0D", ["ListViewItemBackgroundPressed"] = "#FFFFFF17",
+            ["ListViewItemBackgroundPointerOver"] = "#FFFFFF0F", ["ListViewItemBackgroundPressed"] = "#FFFFFF17",
             ["ListViewItemBackgroundSelected"] = "#1ED7601C", ["ListViewItemBackgroundSelectedPointerOver"] = "#1ED76026", ["ListViewItemBackgroundSelectedPressed"] = "#1ED76033",
             ["ListViewItemSelectionIndicatorBrush"] = "#1ED760", ["ListViewItemSelectionIndicatorPointerOverBrush"] = "#1ED760", ["ListViewItemSelectionIndicatorPressedBrush"] = "#1ED760",
             ["ListViewItemForegroundSelected"] = "#F4F4F5", ["ListViewItemDragBackground"] = "#2C2C33", ["ListViewItemDragForeground"] = "#F4F4F5",

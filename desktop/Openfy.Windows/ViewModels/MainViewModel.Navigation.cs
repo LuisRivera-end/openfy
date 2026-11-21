@@ -26,6 +26,7 @@ public sealed partial class MainViewModel
 
     private CancellationToken BeginContentNavigation(string target, bool showLoading = true)
     {
+        EndAlbumPresentation();
         CancelSearchLoads();
         searchCancellation?.Cancel(); searchCancellation?.Dispose(); searchCancellation = new();
         contentGeneration++; page = target; PageLoadError = "";
@@ -71,6 +72,124 @@ public sealed partial class MainViewModel
     private string LocalNavigationKey(string target, string? id) => target + ":" + (target == "playlist" ? id ?? playlistId : target == "localalbum" ? localAlbumId : target == "localartist" ? localArtistName : "");
     private readonly Dictionary<string, (DateTime At, ArtistProfile Value)> artistPages = new();
     private readonly Dictionary<string, (DateTime At, AlbumDetail Value)> albumPages = new();
+    private const long AlbumRetryDelay = 15 * 60_000;
+    private sealed class AlbumPresentationCache
+    {
+        public AlbumDescription? Description;
+        public AlbumPresentationColors? Colors;
+        public long MetadataRetryAt, MotionRetryAt;
+    }
+
+    private readonly Dictionary<string, AlbumPresentationCache> albumPresentations = [];
+    private AlbumPresentationRequest? albumPresentationRequest;
+    private AlbumPresentationCache? currentAlbumPresentation;
+    private AlbumDescription? albumDetailDescription;
+    private CancellationTokenSource? albumPresentationCancellation;
+    private bool albumMetadataLoading, albumMotionLoading, albumMotionRetried;
+    public event Action? AlbumPresentationChanged;
+    public AlbumDescription? CatalogAlbumDescription => currentAlbumPresentation?.Description is { Source: "apple" } editorial
+        ? editorial : albumDetailDescription ?? currentAlbumPresentation?.Description;
+    public string? AlbumArtworkColor => currentAlbumPresentation?.Colors?.Background;
+    public MotionArtResult? AlbumMotion { get; private set; }
+    public bool AlbumMetadataLoading => albumMetadataLoading;
+    public int? CatalogAlbumYear { get; private set; }
+    public ArtistRef[] CatalogAlbumArtists { get; private set; } = [];
+
+    private void EndAlbumPresentation()
+    {
+        albumPresentationCancellation?.Cancel();
+        albumPresentationCancellation?.Dispose();
+        albumPresentationCancellation = null;
+        albumPresentationRequest = null;
+        currentAlbumPresentation = null;
+        albumDetailDescription = null;
+        AlbumMotion = null;
+        albumMetadataLoading = albumMotionLoading = albumMotionRetried = false;
+    }
+
+    private void BeginAlbumPresentation(string key, AlbumPresentationRequest? request, string? youtubeDescription = null)
+    {
+        EndAlbumPresentation();
+        albumDetailDescription = string.IsNullOrWhiteSpace(youtubeDescription) ? null : new(youtubeDescription, "youtube");
+        if (request == null) return;
+        if (!albumPresentations.TryGetValue(key, out var cached))
+        {
+            if (albumPresentations.Count >= 96) albumPresentations.Remove(albumPresentations.Keys.First());
+            albumPresentations[key] = cached = new();
+        }
+        currentAlbumPresentation = cached;
+        albumPresentationRequest = request;
+        albumPresentationCancellation = new();
+        _ = LoadAlbumPresentationAsync(motion: false);
+    }
+
+    public Task RequestAlbumMotionAsync() => LoadAlbumPresentationAsync(motion: true);
+
+    public bool InvalidateAlbumMotionForRetry(string url)
+    {
+        if (albumMotionRetried || currentAlbumPresentation is not { } cached || AlbumMotion?.Url != url) return false;
+        albumMotionRetried = true;
+        AlbumMotion = null;
+        cached.MotionRetryAt = 0;
+        return true;
+    }
+
+    private async Task LoadAlbumPresentationAsync(bool motion)
+    {
+        if (albumPresentationRequest is not { } request || currentAlbumPresentation is not { } cached
+            || albumPresentationCancellation is not { } lifetime) return;
+        long now = Environment.TickCount64;
+        if (albumMetadataLoading || (motion ? albumMotionLoading || AlbumMotion is { Status: "ready", Url.Length: > 0 }
+            || now < cached.MotionRetryAt : now < cached.MetadataRetryAt)) return;
+        if (motion) albumMotionLoading = true;
+        else albumMetadataLoading = true;
+        int own = contentGeneration;
+        var cancellation = lifetime.Token;
+        try
+        {
+            var (result, retry) = await Api.AlbumPresentationAsync(request with { Motion = motion }, cancellation);
+            if (own != contentGeneration || cancellation.IsCancellationRequested) return;
+            now = Environment.TickCount64;
+            if (result.Colors is { } colors) cached.Colors = colors;
+            if (result.Description is { } description && !string.IsNullOrWhiteSpace(description.Text)
+                && (cached.Description?.Source != "apple" || description.Source == "apple")) cached.Description = description;
+            if (motion)
+            {
+                AlbumMotion = result.Motion;
+                cached.MotionRetryAt = result.Motion is { Status: "ready", Url.Length: > 0 } ? 0
+                    : now + Math.Max(1_000, result.Motion.RetryAfterMs > 0 ? result.Motion.RetryAfterMs : retry > 0 ? retry : AlbumRetryDelay);
+            }
+            if (!motion || retry == 0)
+                cached.MetadataRetryAt = now + (retry > 0 ? retry : cached.Colors != null || cached.Description?.Source == "apple" ? 7 * 86_400_000L : 86_400_000L);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            if (own != contentGeneration || cancellation.IsCancellationRequested) return;
+            long retryAt = Environment.TickCount64 + (error.Data["RetryAfterMs"] is long retry ? retry : AlbumRetryDelay);
+            if (motion) cached.MotionRetryAt = retryAt;
+            else cached.MetadataRetryAt = retryAt;
+        }
+        finally
+        {
+            if (own == contentGeneration && !cancellation.IsCancellationRequested)
+            {
+                if (motion) albumMotionLoading = false;
+                else albumMetadataLoading = false;
+                Description = CatalogAlbumDescription?.Text ?? "";
+                AlbumPresentationChanged?.Invoke();
+            }
+        }
+    }
+
+    private static AlbumPresentationRequest? YouTubeAlbumPresentation(string? id, IEnumerable<string> artists, string title)
+    {
+        var names = artists.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct().Take(20).ToArray();
+        return names.Length == 0 || string.IsNullOrWhiteSpace(title) ? null : new("youtube", AlbumId: id, Artists: names, Album: title);
+    }
+
+    private static ArtistRef[] AlbumTrackArtists(YouTubeSong? song) => song == null ? []
+        : song.ArtistRefs is { Length: > 0 } refs ? refs : song.Artists.Select(name => new ArtistRef(null, name)).ToArray();
     private static T? CachedPage<T>(Dictionary<string, (DateTime At, T Value)> cache, string id) where T : class
         => cache.TryGetValue(id, out var entry) && DateTime.UtcNow - entry.At < TimeSpan.FromMinutes(3) ? entry.Value : null;
     private static void RememberPage<T>(Dictionary<string, (DateTime At, T Value)> cache, string id, T value) where T : class

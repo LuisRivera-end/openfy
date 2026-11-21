@@ -37,7 +37,8 @@ public record YouTubeArtist(string Id, string Name, string? Artwork);
 public record YouTubeAlbum(string Id, string Title, ArtistRef[] Artists, string? Artwork, int? Year);
 public record ArtistProfile(string Id, string Name, string? Artwork, string? Description, YouTubeSong[] TopSongs,
     YouTubeAlbum[] Albums, YouTubeAlbum[] Singles, Dictionary<string, bool> Expandable, string? Banner = null, YouTubeArtist[]? Similar = null);
-public record AlbumDetail(string Id, string Title, ArtistRef[] Artists, string? Artwork, int? Year, YouTubeSong[] Songs);
+public record AlbumDetail(string Id, string Title, ArtistRef[] Artists, string? Artwork, int? Year, YouTubeSong[] Songs,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null);
 public record SongPage(YouTubeSong[] Songs, string? NextCursor);
 public record ArtistPage(YouTubeArtist[] Artists, string? NextCursor);
 public record ReleasePage(YouTubeAlbum[] Albums, string? NextCursor);
@@ -49,6 +50,8 @@ public record PlaybackEntry(string Source, [property: JsonIgnore(Condition = Jso
 }
 public record PlaybackSnapshot(int Version, List<PlaybackEntry> Queue, int Index, double Position, string Repeat, bool Shuffle, double Volume, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] List<string>? OriginalOrder = null)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool RepeatShuffleMigrated { get; init; }
     public static PlaybackSnapshot Empty => new(2, [], 0, 0, "off", false, .75);
 }
 /// <summary>A timed fragment of a line; fragments concatenate to the line text (shared/types/lyrics.ts).</summary>
@@ -72,11 +75,43 @@ public sealed class DesktopSettings
     public bool CompactLyrics { get; set; } = true;
     /// <summary>Fullscreen replaces the cover with the album's looping video when it has one.</summary>
     public bool MotionArt { get; set; } = true;
+    private string transparency = "default";
+    [JsonConverter(typeof(TransparencyValueConverter))]
+    public string Transparency
+    {
+        get => transparency;
+        set => transparency = value is "on" or "off" ? value : "default";
+    }
     public Dictionary<string, WindowPlacement> Windows { get; set; } = [];
     public Dictionary<string, LibraryFilters> LibraryFilters { get; set; } = [];
+
+    private sealed class TransparencyValueConverter : JsonConverter<string>
+    {
+        public override string Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String) return reader.GetString()!;
+            reader.Skip();
+            return "default";
+        }
+
+        public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+            => writer.WriteStringValue(value);
+    }
 }
 /// <summary>POST /api/motion/resolve: "ready", verified "none", or retryable "unmatched" (shared/types/music.ts).</summary>
 public record MotionArtResult(string Status, string? Url = null, int Width = 0, int Height = 0, long RetryAfterMs = 0);
+public record AlbumDescription(string Text, string Source);
+public record AlbumPresentationColors(string Background, string? Text1, string? Text2, string? Text3, string? Text4);
+public record AlbumPresentation(MotionArtResult Motion, AlbumDescription? Description = null, AlbumPresentationColors? Colors = null);
+public record AlbumPresentationRequest(
+    string Source,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TrackId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? AlbumId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Artists = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Album = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool Motion = false);
+/// <summary>Entry of POST /api/motion/resolve for an artist header video (shared/types/music.ts ArtistMotionEntry).</summary>
+public record ArtistMotionEntry(string Name, string[] Albums, string? ArtistId = null) { public string Source => "artist"; }
 public record ArtworkResult(string Path, string[] Palette, int Width = 0, int Height = 0, string Key = "");
 public record AssetPath(string Path);
 public record BackendStatus(bool Online, bool ConversionPaused, string Version, string? DesktopInstance);

@@ -87,6 +87,18 @@ import java.util.Collections
         dismissButton={ TextButton(onClick=dismiss) { Text("Cancelar") } })
 }
 
+private data class SongMetadataKey(val id: String, val metadata: String)
+private val genreCache = object : LinkedHashMap<SongMetadataKey, List<String>>(128, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<SongMetadataKey, List<String>>?) = size > 2000
+}
+private fun songGenres(song: Song): List<String> = synchronized(genreCache) {
+    genreCache.getOrPut(SongMetadataKey(song.id, song.metadata)) {
+        runCatching {
+            Json.parseToJsonElement(song.metadata).jsonObject["genres"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }
+        }.getOrNull().orEmpty()
+    }
+}
+
 @kotlinx.serialization.Serializable
 internal data class Filters(val source: String = "all",val downloaded: Boolean = false,val favorite: Boolean = false,
     val artist: String = "",val album: String = "",val genre: String = "",val sort: String = "default",val descending: Boolean = false) {
@@ -99,7 +111,7 @@ internal data class Filters(val source: String = "all",val downloaded: Boolean =
         val filtered=songs.filter { song ->
             (source=="all" || song.source==source) && (!downloaded || song.offlineReady) && (!favorite || song.favorite) &&
                 song.artist.contains(artist,true) && song.album.contains(album,true) &&
-                (genre.isBlank() || runCatching { Json.parseToJsonElement(song.metadata).jsonObject["genres"]?.jsonArray?.any { it.jsonPrimitive.content.contains(genre,true) }==true }.getOrDefault(false)) && "${song.title} ${song.artist} ${song.album}".contains(query,true)
+                (genre.isBlank() || songGenres(song).any { it.contains(genre,true) }) && "${song.title} ${song.artist} ${song.album}".contains(query,true)
         }
         val comparator: Comparator<Song>?=when(sort) { "title" -> compareBy { it.title.lowercase() }; "artist" -> compareBy { it.artist.lowercase() }; "album" -> compareBy { it.album.lowercase() }
             "duration" -> compareBy { it.duration }; "plays" -> compareBy { stats[it.id]?.sumOf { row -> row.plays } ?: 0 }

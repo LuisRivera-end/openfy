@@ -76,6 +76,12 @@ export interface AudioDownloadJob {
   updatedAt: number
 }
 
+export interface OfflineAlbumPresentation {
+  description?: { text: string; source: 'apple' | 'youtube' }
+  colors?: AlbumPresentationColors
+  dominant?: string | null
+}
+
 export interface OfflineCollection {
   key: string
   kind: 'album' | 'playlist'
@@ -86,6 +92,7 @@ export interface OfflineCollection {
   revision: number | null
   enabled: boolean
   updatedAt: number
+  presentation?: OfflineAlbumPresentation
 }
 
 export interface LibraryItem extends NowPlaying { entry: PlaybackEntry; addedAt?: number; albumId?: string }
@@ -168,7 +175,7 @@ export interface YouTubeArtistProfile extends YouTubeArtist {
   singles: YouTubeAlbum[]
   expandable: { songs: boolean; albums: boolean; singles: boolean }
 }
-export interface YouTubeAlbumDetail extends YouTubeAlbum { songs: YouTubeSong[] }
+export interface YouTubeAlbumDetail extends YouTubeAlbum { songs: YouTubeSong[]; description?: string | null }
 export interface ArtistReleaseResults { albums: YouTubeAlbum[]; nextCursor: string | null }
 
 export type PlaybackEntry = ({ source: 'local'; trackId: string } | { source: 'youtube'; song: YouTubeSong }) & { queueId?: string; context?: ListeningContext }
@@ -180,6 +187,7 @@ export interface PlaybackSnapshotV2 extends Omit<PlaybackSnapshot, 'queue'> {
 export interface PlaybackSnapshotV3 extends Omit<PlaybackSnapshotV2, 'version'> {
   version: 3
   originalOrder: string[]
+  repeatShuffleMigrated?: boolean
 }
 
 export type NowPlaying = Pick<Track, 'id' | 'title' | 'artist' | 'album' | 'artwork' | 'palette' | 'duration' | 'favorite' | 'format'> & {
@@ -187,9 +195,33 @@ export type NowPlaying = Pick<Track, 'id' | 'title' | 'artist' | 'album' | 'artw
   source: 'local' | 'youtube'
 }
 
+/** Body of POST /api/motion/resolve for an artist's editorial header video (16:9). Album titles disambiguate namesakes. */
+export interface ArtistMotionEntry { source: 'artist'; artistId?: string; name: string; albums: string[] }
+
+/** Page colours of an artist, from shared/utils/artist-theme.ts (pinned by tests/fixtures/artist-theme-contract.json). */
+export interface ArtistTheme { base: string; secondary: string; deep: string; surface: string; neutral: boolean }
+
 /** The looping video that replaces the cover in the desktop Big Picture, when the album has one. */
 export type MotionArtResult = { status: 'ready'; url: string; width: number; height: number }
   | { status: 'none'; retryAfterMs?: number } | { status: 'unmatched'; retryAfterMs: number }
+
+export interface AlbumPresentationColors {
+  background: string
+  text1: string | null
+  text2: string | null
+  text3: string | null
+  text4: string | null
+}
+
+export interface AlbumPresentation {
+  motion: MotionArtResult
+  description?: { text: string; source: 'apple' | 'youtube' }
+  colors?: AlbumPresentationColors
+}
+
+export type AlbumPresentationRequest =
+  | { source: 'local'; trackId: string; motion?: boolean }
+  | { source: 'youtube'; albumId?: string; artists: string[]; album: string; motion?: boolean }
 
 export interface PlaybackEvent {
   at: number

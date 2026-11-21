@@ -13,6 +13,7 @@ public sealed partial class PlayerWindow
     private Canvas? picturePresentation;
     private (double Width, double Height, bool Idle, bool Card, string Layout)? presentationKey;
     private Rect presentationArtBounds, presentationLyricsBounds;
+    private Rect? presentationColumnBounds;
     private double pictureScale = 1;
     private bool presentationQueued;
 
@@ -77,6 +78,13 @@ public sealed partial class PlayerWindow
         double infoX = column ? x : Math.Max(content.Left, copy.X - copy.Width * (scale - 1) / 2);
         double infoWidth = Math.Min(copy.Width, (content.Right - infoX) / scale);
         info.Width = infoWidth; Move(pictureInfoView, infoX, infoY, infoWidth, copy.Height);
+        if (cover) {
+            double colX = Math.Min(x, infoX);
+            double colRight = Math.Max(x + side, infoX + infoWidth * scale);
+            double colBottom = Math.Max(y + side, infoY + copy.Height * scale + 40 * scale);
+            presentationColumnBounds = new Rect(colX, y, Math.Max(0, colRight - colX), Math.Max(0, colBottom - y));
+        }
+        else presentationColumnBounds = null;
         // The enlarged artwork keeps the full-size gap; the lyrics shift into the empty outer margin instead of narrowing.
         double gap = Math.Max(32, lyrics.X - art.Right);
         double left = split ? Math.Max(lyrics.X, x + side + gap) : lyrics.X;
@@ -122,5 +130,9 @@ public sealed partial class PlayerWindow
         }
     }
 
-    private void ReleasePresentation() => lyricsScroll.ViewChanged -= LyricsDepthChanged;
+    private void ReleasePresentation()
+    {
+        presentationColumnBounds = null;
+        lyricsScroll.ViewChanged -= LyricsDepthChanged;
+    }
 }

@@ -24,6 +24,7 @@ public record SongRow(PlaybackEntry Entry, string Title, string Artist, string A
 
 public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
+    private const int RepeatShuffleRecoveryMatches = 5;
     public BackendClient Api { get; private set; } = new();
     public BackendHost Host { get; }
     private ArtworkService? artworkService;
@@ -49,8 +50,8 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
             return describedSongs;
         }
     }
-    public ObservableCollection<SongRow> Queue { get; } = [];
-    public ObservableCollection<SongRow> Upcoming { get; } = [];
+    public ObservableCollection<SongRow> Queue { get; } = new BatchedObservableCollection<SongRow>();
+    public ObservableCollection<SongRow> Upcoming { get; } = new BatchedObservableCollection<SongRow>();
     public int CurrentIndex => index;
     public event Action? QueueChanged;
     private void RefreshQueue() { Replace(Upcoming, Queue.Skip(index + 1)); QueueChanged?.Invoke(); }
@@ -63,6 +64,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     private Task? refreshTask;
     private bool refreshPending;
     private readonly List<PlaybackEntry> originalQueue = [];
+    private SongRow[]? nextShuffleRound;
     private int index, selectionGeneration, lyricsGeneration;
     private string repeat = "off", heading = "Tu música, a tu manera.", status = "Iniciando Openfy…", error = "", title = "Tu música, contigo", artist = "Elige una canción para empezar", album = "", cover = "", query = "", page = "home";
     private bool shuffle, busy, initialized;
@@ -109,8 +111,13 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public string PlayLabel => Playing ? "Pausar" : "Reproducir";
     public bool ShuffleEnabled => shuffle;
     public string RepeatMode => repeat;
-    public SongRow? NextAutomatic => Immersive.NextIndex(Queue.Count, index, repeat) is int next
-        && (Queue[next].Entry.Source == "youtube" || tracksById.ContainsKey(Queue[next].Entry.TrackId!)) ? Describe(Queue[next].Entry) : null;
+    public SongRow? NextAutomatic {
+        get {
+            if (Immersive.NextIndex(Queue.Count, index, repeat) is not int next) return null;
+            var entry = (StartsNewShuffleRound(next) ? NextShuffleRound()[0] : Queue[next]).Entry;
+            return entry.Source == "youtube" || FindTrack(entry.TrackId) != null ? Describe(entry) : null;
+        }
+    }
     public int SelectionGeneration => selectionGeneration;
     public double Position { get => position; private set { if (position == value) return; position = value; Notify(); Notify(nameof(PositionText)); } }
     public double Duration { get => duration; private set { if (duration == value) return; duration = value; Notify(); Notify(nameof(DurationText)); } }
@@ -137,6 +144,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public event Action? LyricsChanged;
     public MainViewModel(Action<Action> dispatch)
     {
+        Queue.CollectionChanged += (_, _) => { nextShuffleRound = null; queueRevision++; };
         ui = dispatch; Host = new(Api); Engine = new(Api); Listening = new(Api, Store);
         Host.Status += value => ui(() => Status = value);
         Host.Event += (type, payload) => {
@@ -154,7 +162,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
             });
             if (type == "libraryChanged") ui(() => _ = RunAsync(RefreshAsync));
             if (type == "lyricsChanged") ui(() => { if (WantsLyrics && Current?.Key == payload.GetProperty("key").GetString()) _ = RunAsync(() => LoadLyricsAsync()); });
-            if (type == "telemetryChanged") ui(() => _ = RefreshListeningAsync());
+            if (type == "telemetryChanged") ui(QueueTelemetryRefresh);
             if (type == "importProgress") ui(() => Status = "Importando: " + payload.GetProperty("filename").GetString());
             if (type == "conversionProgress") ui(() => Status = "Preparando audio para iPhone: " + payload.GetProperty("progress").GetInt32() + "%");
             if (type == "downloadProgress") ui(() => OnDownloadProgress(payload));
@@ -246,13 +254,19 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         ContentLoading = false; PageLoadError = "";
         SearchSongsLoading = SearchArtistsLoading = SearchAlbumsLoading = false;
         SaveSearch();
-        contentGeneration++; searchCancellation?.Cancel(); CancelSearchLoads();
+        // Filtering and library refreshes keep the same album presentation in flight.
+        if (page != "localalbum" || target != "localalbum" || LocalNavigationKey(target, id) != filterViewKey)
+        {
+            EndAlbumPresentation();
+            contentGeneration++; searchCancellation?.Cancel(); CancelSearchLoads();
+        }
         ShowLocalCore(target, id);
     }
     private void ShowLocalCore(string target, string? id)
     {
-        Description = "";
         string key = LocalNavigationKey(target, id);
+        bool sameAlbum = target == "localalbum" && page == target && key == filterViewKey && albumPresentationCancellation != null;
+        Description = sameAlbum ? CatalogAlbumDescription?.Text ?? "" : "";
         if (filterViewKey != key) {
             filterViewKey = key;
             var previousFilters = Settings.LibraryFilters.GetValueOrDefault(key);
@@ -281,8 +295,27 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         var collection = rows.ToArray();
         UnfilteredSongs = collection;
         CatalogArtwork = target == "favorites" ? null : collection.FirstOrDefault(track => track.Artwork != null)?.Artwork;
-        CatalogSubtitle = target == "localalbum" ? tracks.FirstOrDefault()?.AlbumArtist ?? "" : "";
-        CatalogKind = target switch { "favorites" => "Hecha por ti", "playlist" => "Playlist personal", "localartist" => "Artista en tu biblioteca", "localalbum" => "Álbum", _ => "" };
+        CatalogSubtitle = "";
+        CatalogKind = target switch { "favorites" => "Hecha por ti", "playlist" => "Playlist personal", "localartist" => "Artista en tu biblioteca", _ => "" };
+        if (target == "localalbum")
+        {
+            var first = tracks.FirstOrDefault();
+            var saved = collection.FirstOrDefault()?.Entry.Song;
+            var verified = saved?.AlbumId is { } albumId ? CachedPage(albumPages, albumId) : null;
+            CatalogAlbumArtists = first != null
+                ? [new(null, string.IsNullOrWhiteSpace(first.AlbumArtist) ? first.Artist : first.AlbumArtist)]
+                : verified?.Artists is { Length: > 0 } credits ? credits : AlbumTrackArtists(saved);
+            var years = tracks.Select(track => track.Year).Where(year => year is > 0).Distinct().Take(2).ToArray();
+            CatalogAlbumYear = first != null ? years.Length == 1 ? years[0] : null : verified?.Year;
+            CatalogSubtitle = string.Join(", ", CatalogAlbumArtists.Select(artist => artist.Name));
+            if (!sameAlbum)
+            {
+                var request = first != null ? new AlbumPresentationRequest("local", TrackId: first.Id)
+                    : YouTubeAlbumPresentation(saved?.AlbumId, CatalogAlbumArtists.Select(artist => artist.Name), Heading);
+                BeginAlbumPresentation(key, request, verified?.Description);
+                Description = CatalogAlbumDescription?.Text ?? "";
+            }
+        }
         string filter = target == "localSearch" ? Query : libraryFilter;
         rows = ApplyFilters(collection, Filters with { Query = filter });
         // Hidden pages keep the last collection's containers and rows ready for
@@ -358,12 +391,19 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         UseRemoteSongs(); Songs.Clear(); Artists.Clear(); Albums.Clear(); Singles.Clear();
         try
         {
-            var album = offline != null ? new AlbumDetail(id, offline.Title, [], offline.Artwork, null, offline.Entries.Where(entry => entry.Song != null).Select(entry => entry.Song!).ToArray())
+            var album = offline != null ? new AlbumDetail(id, offline.Title, remembered?.Artists ?? [], offline.Artwork, remembered?.Year,
+                offline.Entries.Where(entry => entry.Song != null).Select(entry => entry.Song!).ToArray(), remembered?.Description)
                 : remembered ?? await Api.GetAsync<AlbumDetail>("api/music/albums/" + Uri.EscapeDataString(id), cancellation);
             if (own != contentGeneration) return;
             if (remembered == null && offline == null) RememberPage(albumPages, id, album);
-            page = "album"; catalogId = id; Heading = album.Title; Description = ""; CatalogArtwork = album.Artwork; CatalogSubtitle = string.Join(", ", album.Artists.Select(artist => artist.Name)) + (album.Year != null ? " · " + album.Year : ""); CatalogKind = "Álbum"; Artists.Clear(); Albums.Clear(); Singles.Clear(); nextCursor = null;
-            Replace(Songs, album.Songs.Select(song => Describe(new("youtube", Song: song))));
+            page = "album"; catalogId = id; Heading = album.Title; CatalogArtwork = album.Artwork; CatalogKind = ""; nextCursor = null;
+            CatalogAlbumArtists = album.Artists.Length > 0 ? album.Artists : AlbumTrackArtists(album.Songs.FirstOrDefault());
+            CatalogAlbumYear = album.Year;
+            CatalogSubtitle = string.Join(", ", CatalogAlbumArtists.Select(artist => artist.Name));
+            UnfilteredSongs = album.Songs.Select(song => Describe(new("youtube", Song: song))).ToArray();
+            Replace(Songs, UnfilteredSongs);
+            BeginAlbumPresentation("album:" + id, YouTubeAlbumPresentation(id, CatalogAlbumArtists.Select(artist => artist.Name), album.Title), album.Description);
+            Description = CatalogAlbumDescription?.Text ?? "";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch (Exception failure) { if (own == contentGeneration) PageLoadError = failure.Message; }
@@ -374,6 +414,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     public bool RestoreSearch()
     {
         if (savedSearch == null) return false;
+        EndAlbumPresentation();
         UseRemoteSongs();
         ContentLoading = false; PageLoadError = ""; SearchSongsLoading = SearchArtistsLoading = SearchAlbumsLoading = false;
         contentGeneration++; searchCancellation?.Cancel(); searchCancellation?.Dispose(); searchCancellation = new(); CancelSearchLoads(); Busy = false; page = "search"; Heading = "Buscar música"; Description = ""; CatalogArtwork = null; CatalogSubtitle = ""; CatalogKind = ""; Query = savedSearch.Query;
@@ -381,6 +422,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     }
     public void EmptySearch()
     {
+        EndAlbumPresentation();
         ResetSearchLoads();
         UseRemoteSongs();
         ContentLoading = false; PageLoadError = ""; SearchSongsLoading = SearchArtistsLoading = SearchAlbumsLoading = false;
@@ -513,18 +555,36 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         int next = automatic ? Immersive.NextIndex(Queue.Count, index, repeat) ?? Queue.Count : index + direction;
         if (next >= Queue.Count) { if (repeat == "all") next = 0; else { Engine.Pause(); return; } }
         if (Queue.Count == 0) return;
+        if ((automatic || direction > 0) && StartsNewShuffleRound(next)) Replace(Queue, NextShuffleRound());
         index = Math.Max(0, next); Listening.Select(Current!.Entry); await LoadCurrentAsync(true, 0);
+    }
+    private bool StartsNewShuffleRound(int next) => shuffle && repeat == "all" && Queue.Count > 1 && index == Queue.Count - 1 && next == 0;
+    private SongRow[] NextShuffleRound()
+    {
+        if (nextShuffleRound != null) return nextShuffleRound;
+        var mixed = CollectionQueue.Mix(Queue);
+        if (mixed[0].Entry.QueueId == Current!.Entry.QueueId) {
+            int other = Random.Shared.Next(1, mixed.Length);
+            (mixed[0], mixed[other]) = (mixed[other], mixed[0]);
+        }
+        // Big Picture previews the same round that transport will start.
+        return nextShuffleRound = mixed;
     }
     public void Shuffle()
     {
         if (Current == null) return;
-        if (!shuffle) { originalQueue.Clear(); originalQueue.AddRange(Queue.Select(row => row.Entry)); }
-        var ranks = originalQueue.Select((entry, i) => (entry.QueueId, i)).ToDictionary(pair => pair.QueueId!, pair => pair.i);
-        var remaining = Queue.Skip(index + 1).ToArray();
-        remaining = !shuffle ? remaining.OrderBy(_ => Random.Shared.Next()).ToArray() : remaining.OrderBy(row => ranks.GetValueOrDefault(row.Entry.QueueId!, int.MaxValue)).ToArray();
-        Replace(Queue, Queue.Take(index + 1).Concat(remaining));
+        nextShuffleRound = null;
+        if (!shuffle) {
+            originalQueue.Clear(); originalQueue.AddRange(Queue.Select(row => row.Entry));
+            MixUpcoming();
+        } else {
+            var ranks = originalQueue.Select((entry, i) => (entry.QueueId, i)).ToDictionary(pair => pair.QueueId!, pair => pair.i);
+            var remaining = Queue.Skip(index + 1).OrderBy(row => ranks.GetValueOrDefault(row.Entry.QueueId!, int.MaxValue));
+            Replace(Queue, Queue.Take(index + 1).Concat(remaining));
+        }
         shuffle = !shuffle; Notify(nameof(ShuffleEnabled)); RefreshQueue(); _ = PersistAsync();
     }
+    private void MixUpcoming() => Replace(Queue, Queue.Take(index + 1).Concat(CollectionQueue.Mix(Queue.Skip(index + 1))));
     public void ReorderUpcoming(IEnumerable<string> ids)
     {
         var remaining = Queue.Skip(index + 1).ToDictionary(row => row.Entry.QueueId!);
@@ -540,7 +600,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         if (from < 0 || to < 0 || to >= ids.Count) return;
         ids.RemoveAt(from); ids.Insert(to, id); ReorderUpcoming(ids);
     }
-    public void CycleRepeat() { repeat = repeat == "off" ? "all" : repeat == "all" ? "one" : "off"; Notify(nameof(RepeatMode)); Status = "Repetición: " + (repeat == "off" ? "desactivada" : repeat == "all" ? "toda la cola" : "una canción"); _ = PersistAsync(); }
+    public void CycleRepeat() { nextShuffleRound = null; repeat = repeat == "off" ? "all" : repeat == "all" ? "one" : "off"; Notify(nameof(RepeatMode)); Status = "Repetición: " + (repeat == "off" ? "desactivada" : repeat == "all" ? "toda la cola" : "una canción"); _ = PersistAsync(); }
     public async Task FavoriteAsync(SongRow song)
     {
         bool favorite = !Library.IsFavorite(song.Entry);
@@ -585,12 +645,26 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         SampleListening();
         if (initialized && DateTime.UtcNow - lastListeningSave > TimeSpan.FromSeconds(10)) { lastListeningSave = DateTime.UtcNow; _ = SaveListeningAsync(); }
         if (Engine.Playing && Engine.Duration > 0 && engineKey == Current?.Key) { Position = Engine.Position; Duration = Engine.Duration; }
-        if (initialized && Playing && DateTime.UtcNow - lastSave > TimeSpan.FromSeconds(2.5)) { lastSave = DateTime.UtcNow; _ = PersistAsync(); }
+        // The snapshot carries the whole queue; transport changes persist immediately, so the periodic checkpoint only keeps the position fresh.
+        if (initialized && Playing && DateTime.UtcNow - lastSave > TimeSpan.FromSeconds(10)) { lastSave = DateTime.UtcNow; if (PlaybackSignature() != persistedSignature) _ = PersistAsync(); }
+        if (initialized && Playing && DateTime.UtcNow - lastActivityBeat > TimeSpan.FromSeconds(30)) { lastActivityBeat = DateTime.UtcNow; _ = ActivityAsync(); }
     }
+    private long queueRevision, persistedSignature = -1;
+    private DateTime lastActivityBeat = DateTime.MinValue;
+    private byte[]? persistedSettings;
+    private long PlaybackSignature() => HashCode.Combine(queueRevision, Queue.Count, originalQueue.Count, index, Math.Round(Position, 1), repeat, shuffle, Volume);
     public async Task PersistAsync()
     {
-        await Store.WriteAsync("playback", new PlaybackSnapshot(3, Queue.Select(row => row.Entry).ToList(), index, Position, repeat, shuffle, Volume, originalQueue.Select(entry => entry.QueueId!).ToList()));
+        long signature = PlaybackSignature();
+        await Store.WriteAsync("playback", new PlaybackSnapshot(3, Queue.Select(row => row.Entry).ToList(), index, Position, repeat, shuffle, Volume, originalQueue.Select(entry => entry.QueueId!).ToList()) {
+            RepeatShuffleMigrated = shuffle && repeat == "all" && Queue.Count - index > RepeatShuffleRecoveryMatches,
+        });
+        persistedSignature = signature;
+        // Settings rarely change: skip identical rewrites.
+        var settings = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(Settings, Contracts.Json);
+        if (persistedSettings != null && settings.AsSpan().SequenceEqual(persistedSettings)) return;
         await Store.WriteAsync("settings", Settings);
+        persistedSettings = settings;
     }
     public async Task RestoreAsync(PlaybackSnapshot saved)
     {
@@ -599,9 +673,14 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
         string? selected = identified.ElementAtOrDefault(saved.Index)?.QueueId;
         Replace(Queue, identified.Where(entry => entry.Source == "youtube" && entry.Song != null || Library.Tracks.Any(track => track.Id == entry.TrackId)).Select(Describe));
         index = Math.Max(0, Queue.ToList().FindIndex(row => row.Entry.QueueId == selected)); repeat = saved.Repeat; shuffle = saved.Shuffle; Volume = saved.Volume;
-        Notify(nameof(ShuffleEnabled)); Notify(nameof(RepeatMode));
         var rank = (saved.OriginalOrder ?? []).Select((id, i) => (id, i)).DistinctBy(pair => pair.id).ToDictionary(pair => pair.id, pair => pair.i);
         originalQueue.Clear(); originalQueue.AddRange(Queue.OrderBy(row => rank.GetValueOrDefault(row.Entry.QueueId!, int.MaxValue)).Select(row => row.Entry));
+        // Old builds wrapped into the original prefix. Require five pending matches before repairing it.
+        int prefixLength = index + 1 + RepeatShuffleRecoveryMatches;
+        if (shuffle && repeat == "all" && !saved.RepeatShuffleMigrated && saved.OriginalOrder != null && Queue.Count >= prefixLength
+            && Queue.Take(prefixLength).Select(row => row.Entry.QueueId).SequenceEqual(originalQueue.Take(prefixLength).Select(entry => entry.QueueId)))
+            MixUpcoming();
+        Notify(nameof(ShuffleEnabled)); Notify(nameof(RepeatMode));
         RefreshQueue();
         if (Current != null) { Listening.Select(Current.Entry, true); await LoadCurrentAsync(false, saved.Position); }
     }
@@ -632,6 +711,7 @@ public sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDispos
     private string ClientId { get; } = Guid.NewGuid().ToString();
     public async Task ExportDiagnosticsAsync(string path) => await File.WriteAllTextAsync(path, JsonSerializer.Serialize(new { at = DateTimeOffset.UtcNow, backend = Host.Connected, Host.Port, Playing, Position, Duration, audio = "WASAPI", process = Environment.ProcessId, rendering = RenderDiagnostics() }, Contracts.Json));
     public async ValueTask DisposeAsync() {
+        EndAlbumPresentation();
         await CloseDiscordAsync();
         SampleListening(); Engine.Pause();
         if (initialized) { await Listening.CheckpointAsync(); using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(2)); await Listening.FlushAsync(deadline.Token); await PersistAsync(); await ActivityAsync(true); }

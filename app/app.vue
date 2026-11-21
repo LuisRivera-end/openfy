@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { songCount } from '../shared/utils/text'
+import type { PageChromeColors } from './composables/usePageChrome'
+import './assets/artist-chrome.css'
+import './assets/page-chrome.css'
 useAppearanceStore()
 const library = useLibraryStore()
 const downloads = useDownloadsStore()
@@ -7,6 +10,29 @@ const player = usePlayerStore()
 const lyrics = useLyricsStore()
 watch(() => library.connected, (connected) => { if (connected) void lyrics.backfill().catch(() => {}) })
 const route = useRoute()
+const artistPalette = useArtistShellPalette()
+const artistChrome = computed(() => artistPalette.value?.path === route.path ? artistPalette.value.theme : undefined)
+const artistChromeStyle = computed(() => artistChrome.value && {
+  '--artist-base': artistChrome.value.base,
+  '--artist-secondary': artistChrome.value.secondary,
+  '--artist-deep': artistChrome.value.deep,
+})
+/** The frame takes the colour of the album or artist on screen: sidebar, top bar, player and tab bar (page-chrome.css). */
+const pageChromeState = usePageChromeState()
+const pageChrome = computed<PageChromeColors | undefined>(() => {
+  if (pageChromeState.value?.path === route.path) return pageChromeState.value.colors
+  const theme = artistChrome.value
+  return theme && { background: theme.base, surface: theme.surface, muted: '#EDEDF0', edge: theme.deep }
+})
+watch(pageChrome, colors => {
+  if (!import.meta.client) return
+  const root = document.documentElement
+  root.classList.toggle('page-chrome', !!colors)
+  for (const key of ['background', 'surface', 'muted', 'edge'] as const) {
+    if (colors) root.style.setProperty(`--chrome-${key}`, colors[key])
+    else root.style.removeProperty(`--chrome-${key}`)
+  }
+}, { immediate: true })
 const importOpen = useState('importOpen', () => false)
 const playlistOpen = useState('playlistOpen', () => false)
 const playlistName = ref('')
@@ -101,7 +127,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll', trackScroll); cance
 <template>
   <NuxtPwaManifest />
   <StartupScreen @retry="open" @revealed="revealed" />
-  <div class="app-shell" :inert="startup.blocked" :aria-hidden="startup.blocked ? true : undefined" :class="{ 'motion-paused': hidden, 'has-queue': player.queueOpen, 'has-mini': !!player.current, 'dock-compact': phone && compactDock, 'startup-pending': startup.visible, 'startup-revealing': startup.phase === 'revealing' }">
+  <div class="app-shell" :style="artistChromeStyle" :inert="startup.blocked" :aria-hidden="startup.blocked ? true : undefined" :class="{ 'artist-chrome': artistChrome, 'motion-paused': hidden, 'has-queue': player.queueOpen, 'has-mini': !!player.current, 'dock-compact': phone && compactDock, 'startup-pending': startup.visible, 'startup-revealing': startup.phase === 'revealing' }">
     <a href="#main" class="skip-link">Ir al contenido</a>
     <div class="status-backdrop" aria-hidden="true" />
     <aside class="sidebar glass" aria-label="Navegación principal">
@@ -118,7 +144,7 @@ onBeforeUnmount(() => { window.removeEventListener('scroll', trackScroll); cance
     </aside>
 
     <div class="main-column" :class="{ 'search-active': route.path === '/search' }">
-      <header class="topbar"><div class="topbar-left"><NuxtLink to="/" class="mobile-brand" aria-label="Openfy, inicio" @click="tabClick('/')">openfy<span class="brand-dot">.</span></NuxtLink></div><GlobalSearchField /><div class="topbar-actions"><button class="button subtle import-top" :disabled="!library.connected || library.importing" @click="importOpen = true"><OIcon :name="library.importing ? 'loading' : 'plus'" :size="18" :class="{ spin: library.importing }" />{{ library.importing ? 'Importando…' : 'Importar música' }}</button><NuxtLink class="avatar" to="/settings" aria-label="Abrir ajustes">LR</NuxtLink></div></header>
+      <header class="topbar"><div class="topbar-left"><DetailBar v-if="route.path.startsWith('/music/artist/')" variant="icon" fallback="/search" /><NuxtLink v-else to="/" class="mobile-brand" aria-label="Openfy, inicio" @click="tabClick('/')">openfy<span class="brand-dot">.</span></NuxtLink></div><GlobalSearchField /><div class="topbar-actions"><button class="button subtle import-top" :disabled="!library.connected || library.importing" @click="importOpen = true"><OIcon :name="library.importing ? 'loading' : 'plus'" :size="18" :class="{ spin: library.importing }" />{{ library.importing ? 'Importando…' : 'Importar música' }}</button><NuxtLink class="avatar" to="/settings" aria-label="Abrir ajustes" title="Ajustes"><OIcon name="settings" :size="18" /></NuxtLink></div></header>
       <main id="main" tabindex="-1">
         <div v-if="library.error || downloads.storageError || player.error" class="notice error" role="status"><span>{{ library.error || downloads.storageError || player.error }}</span><button class="icon-button" aria-label="Cerrar aviso" @click="library.error = ''; downloads.storageError = ''; player.error = ''"><OIcon name="close" :size="17" /></button></div>
         <div v-if="ready && !library.connected" class="notice offline-notice"><OIcon name="offline" :size="18" /><span>Tu PC está desconectado. Tu música descargada sigue contigo.</span><button @click="library.refresh">Reintentar</button></div>

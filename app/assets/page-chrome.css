@@ -1,0 +1,441 @@
+/*
+ * Window frame, after Apple Music on the web:
+ * - the page colour (album tint or artist palette, set on <html> as --chrome-* by app.vue) fills the whole window;
+ * - the sidebar is full height and translucent, so that colour shows through it;
+ * - the player is a floating pill centred in the content column, with the page scrolling under it.
+ * Phones keep their own shell (main.css, "Phone shell"); there only the colours change.
+ */
+
+:root {
+  --chrome-ease: cubic-bezier(0.2, 0, 0.2, 1);
+}
+/* Navigation focuses <main> programmatically; on a coloured page the ring would draw a line under the top bar. */
+:root.page-chrome #main:focus-visible { outline: none; }
+
+/* ---------- Desktop and the native-sized window (not the phone shell) ---------- */
+@media (min-width: 761px) and (min-height: 501px), (min-width: 761px) and (pointer: fine) {
+  :root .app-shell {
+    --sidebar-w: 244px;
+    --pill-h: 72px;
+    --pill-gap: 16px;
+    --pill-clearance: calc(var(--pill-h) + var(--pill-gap) * 2);
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    gap: 0;
+    padding: 0;
+    background: var(--chrome-background, var(--surface));
+    transition: background-color 240ms var(--chrome-ease);
+  }
+  :root.page-chrome, :root.page-chrome body { background: var(--chrome-background); }
+
+  /* Sidebar: full height, translucent over the page colour, a hairline instead of a card. */
+  :root .app-shell > .sidebar {
+    z-index: 3;
+    inset: 0 auto 0 0;
+    width: var(--sidebar-w);
+    border: 0;
+    border-right: 1px solid #ffffff12;
+    border-radius: 0;
+    color: #fff;
+    background: #1c1c1f99;
+    /* Unprefixed last: the minifier keeps only the last of the pair, and Chromium needs the unprefixed one. */
+    -webkit-backdrop-filter: blur(16px) saturate(1.8);
+    backdrop-filter: blur(16px) saturate(1.8);
+    transition: background-color 240ms var(--chrome-ease), border-color 240ms var(--chrome-ease);
+  }
+  :root.page-chrome .app-shell > .sidebar {
+    background: color-mix(in srgb, var(--chrome-background) 55%, #1c1c1f99);
+    border-right-color: var(--chrome-edge);
+  }
+  /* The header art runs under the glass sidebar, as in Apple Music. */
+  :root .artist-page .artist-backdrop { inset-inline-start: calc(-1 * var(--sidebar-w)); }
+  :root.page-chrome .app-shell.artist-chrome > .sidebar {
+    background: color-mix(in srgb, var(--chrome-background) 45%, #1c1c1f33);
+    -webkit-backdrop-filter: blur(28px) saturate(1.8);
+    backdrop-filter: blur(28px) saturate(1.8);
+  }
+  :root .app-shell > .sidebar .brand { padding-block: 22px 20px; }
+  :root .app-shell > .sidebar nav { padding-bottom: 14px; gap: 2px; border-bottom-color: #ffffff12; }
+  :root .app-shell > .sidebar :is(nav a, footer a) { height: 36px; gap: 12px; padding: 0 12px; border-radius: 8px; font-size: 14px; font-weight: 500; }
+  :root .app-shell > .sidebar :is(nav a, footer a) svg { width: 20px; height: 20px; }
+  :root .app-shell > .sidebar footer { border-top-color: #ffffff12; }
+  :root.page-chrome .app-shell > .sidebar :is(nav a, footer a, .sidebar-library header, .sidebar-empty span, .connection, .track-copy > span) { color: var(--chrome-muted); }
+  :root.page-chrome .app-shell > .sidebar :is(nav a.current, footer a.current, .collection-link.current) { color: #fff; background: var(--chrome-surface); }
+  @media (hover: hover) {
+    :root.page-chrome .app-shell > .sidebar :is(nav a, footer a, .collection-link):hover { color: #fff; background: color-mix(in srgb, var(--chrome-surface) 70%, transparent); }
+  }
+
+  /* Content column: no card; the page colour runs under the floating player, like the native app. Artist pages keep their scroll wash. */
+  :root .main-column {
+    border: 0;
+    border-radius: 0;
+    min-height: 100dvh;
+    padding-bottom: var(--pill-clearance);
+    box-sizing: border-box;
+  }
+  :root .main-column:not(.artist-tinted) { background: transparent; }
+  /* Without the card, the artist hero meets the window edge: no rounded top corners. */
+  :root .artist-page .artist-backdrop, :root .artist-page .artist-stage { border-radius: 0; }
+
+  /* Top bar on coloured pages: controls take the page surface. */
+  :root.page-chrome .topbar { background: transparent; }
+  :root.page-chrome .topbar :is(.search-field, .avatar, .import-top) { color: #fff; background: var(--chrome-surface); border-color: color-mix(in srgb, #fff 14%, transparent); }
+  :root.page-chrome .topbar .search-field :is(svg, .icon-button),
+  :root.page-chrome .topbar .search-field input::placeholder { color: var(--chrome-muted); opacity: 1; }
+
+  /* Floating pill player: transport | now playing over a thin progress line | tools. */
+  :root .app-shell > .player-bar {
+    left: calc(var(--sidebar-w) + var(--pill-gap));
+    right: var(--pill-gap);
+    bottom: var(--pill-gap);
+    margin-inline: auto;
+    max-width: 880px;
+    height: var(--pill-h);
+    min-height: 0;
+    padding: 0 14px 0 12px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "transport now tools" "transport seek tools";
+    column-gap: 20px;
+    row-gap: 0;
+    align-items: center;
+    border: 0;
+    border-radius: 999px;
+    color: #fff;
+    background: #26262bcc;
+    box-shadow: 0 10px 40px #0005, inset 0 0 0 .5px #ffffff2e;
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    transition: background-color 240ms var(--chrome-ease), max-width 240ms var(--chrome-ease);
+  }
+  :root.page-chrome .app-shell > .player-bar.glass {
+    background: color-mix(in srgb, color-mix(in srgb, var(--chrome-background) 70%, #1c1c1f) 82%, transparent);
+    border: 0;
+  }
+  :root .app-shell > .player-bar .player-center { display: contents; }
+  :root .app-shell > .player-bar .transport { grid-area: transport; gap: 4px; }
+  :root .app-shell > .player-bar .transport .icon-button { width: 40px; height: 40px; flex-basis: 40px; border-radius: 50%; }
+  :root .app-shell > .player-bar .transport .icon-button svg { width: 21px; height: 21px; }
+  :root .app-shell > .player-bar .transport .toggle svg { width: 17px; height: 17px; }
+  /* Play is a bare glyph like the rest of the transport: the display in the middle is the focal point. */
+  :root .app-shell > .player-bar .play-button { width: 40px; height: 40px; color: #fff; background: transparent; }
+  :root .app-shell > .player-bar .play-button svg { width: 26px; height: 26px; }
+  @media (hover: hover) {
+    :root .app-shell > .player-bar :is(.transport .icon-button, .play-button, .player-tools .icon-button):hover:not(:disabled):not(.active) { background: #ffffff14; }
+  }
+  :root .app-shell > .player-bar .now-playing {
+    grid-area: now;
+    align-self: end;
+    width: auto;
+    min-width: 0;
+    grid-template-columns: 44px minmax(0, 1fr);
+    column-gap: 12px;
+    row-gap: 2px;
+    transition: filter 160ms ease-out, opacity 160ms ease-out;
+  }
+  :root .app-shell > .player-bar .now-playing-open > .album-cover { width: 44px; height: 44px; border-radius: 8px; }
+  :root .app-shell > .player-bar .now-playing-open > strong { font-size: 14px; }
+  :root .app-shell > .player-bar .now-playing-artist { font-size: 12px; }
+  :root .app-shell > .player-bar .seek-row {
+    grid-area: seek;
+    align-self: start;
+    min-height: 0;
+    height: 14px;
+    gap: 8px;
+    font-size: 10px;
+    padding-bottom: 6px;
+    box-sizing: content-box;
+  }
+  :root .app-shell > .player-bar .seek-row input { min-height: 0; height: 14px; }
+  :root .app-shell > .player-bar .player-tools { grid-area: tools; width: auto; gap: 2px; }
+  :root .app-shell > .player-bar .player-tools .icon-button { width: 40px; height: 40px; border-radius: 50%; }
+  :root .app-shell > .player-bar .volume-slider { width: 72px; }
+  :root .app-shell > .player-bar .player-volume { position: relative; display: flex; align-items: center; gap: 4px; }
+  :root .app-shell > .player-bar .volume-button { display: none; }
+  :root .app-shell > .player-bar .volume-inline-icon { display: inline-flex; align-items: center; color: inherit; }
+  :root .app-shell > .player-bar .volume-popover { display: contents; }
+  :root.page-chrome .app-shell > .player-bar :is(.now-playing-artist, .seek-row, .player-tools) { color: var(--chrome-muted); }
+  :root.page-chrome .app-shell > .player-bar .icon-button { color: var(--chrome-muted); }
+  :root.page-chrome .app-shell > .player-bar .icon-button.active { color: var(--chrome-background); background: #ededf0; }
+
+  /* Nothing has played yet: a short pill instead of an empty bar across the window. */
+  :root .app-shell:not(.has-mini) > .player-bar { max-width: 460px; grid-template-areas: "transport now tools" "transport now tools"; }
+  :root .app-shell:not(.has-mini) > .player-bar :is(.seek-row, .player-tools > :not([aria-label="Mostrar cola"]), .transport .toggle) { display: none; }
+  :root .app-shell:not(.has-mini) > .player-bar .now-playing { align-self: center; }
+
+  /* Side panels end above the pill. */
+  :root .queue-panel, :root .lyrics-panel { bottom: var(--pill-clearance, 96px); }
+}
+
+@media (min-width: 761px) and (max-width: 1100px) {
+  :root .app-shell { --sidebar-w: 210px; }
+  :root .app-shell > .player-bar .transport .toggle { display: none; }
+}
+@media (min-width: 761px) and (max-width: 960px) {
+  :root .app-shell > .player-bar .seek-row > span, :root .app-shell > .player-bar .volume-slider, :root .app-shell > .player-bar .player-tools > svg { display: none; }
+}
+
+/* Transparency off (stores/appearance.ts sets the class from the setting or the system preference). */
+:root.transparency-off .app-shell > :is(.sidebar, .player-bar) { backdrop-filter: none; -webkit-backdrop-filter: none; }
+:root.transparency-off .app-shell > .sidebar { background: #1c1c1f; }
+:root.transparency-off.page-chrome .app-shell > .sidebar { background: color-mix(in srgb, var(--chrome-background) 55%, #1c1c1f); }
+@media (prefers-reduced-motion: reduce) {
+  :root .app-shell, :root .app-shell > :is(.sidebar, .player-bar) { transition: none; }
+}
+
+/* ---------- Phone shell: same colours, edge to edge ---------- */
+@media (max-width: 760px), (pointer: coarse) and (max-height: 500px) {
+  :root.page-chrome, :root.page-chrome body { background: var(--chrome-background); transition: background-color 240ms var(--chrome-ease); }
+  :root.page-chrome .status-backdrop { background: var(--chrome-background); }
+  :root.page-chrome .topbar .search-field { color: #fff; background: var(--chrome-surface); border-color: color-mix(in srgb, #fff 14%, transparent); }
+  /* The phone avatar draws a transparent 6 px touch border around a padding-box fill. */
+  :root.page-chrome .topbar .avatar { color: #fff; background-color: var(--chrome-surface); }
+  :root.page-chrome .topbar .search-field :is(svg, .icon-button),
+  :root.page-chrome .topbar .search-field input::placeholder { color: var(--chrome-muted); opacity: 1; }
+  :root.page-chrome .app-shell > :is(.player-bar, .mobile-nav).glass {
+    background: color-mix(in srgb, color-mix(in srgb, var(--chrome-background) 72%, #1f1f23) 86%, transparent);
+    border-color: color-mix(in srgb, #fff 12%, transparent);
+  }
+  :root.page-chrome .app-shell > .mobile-nav a { color: var(--chrome-muted); }
+  :root.page-chrome .app-shell > .mobile-nav a.current { color: #fff; background: var(--chrome-surface); }
+  :root.page-chrome .app-shell > .player-bar :is(.now-playing-artist, .icon-button) { color: var(--chrome-muted); }
+  :root.transparency-off.page-chrome .app-shell > .mobile-nav.glass { background: color-mix(in srgb, var(--chrome-background) 72%, #1f1f23); }
+}
+
+/* ---------- Pill display: a thin line that becomes a scrubber near the pointer ----------
+ * After Apple Music: the line under the cover and title is all there is until the pointer reaches it;
+ * then the song details blur back, elapsed and remaining time appear, and the line thickens.
+ * Only with a real pointer: touch keeps the inline times of the base layout.
+ */
+@media (min-width: 761px) and (min-height: 501px) and (hover: hover), (min-width: 761px) and (pointer: fine) and (hover: hover) {
+  :root .app-shell > .player-bar .seek-row {
+    position: relative;
+    height: 18px;
+    padding: 0;
+    box-sizing: border-box;
+    color: #ffffffe6;
+  }
+  /* The track is drawn by the row so it can grow smoothly; the range input stays the real control on top. */
+  :root .app-shell > .player-bar .seek-row::before,
+  :root .app-shell > .player-bar .seek-row::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 6px;
+    height: 6px;
+    border-radius: 3px;
+    transform-origin: left center;
+    transform: scaleY(.5);
+    transition: transform 160ms ease-out, background-color 160ms ease-out;
+    pointer-events: none;
+  }
+  :root .app-shell > .player-bar .seek-row::before { background: #ffffff24; }
+  /* The fill follows the clock directly; only thickness and colour animate. */
+  :root .app-shell > .player-bar .seek-row::after { right: auto; width: calc(var(--progress, 0) * 100%); background: #f4f4f5cc; }
+  :root .app-shell > .player-bar .seek-row input {
+    position: absolute;
+    inset: -4px 0 0;
+    height: auto;
+    min-height: 0;
+    width: 100%;
+    z-index: 1;
+    opacity: 0;
+  }
+  :root .app-shell > .player-bar .seek-row > span {
+    position: absolute;
+    bottom: calc(100% + 16px);
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 160ms ease-out;
+    pointer-events: none;
+  }
+  :root .app-shell > .player-bar .seek-row > .seek-elapsed { display: block; left: 0; text-align: left; }
+  :root .app-shell > .player-bar .seek-row > .seek-remaining { display: block; right: 0; }
+  :root .app-shell > .player-bar .seek-row > .seek-total { display: none; }
+
+  /* Scrubbing: pointer over the line, keyboard focus on it, or a drag in progress. */
+  :root .app-shell > .player-bar:has(.seek-row:hover, .seek-row input:focus-visible, .seek-row input:active):not(:has(.seek-row input:disabled, .now-playing :focus-visible)) .now-playing {
+    filter: blur(8px);
+    opacity: .22;
+  }
+  :root .app-shell > .player-bar .seek-row:is(:hover, :has(input:focus-visible), :has(input:active)):not(:has(input:disabled)) > span { opacity: 1; }
+  :root .app-shell > .player-bar .seek-row:is(:hover, :has(input:focus-visible), :has(input:active)):not(:has(input:disabled))::before { transform: scaleY(1); background: #ffffff30; }
+  :root .app-shell > .player-bar .seek-row:is(:hover, :has(input:focus-visible), :has(input:active)):not(:has(input:disabled))::after { transform: scaleY(1); background: #fff; }
+  :root .app-shell > .player-bar .seek-row:has(input:focus-visible)::before { outline: 2px solid #fff; outline-offset: 3px; }
+  :root.page-chrome .app-shell > .player-bar .seek-row { color: #ffffffe6; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root .app-shell > .player-bar .now-playing, :root .app-shell > .player-bar .seek-row::before, :root .app-shell > .player-bar .seek-row::after, :root .app-shell > .player-bar .seek-row > span { transition: none; }
+}
+:root.reduce-motion .app-shell > .player-bar .now-playing, :root.reduce-motion .app-shell > .player-bar .seek-row::before, :root.reduce-motion .app-shell > .player-bar .seek-row::after, :root.reduce-motion .app-shell > .player-bar .seek-row > span { transition: none; }
+
+/* ---------- Liquid glass: the pill and the side panels take the colour of the page behind them ---------- */
+:root .app-shell > .player-bar.glass,
+:root.page-chrome .app-shell > .player-bar.glass,
+:root .app-shell.artist-chrome > .player-bar.glass {
+  --glass-tint: color-mix(in srgb, var(--chrome-background, #1c1c1f) 62%, #18181b);
+  background: color-mix(in srgb, var(--glass-tint) 64%, transparent);
+  border: 0;
+  box-shadow: 0 18px 50px #0006, inset 0 1px 0 #ffffff24, inset 0 0 0 .5px #ffffff2e;
+  backdrop-filter: blur(30px) saturate(1.9);
+  -webkit-backdrop-filter: blur(30px) saturate(1.9);
+}
+:root .queue-panel.glass,
+:root .lyrics-panel.glass {
+  --glass-tint: color-mix(in srgb, var(--chrome-background, #1c1c1f) 58%, #141417);
+  background: color-mix(in srgb, var(--glass-tint) 58%, transparent);
+  border: 0;
+  border-radius: 20px;
+  box-shadow: 0 24px 60px #0007, inset 0 1px 0 #ffffff1f, inset 0 0 0 .5px #ffffff26;
+  backdrop-filter: blur(44px) saturate(1.8);
+  -webkit-backdrop-filter: blur(44px) saturate(1.8);
+}
+@media (min-width: 761px) and (min-height: 501px), (min-width: 761px) and (pointer: fine) {
+  /* Let the page tint through while softening details under the panel text. */
+  :root:not(.transparency-off) :is(.queue-panel, .lyrics-panel).glass {
+    background: color-mix(in srgb, var(--glass-tint) 82%, transparent);
+    -webkit-backdrop-filter: blur(44px) brightness(.72) saturate(1.35);
+    backdrop-filter: blur(44px) brightness(.72) saturate(1.35);
+  }
+}
+:root .queue-panel.glass .queue-scroll .queue-item:has(.queue-song:active) { background: #ffffff1a; }
+@media (hover: hover) {
+  :root .queue-panel.glass .queue-scroll:not(.queue-dragging) .queue-item:hover { background: #ffffff0f; }
+  /* Grips stay quiet until the row is in play, so the list reads as covers and titles. */
+  :root .queue-panel.glass .queue-grip { opacity: .45; transition: opacity 120ms; }
+  :root .queue-panel.glass .queue-item:is(:hover, :focus-within, .queue-lifted) .queue-grip { opacity: 1; }
+}
+/* Without transparency the surfaces keep the page tint as a solid colour. */
+:root.transparency-off .app-shell > .player-bar.glass, :root.transparency-off.page-chrome .app-shell > .player-bar.glass, :root.transparency-off .app-shell.artist-chrome > .player-bar.glass,
+:root.transparency-off .queue-panel.glass, :root.transparency-off .lyrics-panel.glass { background: var(--glass-tint); backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* ---------- Pill volume: speaker button and liquid glass popover at <=960px ---------- */
+@media (min-width: 761px) and (max-width: 960px) {
+  :root .app-shell > .player-bar .volume-inline-icon {
+    display: none;
+  }
+  :root .app-shell > .player-bar .volume-button {
+    display: inline-flex;
+  }
+  /* The popover anchors above the speaker button, not the centre of the pill. */
+  :root .app-shell > .player-bar .player-volume { position: relative; }
+  :root .app-shell > .player-bar .volume-popover {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 22px);
+    left: 50%;
+    transform: translateX(calc(-50% + var(--popover-shift, 0px)));
+    padding: 10px 14px;
+    border-radius: 16px;
+    max-width: calc(100vw - 24px);
+    box-sizing: border-box;
+    z-index: 50;
+    --glass-tint: color-mix(in srgb, var(--chrome-background, #1c1c1f) 58%, #141417);
+    background: color-mix(in srgb, var(--glass-tint) 58%, transparent);
+    border: 0;
+    box-shadow: 0 16px 40px #0007, inset 0 1px 0 #ffffff1f, inset 0 0 0 .5px #ffffff26;
+    backdrop-filter: blur(44px) saturate(1.8);
+    -webkit-backdrop-filter: blur(44px) saturate(1.8);
+    align-items: center;
+    justify-content: center;
+  }
+  :root .app-shell > .player-bar .volume-popover.open {
+    display: flex;
+  }
+  :root .app-shell > .player-bar .volume-popover .volume-slider {
+    display: block;
+    width: 120px;
+    min-width: 100px;
+    height: 28px;
+    margin: 0;
+  }
+  :root .app-shell > .player-bar .volume-popover .volume-slider::-webkit-slider-thumb {
+    width: 12px;
+    height: 12px;
+    margin-top: -4.5px;
+  }
+  :root .app-shell > .player-bar .volume-popover .volume-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+  }
+}
+
+:root.transparency-off .app-shell > .player-bar .volume-popover {
+  background: var(--glass-tint, #1c1c1f);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root .app-shell > .player-bar .volume-popover { transition: none; }
+}
+:root.reduce-motion .app-shell > .player-bar .volume-popover {
+  transition: none;
+}
+
+/* ---------- Pill seek on touch devices (hover: none) ---------- */
+@media (min-width: 761px) and (min-height: 501px) and (hover: none), (min-width: 761px) and (pointer: fine) and (hover: none) {
+  :root .app-shell > .player-bar .now-playing {
+    position: relative;
+    z-index: 2;
+  }
+  :root .app-shell > .player-bar .transport {
+    position: relative;
+    z-index: 2;
+  }
+  :root .app-shell > .player-bar .player-tools {
+    position: relative;
+    z-index: 2;
+  }
+  :root .app-shell > .player-bar .seek-row {
+    position: relative;
+    z-index: 1;
+    overflow: visible;
+  }
+  :root .app-shell > .player-bar .seek-row input {
+    min-height: 44px;
+    height: 44px;
+    margin-top: -15px;
+    margin-bottom: -15px;
+    cursor: pointer;
+  }
+  :root .app-shell > .player-bar .seek-row input::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 3px;
+    background: #ffffff30;
+  }
+  :root .app-shell > .player-bar .seek-row input::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #eee;
+    margin-top: -5.5px;
+  }
+  :root .app-shell > .player-bar .seek-row input::-moz-range-track {
+    height: 3px;
+    border-radius: 3px;
+    background: #ffffff30;
+  }
+  :root .app-shell > .player-bar .seek-row input::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: 0;
+    border-radius: 50%;
+    background: #eee;
+  }
+  :root .app-shell > .player-bar .seek-row > :is(.seek-elapsed, .seek-total) {
+    display: block;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    min-width: 4.5ch;
+    line-height: 1;
+    color: inherit;
+  }
+  :root .app-shell > .player-bar .seek-row > .seek-remaining {
+    display: none;
+  }
+}

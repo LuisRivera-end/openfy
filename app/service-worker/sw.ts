@@ -14,8 +14,8 @@ self.addEventListener('message', event => { if (event.data?.type === 'OPENFY_VER
 precacheAndRoute(self.__WB_MANIFEST)
 cleanupOutdatedCaches()
 clientsClaim()
-// Service worker static routing (Safari 27, Chromium): audio streams go straight to the network without waking
-// this worker, so starting playback never waits for it. Downloads and artwork still use the routes below.
+// Service worker static routing (Safari 27, Chromium): audio streams and motion-art videos go straight to the network
+// without waking this worker, so starting playback never waits for it. Downloads and artwork still use the routes below.
 self.addEventListener('install', event => {
   const install = event as ExtendableEvent & { addRoutes?: (rules: unknown[]) => Promise<void> }
   if (typeof install.addRoutes !== 'function') return
@@ -24,6 +24,7 @@ self.addEventListener('install', event => {
     event.waitUntil(install.addRoutes([
       { condition: { urlPattern: { pathname: '/api/assets/*', search: `${STREAM_PARAM}=1` } }, source: 'network' },
       { condition: { urlPattern: { pathname: '/api/music/youtube/*/stream' } }, source: 'network' },
+      { condition: { urlPattern: { pathname: '/api/motion/*' } }, source: 'network' },
     ]).catch(() => {}))
   } catch { /* Synchronous rejection of the rules. */ }
 })

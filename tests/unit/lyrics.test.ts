@@ -11,7 +11,8 @@ import type { LyricsLine } from '../../shared/types/lyrics'
 import contract from '../fixtures/lyrics-contract.json'
 import { embeddedLyrics } from '../../server/utils/embedded-lyrics'
 import { LrcClient, LyricsProviderError, matchesLyrics, type LrcRecord, type ProviderLyrics } from '../../server/utils/lrclib'
-import { resolveLyrics } from '../../server/utils/lyrics'
+import { missingYouTubeLyrics, resolveLyrics } from '../../server/utils/lyrics'
+import { Utils } from 'youtubei.js'
 import { closeDatabase, dataPaths, getDatabase } from '../../server/database'
 import { imports, lyrics, tracks } from '../../server/database/schema'
 import { importFile } from '../../server/utils/importer'
@@ -198,6 +199,17 @@ describe('persistent lyrics resolution', () => {
     expect(result.status).toBe('plain'); expect(result.expiresAt).toBe(now)
     expect(getDatabase().select().from(lyrics).where(eq(lyrics.key, entry.trackId)).get()).toBeUndefined()
   })
+  it('cleans up latestSignatures after resolution finishes or fails', async () => {
+    const entry = await importLyrics('Texto propio')
+    const { latestSignatures } = await import('../../server/utils/lyrics')
+    expect(latestSignatures.size).toBe(0)
+    await resolveLyrics({ entry }, { lrc: async () => null })
+    expect(latestSignatures.size).toBe(0)
+
+    const empty = await importLyrics('')
+    await expect(resolveLyrics({ entry: empty, refresh: true }, { lrc: async () => { throw new LyricsProviderError() } })).rejects.toBeInstanceOf(LyricsProviderError)
+    expect(latestSignatures.size).toBe(0)
+  })
   it('migrates a v1 database in place and can reopen it repeatedly', () => {
     const before = readLibrary().tracks.map(track => track.id)
     const filename = join(dataPaths().root, 'openfy.sqlite')
@@ -245,5 +257,28 @@ describe('enhanced LRC read through music-metadata', () => {
     expect(content?.lines).toEqual([
       { time: .5, text: 'El corazón', words: [{ time: .5, text: 'El ' }, { time: .9, text: 'corazón' }], end: 1.6 },
       { time: 2, text: 'Sin palabras' }])
+  })
+})
+
+describe('YouTube Music lyrics absence', () => {
+  const id = 'KQMp0JYwTrw'
+  it('treats the localized "no lyrics" message as an absence, not a provider failure', () => {
+    // Thrown by Music.getLyrics when the lyrics page is a Message renderer (lang: es).
+    expect(missingYouTubeLyrics(new Utils.InnertubeError('La letra no está disponible', id), id)).toBe(true)
+    expect(missingYouTubeLyrics(new Utils.InnertubeError('Lyrics not available', id), id)).toBe(true)
+    expect(missingYouTubeLyrics(new Utils.InnertubeError('Could not find target tab.'), id)).toBe(true)
+    // Wording alone is enough when the SDK changes how it attaches the video id.
+    expect(missingYouTubeLyrics(new Error('La letra no está disponible'), id)).toBe(true)
+    expect(missingYouTubeLyrics(new Error('Las letras no están disponibles'), id)).toBe(true)
+  })
+  it('keeps network and parser failures retryable', () => {
+    expect(missingYouTubeLyrics(new Utils.InnertubeError('Unexpected response', { contents: null }), id)).toBe(false)
+    expect(missingYouTubeLyrics(new TypeError('fetch failed'), id)).toBe(false)
+    expect(missingYouTubeLyrics('offline', id)).toBe(false)
+  })
+  it('records not_found for a downloaded song whose providers have no lyrics', async () => {
+    const result = await resolveLyrics({ entry: youtubeEntry, refresh: true }, { lrc: async () => null, youtube: async () => null })
+    expect(result.status).toBe('not_found')
+    expect(result.expiresAt).toBeGreaterThan(Date.now())
   })
 })
