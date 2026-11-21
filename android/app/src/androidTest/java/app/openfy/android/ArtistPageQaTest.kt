@@ -81,8 +81,11 @@ class ArtistPageQaTest {
 
             scrollTo("Canciones populares")
             capture(captures, "02-artist-songs")
-            scrollTo("Acerca de")
+            compose.onNodeWithContentDescription("Acerca de $title").performClick()
+            compose.onNodeWithText("Acerca de").assertIsDisplayed()
+            compose.onNodeWithText(profile.subtitle).assertIsDisplayed()
             capture(captures, "03-artist-about")
+            androidx.test.espresso.Espresso.pressBack()
 
             compose.runOnIdle {
                 model.selectTab(1)

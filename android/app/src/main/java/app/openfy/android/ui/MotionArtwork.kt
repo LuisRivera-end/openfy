@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -28,6 +29,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -44,13 +46,21 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import app.openfy.android.OpenfyApplication
+import app.openfy.android.data.Song
 import app.openfy.android.preferences
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val LocalMotionPriority = compositionLocalOf { 0 }
 
@@ -58,8 +68,14 @@ private val LocalMotionPriority = compositionLocalOf { 0 }
 internal class MotionPlaybackCoordinator {
     private val requests = linkedMapOf<Any, Int>()
     private var release: (() -> Unit)? = null
+    private val ownerListeners = mutableListOf<(Any?) -> Unit>()
     var owner by mutableStateOf<Any?>(null)
         private set
+
+    /** For owners outside Compose, which cannot observe [owner] as snapshot state. */
+    fun addOwnerListener(listener: (Any?) -> Unit) { ownerListeners += listener }
+
+    fun removeOwnerListener(listener: (Any?) -> Unit) { ownerListeners -= listener }
 
     fun request(key: Any, priority: Int) {
         requests[key] = priority
@@ -95,6 +111,7 @@ internal class MotionPlaybackCoordinator {
         if (owner === next) return
         releasePlayer()
         owner = next
+        ownerListeners.toList().forEach { it(next) }
     }
 
     private fun releasePlayer() {
@@ -103,6 +120,12 @@ internal class MotionPlaybackCoordinator {
         action?.invoke()
     }
 }
+
+/** Motion covers are looked up by the song's first credited artist, as the expanded player shows it. */
+internal fun Song.motionArtist(): String = runCatching {
+    Json.parseToJsonElement(metadata).jsonObject["artists"]?.jsonArray?.firstOrNull()
+        ?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+}.getOrNull() ?: artist
 
 /** The expanded dialog also covers the album behind it while showing lyrics or the queue. */
 @Composable
@@ -136,8 +159,9 @@ internal fun MotionArtwork(
     }
     val enabled by preferenceFlow.collectAsStateWithLifecycle(initialValue = false)
     var onScreen by remember { mutableStateOf(false) }
+    var timedOut by remember(artist, album) { mutableStateOf(false) }
     val lease = remember { Any() }
-    val eligible = enabled && !reducedMotion && onScreen && !artist.isNullOrBlank() && !album.isNullOrBlank()
+    val eligible = enabled && !reducedMotion && onScreen && !artist.isNullOrBlank() && !album.isNullOrBlank() && !timedOut
     LifecycleStartEffect(lease, eligible, priority) {
         if (eligible) playback.request(lease, priority)
         onStopOrDispose { playback.cancel(lease) }
@@ -145,12 +169,28 @@ internal fun MotionArtwork(
 
     Box(modifier.clip(shape).onGloballyPositioned { coordinates ->
         val bounds = coordinates.boundsInWindow()
-        onScreen = bounds.width > 0f && bounds.height > 0f
+        val root = coordinates.findRootCoordinates().size
+        onScreen = bounds.width > 0f && bounds.height > 0f &&
+            bounds.bottom > 0f && bounds.top < root.height &&
+            bounds.right > 0f && bounds.left < root.width
     }) {
         Cover(fallback, Modifier.matchParentSize(), sizePx = 1024)
         if (eligible && playback.owner === lease) {
             key(artist, album) {
-                MotionVideoLayer(app, repository, lease, artist, album, playing, Modifier.matchParentSize(), shape)
+                MotionVideoLayer(
+                    app = app,
+                    repository = repository,
+                    lease = lease,
+                    artist = artist,
+                    album = album,
+                    playing = playing,
+                    modifier = Modifier.matchParentSize(),
+                    shape = shape,
+                    onTimeout = {
+                        timedOut = true
+                        playback.cancel(lease)
+                    }
+                )
             }
         }
     }
@@ -186,7 +226,10 @@ internal fun MotionArtistArtwork(
 
     Box(modifier.clip(shape).onGloballyPositioned { coordinates ->
         val bounds = coordinates.boundsInWindow()
-        onScreen = bounds.width > 0f && bounds.height > 0f
+        val root = coordinates.findRootCoordinates().size
+        onScreen = bounds.width > 0f && bounds.height > 0f &&
+            bounds.bottom > 0f && bounds.top < root.height &&
+            bounds.right > 0f && bounds.left < root.width
     }) {
         if (fallback != null) Cover(fallback, Modifier.matchParentSize(), sizePx = 1024)
         if (eligible && playback.owner === lease) {
@@ -195,6 +238,46 @@ internal fun MotionArtistArtwork(
             }
         }
     }
+}
+
+@Composable
+internal fun rememberMotionUnmetered(app: OpenfyApplication): Boolean {
+    val context = LocalContext.current
+    val network = remember(app) { app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
+    fun checkUnmetered(): Boolean {
+        if (app.isDebuggable && app.qaUnmetered) return true
+        if (network.isActiveNetworkMetered) return false
+        val caps = network.getNetworkCapabilities(network.activeNetwork)
+        if (caps != null) {
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return false
+            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) return false
+        }
+        if (network.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED) return false
+        return true
+    }
+    val changes = remember(network, context) {
+        callbackFlow {
+            fun refresh() { trySend(checkUnmetered()) }
+            val callback = object : ConnectivityManager.NetworkCallback() {
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
+                override fun onLost(network: Network) = refresh()
+                override fun onAvailable(network: Network) = refresh()
+            }
+            val filter = android.content.IntentFilter(ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED)
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: android.content.Intent?) = refresh()
+            }
+            network.registerDefaultNetworkCallback(callback)
+            ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            refresh()
+            awaitClose {
+                network.unregisterNetworkCallback(callback)
+                context.unregisterReceiver(receiver)
+            }
+        }.distinctUntilChanged()
+    }
+    val unmetered by changes.collectAsStateWithLifecycle(initialValue = checkUnmetered())
+    return unmetered
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -211,23 +294,10 @@ private fun MotionArtistVideoLayer(
     artistId: String?,
     onVideoReady: (Boolean) -> Unit
 ) {
-    val network = remember(app) { app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
-    val changes = remember(network) {
-        callbackFlow {
-            fun refresh() { trySend(!network.isActiveNetworkMetered) }
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
-                override fun onLost(network: Network) = refresh()
-            }
-            network.registerDefaultNetworkCallback(callback)
-            refresh()
-            awaitClose { network.unregisterNetworkCallback(callback) }
-        }.distinctUntilChanged()
-    }
-    val networkUnmetered by changes.collectAsStateWithLifecycle(initialValue = !network.isActiveNetworkMetered)
-    val qaUnmetered = app.isDebuggable && app.qaUnmetered
-    val unmetered = networkUnmetered || qaUnmetered
+    val unmetered = rememberMotionUnmetered(app)
     if (!unmetered) return
+    val network = remember(app) { app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
+    val qaUnmetered = app.isDebuggable && app.qaUnmetered
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     key(unmetered) {
         val errors = remember { Channel<MotionVideoFailure>(Channel.CONFLATED) }
@@ -277,25 +347,13 @@ private fun MotionVideoLayer(
     album: String,
     playing: Boolean,
     modifier: Modifier,
-    shape: Shape
+    shape: Shape,
+    onTimeout: (() -> Unit)? = null
 ) {
+    val unmetered = rememberMotionUnmetered(app)
+    if (!unmetered) return
     val network = remember(app) { app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager }
-    val changes = remember(network) {
-        callbackFlow {
-            fun refresh() { trySend(!network.isActiveNetworkMetered) }
-            val callback = object : ConnectivityManager.NetworkCallback() {
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = refresh()
-                override fun onLost(network: Network) = refresh()
-            }
-            network.registerDefaultNetworkCallback(callback)
-            refresh()
-            awaitClose { network.unregisterNetworkCallback(callback) }
-        }.distinctUntilChanged()
-    }
-    val networkUnmetered by changes.collectAsStateWithLifecycle(initialValue = !network.isActiveNetworkMetered)
-    // Debug QA only: emulators expose a metered cellular link, so design captures may treat it as unmetered.
     val qaUnmetered = app.isDebuggable && app.qaUnmetered
-    val unmetered = networkUnmetered || qaUnmetered
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     key(unmetered) {
         val errors = remember { Channel<MotionVideoFailure>(Channel.CONFLATED) }
@@ -329,7 +387,8 @@ private fun MotionVideoLayer(
         attempt?.let { loaded ->
             key(loaded) {
                 MotionTexture(repository, lease, loaded, unmetered, playing, modifier, shape,
-                    onError = { errors.trySend(MotionVideoFailure(loaded, it)) })
+                    onError = { errors.trySend(MotionVideoFailure(loaded, it)) },
+                    onTimeout = onTimeout)
             }
         }
     }
@@ -339,15 +398,18 @@ private fun MotionVideoLayer(
 private class MotionAttempt(val video: MotionVideo, val selector: MediaCodecSelector)
 
 private data class MotionVideoFailure(val attempt: MotionAttempt, val cause: PlaybackException) {
-    val isDecodingError: Boolean
-        get() = when (cause.errorCode) {
-            PlaybackException.ERROR_CODE_DECODING_FAILED,
-            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
-            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED -> true
-            else -> false
-        }
+    val isDecodingError: Boolean get() = cause.isMotionDecodingError
 }
+
+/** Failures that another decoder or a smaller rendition may avoid. */
+internal val PlaybackException.isMotionDecodingError: Boolean
+    get() = when (errorCode) {
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED -> true
+        else -> false
+    }
 
 private suspend fun waitForMotionRetry(at: Long) = delay((at - System.currentTimeMillis()).coerceAtLeast(1_000L))
 
@@ -362,7 +424,8 @@ private fun MotionTexture(
     modifier: Modifier,
     shape: Shape,
     onError: (PlaybackException) -> Unit,
-    onVideoReady: ((Boolean) -> Unit)? = null
+    onVideoReady: ((Boolean) -> Unit)? = null,
+    onTimeout: (() -> Unit)? = null
 ) {
     val video = attempt.video
     val context = LocalContext.current
@@ -371,6 +434,7 @@ private fun MotionTexture(
     val latestPlaying by rememberUpdatedState(playing)
     val latestOnError by rememberUpdatedState(onError)
     val latestOnVideoReady by rememberUpdatedState(onVideoReady)
+    val latestOnTimeout by rememberUpdatedState(onTimeout)
     var player by remember(video) { mutableStateOf<ExoPlayer?>(null) }
     var firstFrame by remember(video) { mutableStateOf(false) }
     var videoSize by remember(video) { mutableStateOf(VideoSize(video.width, video.height)) }
@@ -419,6 +483,16 @@ private fun MotionTexture(
         onDispose { repository.playback.detach(lease, release) }
     }
     LaunchedEffect(player, playing) { player?.playWhenReady = playing }
+    LaunchedEffect(player, video) {
+        if (player != null && !firstFrame) {
+            val gotFrame = withTimeoutOrNull(8_000L) {
+                snapshotFlow { firstFrame }.first { it }
+            }
+            if (gotFrame != true) {
+                latestOnTimeout?.invoke()
+            }
+        }
+    }
 
     val alpha by animateFloatAsState(if (firstFrame) 1f else 0f,
         if (playing && firstFrame) tween(280) else snap(), label = "motion first frame")

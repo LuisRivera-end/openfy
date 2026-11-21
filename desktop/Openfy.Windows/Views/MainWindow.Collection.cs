@@ -36,9 +36,20 @@ public sealed partial class MainWindow
             refresh(); return Ui.Wrap(record, shuffle);
         }
         var play = Ui.PrimaryButton("Reproducir", () => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), context: model.PageContext)));
-        AutomationProperties.SetName(play, "Reproducir esta colección"); SetCollectionButtonContent(play, "play", "Reproducir");
+        AutomationProperties.SetName(play, "Reproducir esta colección");
         var mix = Ui.Button("Aleatorio", () => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), true, model.PageContext)));
-        AutomationProperties.SetName(mix, "Reproducir esta colección en aleatorio"); SetCollectionButtonContent(mix, "shuffle", "Aleatorio");
+        AutomationProperties.SetName(mix, "Reproducir esta colección en aleatorio");
+        if (AlbumSurfacePage)
+        {
+            play.Foreground = Ui.Brush("#09090B");
+            play.Resources["ButtonForegroundPointerOver"] = play.Foreground;
+            play.Resources["ButtonForegroundPressed"] = play.Foreground;
+            StyleAlbumButton(mix);
+            AlbumFocus(play);
+        }
+        SetCollectionButtonContent(play, "play", "Reproducir");
+        SetCollectionButtonContent(mix, "shuffle", "Aleatorio");
+        if (AlbumSurfacePage) play.MinHeight = mix.MinHeight = 48;
         refresh = () => { play.IsEnabled = mix.IsEnabled = model.Songs.Count > 0; };
         refresh(); return Ui.Wrap(play, mix);
     }
@@ -55,20 +66,35 @@ public sealed partial class MainWindow
         AutomationProperties.SetName(downloaded, "Solo descargadas");
         var count = Ui.Muted("", 12); count.VerticalAlignment = VerticalAlignment.Center;
         bool artist = model.Page == "localartist";
+        bool album = model.Page == "localalbum";
         if (artist) {
             count.Foreground = Ui.Brush(ArtistSecondaryText);
             ArtistFocus(downloaded);
             ArtistFocus(input);
+        }
+        if (album)
+        {
+            count.Foreground = albumMuted;
+            if (input is Grid { Children.Count: > 0 } wrapper && wrapper.Children[0] is TextBox searchBox)
+            {
+                StyleTintedSearchBox(searchBox);
+                AlbumFocus(searchBox);
+            }
+            foreach (var state in new[] { "PointerOver", "Pressed", "Checked", "CheckedPointerOver", "CheckedPressed" })
+                downloaded.Resources["ToggleButtonBackground" + state] = albumTrackSurface;
+            AlbumFocus(downloaded);
         }
         AutomationProperties.SetLiveSetting(count, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         var tools = Ui.Wrap(downloaded, count); Grid.SetColumn(tools, 1); toolbar.Children.Add(tools);
         refresh = () => {
             bool active = model.Filters.Downloaded;
             downloaded.IsChecked = active;
-            var color = Ui.Brush(artist ? ArtistSecondaryText : active ? "#1ED760" : "#A1A1AA"); label.Foreground = color; Ui.Tint(icon, color);
-            downloaded.Background = Ui.Brush(artist ? (active ? "#00000066" : "#00000026") : (active ? "#1ED76014" : "#FFFFFF0B"));
-            downloaded.BorderBrush = Ui.Brush(artist ? (active ? "#FFFFFF9C" : "#FFFFFF40") : (active ? "#1ED76066" : "#FFFFFF10"));
+            var color = album && !active ? albumMuted : Ui.Brush(artist ? ArtistSecondaryText : active ? "#1ED760" : "#A1A1AA");
+            label.Foreground = color; Ui.Tint(icon, color);
+            downloaded.Background = album ? albumTrackSurface : Ui.Brush(artist ? (active ? "#00000066" : "#00000026") : (active ? "#1ED76014" : "#FFFFFF0B"));
+            downloaded.BorderBrush = album ? active ? Ui.Brush("#1ED760") : albumTrackSurface : Ui.Brush(artist ? (active ? "#FFFFFF9C" : "#FFFFFF40") : (active ? "#1ED76066" : "#FFFFFF10"));
             count.Text = (model.Filters.Query.Trim().Length > 0 || active ? model.Songs.Count + " de " + model.UnfilteredSongs.Length : model.Songs.Count.ToString()) + " canciones";
+            if (album) count.Visibility = model.Filters.Query.Trim().Length > 0 || active ? Visibility.Visible : Visibility.Collapsed;
         };
         RoutedEventHandler toggle = (_, _) => {
             applyingCatalogFilter = true;
@@ -100,6 +126,7 @@ public sealed partial class MainWindow
 
     private void BuildSavedCollection()
     {
+        if (model.Page == "localalbum") { BuildAlbumPage(local: true); return; }
         bool artist = model.Page == "localartist";
         var hero = new Grid { ColumnSpacing = 24, RowSpacing = 16, Margin = new(0, 4, 0, 0) };
         if (artist) artistHeroStage = hero;

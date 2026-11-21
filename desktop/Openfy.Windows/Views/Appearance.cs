@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -7,6 +8,15 @@ namespace Openfy.Windows.Views;
 /// <summary>Applies presentation without replacing windows or the audio model.</summary>
 public static class Appearance
 {
+    private sealed record ElementStyle(Action Apply, bool PreserveTemplate);
+    private static readonly ConditionalWeakTable<FrameworkElement, ElementStyle> styles = new();
+
+    internal static void SetStyle(FrameworkElement element, Action apply, bool preserveTemplate = false)
+    {
+        styles.Add(element, new(apply, preserveTemplate));
+        apply();
+    }
+
     public static void Attach(FrameworkElement root)
     {
         RoutedEventHandler loaded = (_, _) => Apply(root);
@@ -18,6 +28,18 @@ public static class Appearance
     public static void Apply(DependencyObject node)
     {
         // Each step is idempotent when dynamic content is styled repeatedly.
+        if (node is FrameworkElement element && styles.TryGetValue(element, out var style))
+        {
+            style.Apply();
+            if (style.PreserveTemplate) return;
+        }
+        else
+            ApplyDefaults(node);
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Apply(VisualTreeHelper.GetChild(node, i));
+    }
+
+    private static void ApplyDefaults(DependencyObject node)
+    {
         if (node is TextBlock text && !Equals(text.Tag, "display"))
             text.FontSize = text.FontSize switch { >= 48 => 48, >= 30 => 32, >= 18 => 22, >= 13 => 14, >= 11 => 12, _ => text.FontSize };
         if (node is Border border && border.CornerRadius.TopLeft >= 10 && !Equals(border.Tag, "home-artwork") && !Equals(border.Tag, "ambient-preview") && !Equals(border.Tag, "loading-placeholder")) {
@@ -28,6 +50,5 @@ public static class Appearance
             button.CornerRadius = new(12);
         if (node is Grid grid && grid.Padding.Left == 9 && grid.Padding.Top == 9)
             grid.Padding = new(12);
-        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) Apply(VisualTreeHelper.GetChild(node, i));
     }
 }

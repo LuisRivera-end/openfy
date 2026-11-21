@@ -2,6 +2,7 @@
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Hosting;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
@@ -18,6 +19,9 @@ public sealed partial class MainWindow
     private readonly TextBlock trackNumberHeading = Ui.Muted("#", 11);
     private readonly Grid trackTableHeading = new() { Height = 42, Padding = new(12, 0, 12, 0), ColumnSpacing = 12, BorderBrush = Ui.Brush("#FFFFFF0D"), BorderThickness = new(0, 0, 0, 1) };
     private readonly ScrollViewer trackScroll;
+    private readonly Grid trackLayout = new();
+    private readonly StackPanel artistPopularHeading = new();
+    private readonly StackPanel artistLatestRelease = new() { Visibility = Visibility.Collapsed };
     private readonly StackPanel shellNotices = new() { Padding = new(36, 0, 36, 0) };
 
     private readonly ScrollViewer pageScroll;
@@ -26,6 +30,7 @@ public sealed partial class MainWindow
 
     private readonly ProgressBar loading = new() { IsIndeterminate = true, Height = 2, Visibility = Visibility.Collapsed };
     private string previousPage = "";
+    private Button clearSearchButton = null!;
 
     private readonly StackPanel updateNotice = new() { Spacing = 8, Visibility = Visibility.Collapsed, Margin = new(0,0,0,12) };
     public void AttachUpdates(DesktopUpdates updates)
@@ -48,28 +53,49 @@ public sealed partial class MainWindow
         AppWindow.TitleBar.ButtonBackgroundColor = Ui.Brush("#09090B").Color;
         AppWindow.TitleBar.ButtonForegroundColor = Ui.Brush("#A1A1AA").Color;
         SystemBackdrop = new MicaBackdrop(); WindowsIntegration.ResizeDefault(this, 1320, 880);
-        root = new Grid { RequestedTheme = ElementTheme.Dark, Background = Ui.Brush("#09090B"), Padding = new(9), RowSpacing = 9 };
-        root.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); root.RowDefinitions.Add(new() { Height = new(112) });
-        var body = new Grid { ColumnSpacing = 9 };
+        root = new Grid { RequestedTheme = ElementTheme.Dark, Background = frameBackground };
+        var compositor = ElementCompositionPreview.GetElementVisual(root).Compositor;
+        playerGlass = new(compositor, 30, .64f) { TintColor = NeutralPlayerGlass, FallbackColor = NeutralPlayerGlass };
+        sidePanelGlass = new(compositor, 40, .58f) { TintColor = NeutralPlayerGlass, FallbackColor = NeutralPlayerGlass };
+        var body = new Grid();
         body.ColumnDefinitions.Add(new() { Width = new(244) }); body.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         root.Children.Add(body);
         body.Children.Add(Navigation());
         var main = new Grid(); main.RowDefinitions.Add(new() { Height = new(82) }); main.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) });
-        var mainPanel = new Border { Child = main, Background = Ui.Gradient("#17191B", "#101012"), CornerRadius = new(12), BorderBrush = Ui.Brush("#FFFFFF06"), BorderThickness = new(1) };
-        Grid.SetColumn(mainPanel, 1); body.Children.Add(mainPanel);
+        Grid.SetColumn(main, 1); body.Children.Add(main);
         var topbar = new Grid { Padding = new(36, 0, 36, 0), ColumnSpacing = 16 };
         topbar.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); topbar.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         var shortcut = new Grid { Width = 275, HorizontalAlignment = HorizontalAlignment.Left };
         search.PlaceholderText = "¿Qué quieres escuchar?"; search.MaxLength = 200; search.Height = 44; search.Padding = new(34, 0, 38, 0); search.VerticalContentAlignment = VerticalAlignment.Center; search.CornerRadius = new(12); search.Background = Ui.Brush("#202024"); search.FontSize = 14;
         AutomationProperties.SetName(search, "Buscar canciones, artistas o álbumes"); shortcut.Children.Add(search);
         var searchIcon = Ui.Icon("search", 18); searchIcon.HorizontalAlignment = HorizontalAlignment.Left; searchIcon.VerticalAlignment = VerticalAlignment.Center; searchIcon.Margin = new(12,0,0,0); shortcut.Children.Add(searchIcon);
-        var clearSearch = Ui.IconButton("close", "Limpiar búsqueda", () => { search.Text = ""; search.Focus(FocusState.Programmatic); }); clearSearch.HorizontalAlignment = HorizontalAlignment.Right; clearSearch.Visibility = Visibility.Collapsed; shortcut.Children.Add(clearSearch);
+        var clearSearch = clearSearchButton = Ui.IconButton("close", "Limpiar búsqueda", () => { search.Text = ""; search.Focus(FocusState.Programmatic); }); clearSearch.HorizontalAlignment = HorizontalAlignment.Right; clearSearch.Visibility = Visibility.Collapsed; shortcut.Children.Add(clearSearch);
         search.TextChanged += (_, _) => clearSearch.Visibility = search.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
-        topbar.Children.Add(shortcut);
+        topbarShortcut = shortcut;
+        topbarBack = Ui.IconButton("back", "Volver", ReturnToSearch, 44);
+        topbarBack.CornerRadius = new(22);
+        topbarBack.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetName(topbarBack, "Volver a buscar");
+        ToolTipService.SetToolTip(topbarBack, "Volver");
+        var searchGroup = Ui.Row(topbarBack, shortcut);
+        searchGroup.Spacing = 10;
+        searchGroup.VerticalAlignment = VerticalAlignment.Center;
+        searchGroup.HorizontalAlignment = HorizontalAlignment.Left;
+        topbar.Children.Add(searchGroup);
         var import = Ui.AsyncButton("Importar música", model, ShowImportAsync); import.Content = Ui.Row(Ui.Icon("plus", 18), Ui.Text("Importar música", 11, true)); import.MinHeight = 38; import.Height = 38; import.Padding = new(14, 0, 14, 0);
-        var avatar = Ui.Button("OF", () => _ = model.RunAsync(SettingsAsync), "Abrir ajustes"); avatar.Width = avatar.Height = avatar.MinWidth = avatar.MinHeight = 36; avatar.Padding = new(0); avatar.FontSize = 11; avatar.Background = Ui.Brush("#383442"); avatar.Foreground = Ui.Brush("#D5CCE9");
+        var avatar = Ui.Button("Ajustes", () => _ = model.RunAsync(SettingsAsync), "Abrir ajustes"); avatar.Width = avatar.Height = avatar.MinWidth = avatar.MinHeight = 36; avatar.Padding = new(0); avatar.Background = Ui.Brush("#383442"); avatar.Foreground = Ui.Brush("#D5CCE9"); Ui.SetIcon(avatar, "settings", 18); ToolTipService.SetToolTip(avatar, "Ajustes");
+        StyleTopBar(search, import, avatar, topbarBack);
+        Ui.Tint(searchIcon, frameWhite);
+        Ui.Tint((FrameworkElement)clearSearch.Content, frameWhite);
+        Ui.Tint((FrameworkElement)topbarBack.Content, frameWhite);
+        Ui.Tint((FrameworkElement)avatar.Content, frameWhite);
+        if (import.Content is StackPanel importCopy)
+        {
+            Ui.Tint(importCopy, frameWhite);
+            foreach (var label in importCopy.Children.OfType<TextBlock>()) label.Foreground = frameWhite;
+        }
         var actions = Ui.Row(import, avatar); actions.Spacing = 17; actions.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(actions, 1); topbar.Children.Add(actions); main.Children.Add(topbar);
-        var page = new StackPanel { Padding = new(36, 18, 36, 42), Spacing = 0 };
+        var page = new StackPanel { Padding = new(36, 18, 36, PlayerInset), Spacing = 0 };
         shellNotices.Children.Add(updateNotice);
         var error = Ui.Text("", 13); error.Foreground = Ui.Brush("#FFA3A3"); Ui.Bind(error, TextBlock.TextProperty, model, nameof(model.Error)); error.Margin = new(0, 0, 0, 12); error.Visibility = Visibility.Collapsed; AutomationProperties.SetLiveSetting(error, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite); shellNotices.Children.Add(error);
         main.RowDefinitions.Insert(1, new() { Height = GridLength.Auto }); Grid.SetRow(shellNotices, 1); main.Children.Add(shellNotices);
@@ -82,6 +108,7 @@ public sealed partial class MainWindow
         {
             var button = Ui.Button(label, () => { if (model.Page == "most-played") { if (key is "plays" or "minutes") _ = model.RunAsync(() => model.SortRankingAsync(key)); } else model.SortLibrary(key); });
             button.FontSize = 11; button.Padding = new(0); button.Background = Ui.Brush("#FFFFFF00"); button.BorderThickness = new(0); button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left;
+            StateBrushes.Register(button, AlbumButtonStateKeys);
             AutomationProperties.SetName(button, "Ordenar por " + label); Grid.SetColumn(button, column++); tableHeading.Children.Add(button);
         }
         trackSection.MinWidth = 1040; trackSection.Children.Add(tableHeading);
@@ -93,14 +120,33 @@ public sealed partial class MainWindow
         // and the heading on the same columns; below the minimum the table still scrolls horizontally.
         trackScroll = new ScrollViewer { Content = trackSection, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled };
         trackScroll.SizeChanged += (_, args) => trackSection.Width = Math.Max(trackSection.MinWidth, args.NewSize.Width);
-        page.Children.Add(trackScroll); page.Children.Add(catalogTail);
-        pageScroll = new ScrollViewer { Content = page, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; Grid.SetRow(pageScroll, 2); main.Children.Add(pageScroll); AttachArtistWash(main, page);
+        var trackContent = new StackPanel();
+        trackContent.Children.Add(artistPopularHeading);
+        trackContent.Children.Add(trackScroll);
+        trackLayout.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
+        trackLayout.ColumnDefinitions.Add(new() { Width = new(0) });
+        trackLayout.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        trackLayout.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        trackLayout.Children.Add(trackContent);
+        trackLayout.Children.Add(artistLatestRelease);
+        page.Children.Add(trackLayout); page.Children.Add(catalogTail);
+        pageScroll = new ScrollViewer { Content = page, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        KeepAbovePlayer(page, pageScroll);
+        Grid.SetRow(pageScroll, 2); main.Children.Add(pageScroll); AttachPageWash(body, page);
         BuildSearchSurface(main);
         ObserveSearchScroll(searchSongRows, "song");
-        sidePanel = new Border { Child = side, Background = Ui.Glass(), CornerRadius = new(12), BorderBrush = Ui.Brush("#FFFFFF0B"), BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Right, Width = 340, Visibility = Visibility.Collapsed }; Grid.SetColumnSpan(sidePanel, 2); body.Children.Add(sidePanel); Canvas.SetZIndex(sidePanel, 10);
-        var bar = PlayerBar(); Grid.SetRow(bar, 1); root.Children.Add(bar);
-        root.SizeChanged += (_, _) => { bool compact = root.ActualWidth < 1100; body.ColumnDefinitions[0].Width = new(compact ? 210 : 244); double inset = compact ? 24 : root.ActualWidth >= 1400 ? 48 : 36; topbar.Padding = new(inset, 0, inset, 0); page.Padding = new(inset, 18, inset, 42); shellNotices.Padding = new(inset, 0, inset, 0); searchSurface.Padding = new(inset, 0, inset, 18); avatar.Visibility = root.ActualWidth < 900 ? Visibility.Collapsed : Visibility.Visible; shortcut.Width = Math.Clamp(root.ActualWidth - (compact ? 210 : 244) - 2 * inset - (root.ActualWidth < 900 ? 180 : 245), 150, 275); sidePanel.Width = Math.Min(lyricsVisible ? 420 : 380, Math.Max(240, root.ActualWidth - 40)); ResizeTracks(); };
-        pageScroll.SizeChanged += (_, _) => ResizeTracks();
+        sidePanel = new Border { Child = side, BorderThickness = new(1), HorizontalAlignment = HorizontalAlignment.Right, Width = 340, Margin = new(0, 0, 0, PlayerInset), Visibility = Visibility.Collapsed };
+        var panelHairline = Ui.Brush("#FFFFFF1F");
+        Appearance.SetStyle(sidePanel, () => {
+            sidePanel.Background = PlaybackBackground(sidePanelGlass);
+            sidePanel.CornerRadius = new(20);
+            sidePanel.BorderBrush = panelHairline;
+        });
+        Grid.SetColumnSpan(sidePanel, 2); body.Children.Add(sidePanel); Canvas.SetZIndex(sidePanel, 10);
+        playerPill = PlayerBar(main); Grid.SetColumn(playerPill, 1); body.Children.Add(playerPill); Canvas.SetZIndex(playerPill, 11);
+        ObserveTransparency();
+        root.SizeChanged += (_, _) => { bool compact = root.ActualWidth < 1100; body.ColumnDefinitions[0].Width = new(compact ? 210 : 244); double inset = compact ? 24 : root.ActualWidth >= 1400 ? 48 : 36; topbar.Padding = new(inset, 0, inset, 0); LayoutPageInsets(); shellNotices.Padding = new(inset, 0, inset, 0); searchSurface.Padding = new(inset, 0, inset, 0); avatar.Visibility = root.ActualWidth < 900 ? Visibility.Collapsed : Visibility.Visible; LayoutTopBarShortcut(); sidePanel.Width = Math.Min(lyricsVisible ? 420 : 380, Math.Max(240, root.ActualWidth - 40)); ResizeTracks(); };
+        pageScroll.SizeChanged += (_, _) => { if (AlbumSurfacePage) ApplyPageTrackStyle(); ResizeTracks(); };
         search.KeyDown += (_, args) => { if (args.Key == global::Windows.System.VirtualKey.Enter) { args.Handled = true; debounce?.Cancel(); Search(); } };
         search.TextChanged += async (_, _) => {
             debounce?.Cancel(); if (restoringSearch || search.Text == model.Query) return;
@@ -109,29 +155,78 @@ public sealed partial class MainWindow
             var token = (debounce = new()).Token;
             try { await Task.Delay(350, token); Search(); } catch (OperationCanceledException) { }
         };
-        root.KeyDown += (_, args) => { if (args.Key == global::Windows.System.VirtualKey.Escape) { queueVisible = lyricsVisible = model.LyricsVisible = false; BuildSide(); } else if (args.Key == global::Windows.System.VirtualKey.Space && args.OriginalSource is not (TextBox or Slider or Button) && !lyricsVisible) { args.Handled = true; _ = model.RunAsync(model.ToggleAsync); } };
+        root.KeyDown += (_, args) => { if (args.Key == global::Windows.System.VirtualKey.Escape) { queueVisible = lyricsVisible = model.LyricsVisible = false; BuildSide(); } };
+        AttachShortcuts();
         Content = root; Appearance.Attach(root);
         model.YieldForNavigationAsync = YieldForCatalogPaintAsync; model.CanReuseLocalView = CanReuseLocalCatalog;
-        model.ContentChanged += () => DispatcherQueue.TryEnqueue(() => { Appearance.Apply(catalog); Appearance.Apply(catalogTail); });
+        model.ContentChanged += () => DispatcherQueue.TryEnqueue(() => {
+            Appearance.Apply(catalog); Appearance.Apply(catalogTail);
+            Appearance.Apply(artistPopularHeading); Appearance.Apply(artistLatestRelease);
+        });
         model.SearchLeaving += () => { if (ActiveSearchScroll() is { } scroll) searchOffsets[searchCategory] = scroll.VerticalOffset; };
         model.ContentChanged += BuildCatalog; model.ArtworkChanged += () => Ui.Cover(cover, model.Cover); model.LyricsChanged += BuildSide;
         model.PropertyChanged += (_, args) => { if (args.PropertyName == nameof(model.Query) && search.Text != model.Query) { restoringSearch = true; try { search.Text = model.Query; } finally { restoringSearch = false; } } if (args.PropertyName == nameof(model.Songs)) SwitchTrackSource(); if (args.PropertyName == nameof(model.Library)) BuildPlaylists(); if (args.PropertyName == nameof(model.Position)) HighlightLyrics(); if (args.PropertyName == nameof(model.Busy)) loading.Visibility = model.Busy ? Visibility.Visible : Visibility.Collapsed; if (args.PropertyName == nameof(model.Error)) error.Visibility = string.IsNullOrEmpty(model.Error) ? Visibility.Collapsed : Visibility.Visible; };
+        model.PropertyChanged += (_, args) => {
+            if (args.PropertyName == nameof(model.Page) && albumCover != null && albumWashKey != AlbumPageKey) ReleaseAlbumVideo();
+            if (args.PropertyName == nameof(model.Current) && AlbumSurfacePage) ApplyPageTrackStyle();
+        };
         AppWindow.Closing += (_, args) => { if (!Exiting) { args.Cancel = true; AppWindow.Hide(); } };
         AppWindow.Changed += (_, _) => { if (!restoringStartupPlacement && StartupRevealed && AppWindow.Presenter.Kind != Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen) model.Settings.Windows["main"] = WindowsIntegration.Placement(this); };
         BuildPlaylists(); BuildCatalog();
     }
 
     private void Search() { model.Query = search.Text; if (search.Text.Trim().Length < 2) model.EmptySearch(); else _ = model.RunAsync(() => model.SearchAsync()); }
-    private void ResizeTracks() { if (tracks != null) tracks.Height = Math.Min(model.Songs.Count * 67 + 4, Math.Max(335, (pageScroll?.ActualHeight ?? 600) - 240)); }
+    private void LayoutPageInsets()
+    {
+        if (pagePanel == null) return;
+        double width = pageScroll.ActualWidth;
+        double inset = AlbumSurfacePage ? width < 560 ? 20 : width < 720 ? 24 : 32 : root.ActualWidth < 1100 ? 24 : root.ActualWidth >= 1400 ? 48 : 36;
+        var padding = new Thickness(inset, 18, inset, PlayerInset);
+        if (pagePanel.Padding != padding) pagePanel.Padding = padding;
+        LayoutArtistReleases();
+    }
+
+    private double TrackRowHeight => AlbumSurfacePage ? CompactAlbum ? 56 : 48 : 67;
+    private void ResizeTracks() { if (tracks != null) tracks.Height = Math.Min(model.Songs.Count * TrackRowHeight + 4, Math.Max(335, (pageScroll?.ActualHeight ?? 600) - 240)); }
     private void UpdateNavigation()
     {
         if (model.Page is not ("search" or "localSearch")) debounce?.Cancel();
         UpdateSearchSurface();
-        foreach (var pair in navButtons) { bool selected = pair.Key == model.Page || pair.Key == "search" && model.Page is "artist" or "album" or "localSearch" || pair.Key == "library" && model.Page is "localalbum" or "localartist"; pair.Value.Background = Ui.Brush(selected ? "#FFFFFF0C" : "#FFFFFF00"); pair.Value.Resources["ButtonBackgroundPointerOver"] = Ui.Brush(selected ? "#FFFFFF12" : "#FFFFFF08"); pair.Value.Foreground = Ui.Brush(selected ? "#F4F4F5" : "#A1A1AA"); if (pair.Value.Content is StackPanel row) { foreach (var text in row.Children.OfType<TextBlock>()) text.Foreground = pair.Value.Foreground; foreach (var icon in row.Children.OfType<Viewbox>()) Ui.Tint(icon, pair.Value.Foreground); } }
-        foreach (var button in playlists.Children.OfType<Button>()) button.Background = Ui.Brush(model.CurrentPlaylist?.Name == AutomationProperties.GetName(button) ? "#FFFFFF08" : "#FFFFFF00");
+        UpdateTopBar();
+        foreach (var (key, button) in navButtons)
+        {
+            bool selected = key == model.Page || key == "library" && model.Page is "localalbum" or "localartist";
+            StyleNavigationSelection(button, selected);
+        }
+        foreach (var button in playlists.Children.OfType<Button>())
+            StyleNavigationSelection(button, model.CurrentPlaylist?.Name == AutomationProperties.GetName(button));
         if (model.Page != previousPage) { previousPage = model.Page; pageScroll.ChangeView(null, 0, null, true); }
         ResizeTracks();
     }
+
+    private static readonly string[] NavigationStateKeys = ["ButtonBackgroundPointerOver", "ButtonBackgroundPressed"];
+    private static readonly global::Windows.UI.Color NavigationHover = ArtistThemes.Color("#FFFFFF08"), NavigationPressed = ArtistThemes.Color("#FFFFFF05");
+
+    /// <summary>Sidebar buttons register their hover and pressed brushes when created; selection only recolours them.</summary>
+    private static StateBrushes RegisterNavigationStates(Button button)
+        => StateBrushes.Register(button, NavigationStateKeys).Set(NavigationHover, "ButtonBackgroundPointerOver").Set(NavigationPressed, "ButtonBackgroundPressed");
+
+    private void StyleNavigationSelection(Button button, bool selected)
+    {
+        button.Background = selected ? frameSelection : Ui.Brush("#FFFFFF00");
+        if (StateBrushes.Of(button) is { } states)
+        {
+            if (selected) states.Follow(frameSelection, NavigationStateKeys);
+            else states.Set(NavigationHover, "ButtonBackgroundPointerOver").Set(NavigationPressed, "ButtonBackgroundPressed");
+        }
+        button.Foreground = selected ? frameWhite : frameMuted;
+        if (button.Content is StackPanel row)
+        {
+            foreach (var text in row.Children.OfType<TextBlock>()) text.Foreground = button.Foreground;
+            foreach (var icon in row.Children.OfType<Viewbox>()) Ui.Tint(icon, button.Foreground);
+        }
+    }
+
     private Border Navigation()
     {
         var grid = new Grid(); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = new(1, GridUnitType.Star) }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -141,12 +236,12 @@ public sealed partial class MainWindow
         void Add(string key, string icon, string label, Action action) { var button = NavButton(icon, label, action); nav.Children.Add(button); navButtons[key] = button; }
         Add("home", "home", "Inicio", () => NavigateLocal("home")); Add("library", "library", "Tu biblioteca", () => NavigateLocal("library")); Add("downloads", "download", "Descargas", () => NavigateLocal("downloads")); Add("most-played", "headphones", "Más reproducidas", () => _ = model.RunAsync(model.ShowMostPlayedAsync));
         var navBorder = new Border { Child = nav, BorderBrush = Ui.Brush("#FFFFFF0D"), BorderThickness = new(0, 0, 0, 1) }; Grid.SetRow(navBorder, 1); grid.Children.Add(navBorder);
-        var collection = new StackPanel { Padding = new(12, 15, 12, 15), Spacing = 8 }; var title = new Grid(); title.Children.Add(new TextBlock { Text = "Tu colección", FontSize = 12, Foreground = Ui.Brush("#A1A1AA"), VerticalAlignment = VerticalAlignment.Center, Margin = new(12, 0, 0, 0) }); var plus = Ui.IconButton("plus", "Crear playlist", () => _ = model.RunAsync(CreatePlaylistAsync)); plus.HorizontalAlignment = HorizontalAlignment.Right; title.Children.Add(plus); collection.Children.Add(title);
+        var collection = new StackPanel { Padding = new(12, 15, 12, 15), Spacing = 8 }; var title = new Grid(); title.Children.Add(new TextBlock { Text = "Tu colección", FontSize = 12, Foreground = frameMuted, VerticalAlignment = VerticalAlignment.Center, Margin = new(12, 0, 0, 0) }); var plus = Ui.IconButton("plus", "Crear playlist", () => _ = model.RunAsync(CreatePlaylistAsync)); Ui.Tint((FrameworkElement)plus.Content, frameMuted); plus.HorizontalAlignment = HorizontalAlignment.Right; title.Children.Add(plus); collection.Children.Add(title);
         var favorites = CollectionButton("Tus favoritas", "0 canciones", "heart", () => NavigateLocal("favorites"), true); collection.Children.Add(favorites); navButtons["favorites"] = favorites; collection.Children.Add(playlists);
         var collections = new ScrollViewer { Content = collection, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }; Grid.SetRow(collections, 2); grid.Children.Add(collections);
         // Ajustes is a navigation destination like the others: same box, same hover, same selected state.
         var footer = new StackPanel { Padding = new(12, 10, 12, 18), Spacing = 8 }; var settings = NavButton("settings", "Ajustes", () => _ = model.RunAsync(SettingsAsync)); navButtons["settings"] = settings; footer.Children.Add(settings);
-        var status = Ui.Muted(model.Status, 10); status.MaxLines = 2; var dot = new Border { Width = 5, Height = 5, CornerRadius = new(3), Background = Ui.Brush("#777777"), VerticalAlignment = VerticalAlignment.Center }; var connection = Ui.Row(dot, status); connection.Margin = new(16, 0, 0, 0); footer.Children.Add(connection);
+        var status = Ui.Muted(model.Status, 10); status.Foreground = frameMuted; status.MaxLines = 2; var dot = new Border { Width = 5, Height = 5, CornerRadius = new(3), Background = Ui.Brush("#777777"), VerticalAlignment = VerticalAlignment.Center }; var connection = Ui.Row(dot, status); connection.Margin = new(16, 0, 0, 0); footer.Children.Add(connection);
         System.ComponentModel.PropertyChangedEventHandler connectionChanged = (_, args) => { if (args.PropertyName is nameof(model.Status) or nameof(model.Library)) { status.Text = model.Host.Connected ? "Conectado a tu PC" : model.Status; dot.Background = Ui.Brush(model.Host.Connected ? "#1ED760" : "#777777"); ToolTipService.SetToolTip(connection, model.Status); } }; model.PropertyChanged += connectionChanged; Ui.OnRelease(connection, () => model.PropertyChanged -= connectionChanged);
         var footerBorder = new Border { Child = footer, BorderBrush = Ui.Brush("#FFFFFF0D"), BorderThickness = new(0, 1, 0, 0) }; Grid.SetRow(footerBorder, 3); grid.Children.Add(footerBorder);
         // Short windows (common at 175-200 % scaling) would collapse the collection row to nothing and clip the footer.
@@ -161,24 +256,45 @@ public sealed partial class MainWindow
         SizeChangedEventHandler fit = (_, _) => Fit();
         sidebar.SizeChanged += fit; footerBorder.SizeChanged += fit;
         Ui.OnRelease(sidebar, () => { sidebar.SizeChanged -= fit; footerBorder.SizeChanged -= fit; });
-        return new Border { Child = sidebar, Background = Ui.Glass("#151517", .75), CornerRadius = new(12), BorderBrush = Ui.Brush("#FFFFFF0B"), BorderThickness = new(1) };
+        var shell = new Border { Child = sidebar };
+        void ApplySidebar()
+        {
+            sidebarGlass.Opacity = .88;
+            shell.Background = sidebarGlass;
+            shell.BorderBrush = frameEdge;
+            shell.BorderThickness = new(0, 0, 1 / (root.XamlRoot?.RasterizationScale ?? 1), 0);
+        }
+        Appearance.SetStyle(shell, ApplySidebar);
+        XamlRoot? xamlRoot = null;
+        void ScaleChanged(XamlRoot sender, XamlRootChangedEventArgs args) => ApplySidebar();
+        shell.Loaded += (_, _) => {
+            if (xamlRoot != null) return;
+            xamlRoot = shell.XamlRoot;
+            xamlRoot.Changed += ScaleChanged;
+            ApplySidebar();
+        };
+        Closed += (_, _) => { if (xamlRoot != null) xamlRoot.Changed -= ScaleChanged; };
+        return shell;
     }
-    /// <summary>Sidebar destination: 48 px box, radius 7, a hover quieter than the selected fill.</summary>
     private static Button NavButton(string icon, string label, Action action)
     {
-        var button = Ui.Button(label, action); var row = Ui.Row(Ui.Icon(icon), Ui.Text(label, 14, true)); row.Spacing = 14; button.Content = row;
-        button.Height = 48; button.MinHeight = 48; button.CornerRadius = new(7); button.BorderThickness = new(0); button.Background = Ui.Brush("#FFFFFF00"); button.Padding = new(16, 0, 16, 0);
+        var button = Ui.Button(label, action); var row = Ui.Row(Ui.Icon(icon, 20), Ui.Text(label, 14)); row.Spacing = 12; button.Content = row;
+        button.Height = 36; button.MinHeight = 36; button.BorderThickness = new(0); button.Background = Ui.Brush("#FFFFFF00"); button.Padding = new(12, 0, 12, 0);
+        Appearance.SetStyle(button, () => button.CornerRadius = new(8));
         button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Left; button.VerticalContentAlignment = VerticalAlignment.Center;
-        button.Resources["ButtonBackgroundPointerOver"] = Ui.Brush("#FFFFFF08"); button.Resources["ButtonBackgroundPressed"] = Ui.Brush("#FFFFFF05");
+        RegisterNavigationStates(button);
         foreach (var text in row.Children.OfType<TextBlock>()) text.Foreground = Ui.Brush("#A1A1AA");
         return button;
     }
     private Button CollectionButton(string title, string subtitle, string icon, Action action, bool favorite = false)
     {
         var artwork = favorite ? CatalogArtworkView(null, 44, favorite: true) : new Border { Width = 44, Height = 44, CornerRadius = new(5), Background = Ui.Brush("#26262B"), Child = Ui.Icon(icon, 23) };
-        var copy = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center }; var name = Ui.Text(title, 13, true); name.TextWrapping = TextWrapping.NoWrap; name.TextTrimming = TextTrimming.CharacterEllipsis; copy.Children.Add(name); copy.Children.Add(Ui.Muted(subtitle, 11));
+        var copy = new StackPanel { Spacing = 4, VerticalAlignment = VerticalAlignment.Center }; var name = Ui.Text(title, 13, true); name.TextWrapping = TextWrapping.NoWrap; name.TextTrimming = TextTrimming.CharacterEllipsis; copy.Children.Add(name); var meta = Ui.Muted(subtitle, 11); meta.Foreground = frameMuted; copy.Children.Add(meta);
         var row = new Grid { ColumnSpacing = 12 }; row.ColumnDefinitions.Add(new() { Width = new(44) }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); row.Children.Add(artwork); Grid.SetColumn(copy, 1); row.Children.Add(copy);
-        var button = Ui.Button(title, action); button.Content = row; button.Padding = new(10); button.Background = Ui.Brush("#FFFFFF00"); button.BorderThickness = new(0); button.CornerRadius = new(7); button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; return button;
+        var button = Ui.Button(title, action); button.Content = row; button.Padding = new(10); button.Background = Ui.Brush("#FFFFFF00"); button.BorderThickness = new(0); button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+        RegisterNavigationStates(button);
+        Appearance.SetStyle(button, () => button.CornerRadius = new(8));
+        return button;
     }
     private async Task ShowImportAsync()
     {
@@ -190,6 +306,7 @@ public sealed partial class MainWindow
     private MenuFlyout SongMenu(SongRow song, ListeningContext? context)
     {
         var menu = new MenuFlyout(); void Item(string text, Func<Task> action) { var item = new MenuFlyoutItem { Text = text }; item.Click += (_, _) => _ = model.RunAsync(action); menu.Items.Add(item); }
+        if (CompactAlbum) menu.Items.Add(new MenuFlyoutItem { Text = $"{song.Plays} reproducciones · {song.Minutes} min", IsEnabled = false });
         Item("Añadir a la cola", () => { model.Enqueue(song, context); return Task.CompletedTask; });
         Item(model.Library.IsFavorite(song.Entry) ? "Quitar de favoritos" : "Añadir a favoritos", () => model.FavoriteAsync(song));
         if (song.Entry.Song != null) {
@@ -243,12 +360,14 @@ public sealed partial class MainWindow
         if (template.FindName("ArtistSlot") is ContentControl artistSlot) {
             if (artistSlot.Content is not TrackLink artistLink) artistSlot.Content = artistLink = NewArtistLink(11, "#9999A2");
             artistLink.Set(song.Artist, ArtistTarget(song));
-            artistLink.SetPageForeground(ArtistSurfacePage ? artistTrackText : null);
+            artistLink.SetPageForeground(AlbumSurfacePage ? albumMuted : ArtistSurfacePage ? artistTrackText : null);
+            if (AlbumSurfacePage) AlbumFocus(artistLink);
         }
         if (template.FindName("AlbumSlot") is ContentControl albumSlot) {
             if (albumSlot.Content is not TrackLink albumLink) albumSlot.Content = albumLink = NewAlbumLink(11, "#9999A2");
             albumLink.Set(song.Album, AlbumTarget(song));
-            albumLink.SetPageForeground(ArtistSurfacePage ? artistTrackText : null);
+            albumLink.SetPageForeground(AlbumSurfacePage ? albumMuted : ArtistSurfacePage ? artistTrackText : null);
+            if (AlbumSurfacePage) AlbumFocus(albumLink);
         }
         foreach (var button in template.Children.OfType<Button>().Where(button => Grid.GetColumn(button) is 6 or 9))
         {
@@ -256,12 +375,16 @@ public sealed partial class MainWindow
             void TintAction()
             {
                 if (favorite) Ui.SetActive(button, model.Library.IsFavorite(song.Entry));
-                if (ArtistSurfacePage && button.Content is FrameworkElement icon) Ui.Tint(icon, artistTrackText);
+                if (button.Content is FrameworkElement icon) {
+                    if (ArtistSurfacePage) Ui.Tint(icon, artistTrackText);
+                    else if (AlbumSurfacePage && (!favorite || !model.Library.IsFavorite(song.Entry))) Ui.Tint(icon, albumMuted);
+                }
             }
             TintAction();
             AutomationProperties.SetName(button, favorite ? "Marcar favorito: " + song.Title : "Opciones de " + song.Title); ToolTipService.SetToolTip(button, favorite ? "Favorito" : "Opciones");
             RoutedEventHandler handler = (_, _) => { if (favorite) _ = model.RunAsync(async () => { await model.FavoriteAsync(song); TintAction(); }); else SongMenu(song).ShowAt(button); }; button.Click += handler; Ui.OnRelease(button, () => button.Click -= handler);
         }
+        if (AlbumSurfacePage) StyleAlbumTrackState(args.ItemContainer, template);
         Appearance.Apply(template);
     }
 }

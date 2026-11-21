@@ -185,6 +185,7 @@ public sealed partial class PlayerWindow : Window
         root.SizeChanged += resize; Ui.OnRelease(root, () => root.SizeChanged -= resize);
         KeyEventHandler keyboard = (_, args) => { if (args.Key == global::Windows.System.VirtualKey.Escape) Close(); };
         root.KeyDown += keyboard; Ui.OnRelease(root, () => root.KeyDown -= keyboard);
+        AttachShortcuts(root);
         surface = new(background, this, model);
         if (full) InitializeBigPicture(root);
         model.ArtworkChanged += ArtworkChanged; model.LyricsChanged += BuildLyrics; model.PropertyChanged += PositionChanged; model.ContentChanged += UpdatePlayback;

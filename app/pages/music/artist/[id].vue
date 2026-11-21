@@ -79,12 +79,11 @@ function onVisibilityChange() { syncVideo() }
 watch(videoRef, () => syncVideo(), { flush: 'post' })
 watch(biographyOpen, syncVideo)
 
-/* Dynamic gradient stop anchoring and DetailBar tint following scroll */
+/* Dynamic gradient stop anchoring */
 const heroRef = ref<HTMLElement>()
 const stageRef = ref<HTMLElement>()
 const overviewRef = ref<HTMLElement>()
 const releasesWrapRef = ref<HTMLElement>()
-const aboutRef = ref<HTMLElement>()
 const similarRef = ref<HTMLElement>()
 
 const stopPopular = ref('450px')
@@ -92,37 +91,7 @@ const stopReleases = ref('900px')
 const stopAbout = ref('1400px')
 const stopEnd = ref('1800px')
 
-const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
-const barTint = ref<string>('')
 const heroBackdropOffset = ref('0px')
-const pinnedBar = ref(false)
-const detailBarTint = computed(() => (hasBanner.value || videoPlaying.value) && !pinnedBar.value ? '' : barTint.value)
-
-function parseHex(c: string): [number, number, number] {
-  const hex = (c || '#18181b').replace('#', '')
-  if (hex.length === 3) {
-    return [
-      parseInt(hex[0]! + hex[0]!, 16),
-      parseInt(hex[1]! + hex[1]!, 16),
-      parseInt(hex[2]! + hex[2]!, 16),
-    ]
-  }
-  return [
-    parseInt(hex.slice(0, 2), 16) || 0,
-    parseInt(hex.slice(2, 4), 16) || 0,
-    parseInt(hex.slice(4, 6), 16) || 0,
-  ]
-}
-
-function interpolateHex(c1: string, c2: string, t: number): string {
-  const clamped = Math.max(0, Math.min(1, t))
-  const [r1, g1, b1] = parseHex(c1)
-  const [r2, g2, b2] = parseHex(c2)
-  const r = Math.round(r1 + (r2 - r1) * clamped)
-  const g = Math.round(g1 + (g2 - g1) * clamped)
-  const b = Math.round(b1 + (b2 - b1) * clamped)
-  return '#' + [r, g, b].map(x => Math.max(0, Math.min(255, x)).toString(16).padStart(2, '0')).join('')
-}
 
 /** The wash is painted on the whole content panel (.main-column), so the top bar takes the section colour as well. */
 let column: HTMLElement | null = null
@@ -153,7 +122,7 @@ function updateStops() {
   const bottom = (element: HTMLElement) => `${Math.round(element.getBoundingClientRect().bottom - origin)}px`
   if (overviewRef.value) stopPopular.value = bottom(overviewRef.value)
   if (releasesWrapRef.value) stopReleases.value = bottom(releasesWrapRef.value)
-  const finalSection = similarRef.value || aboutRef.value || releasesWrapRef.value || overviewRef.value
+  const finalSection = similarRef.value || releasesWrapRef.value || overviewRef.value
   if (finalSection) {
     stopAbout.value = bottom(finalSection)
     stopEnd.value = `${Math.round(finalSection.getBoundingClientRect().bottom - origin + 160)}px`
@@ -161,67 +130,11 @@ function updateStops() {
   paintColumn()
 }
 
-function updateTint() {
-  if (!import.meta.client) return
-  const baseColor = theme.value.base
-  const secondaryColor = theme.value.secondary
-  const deepColor = theme.value.deep
-  const appBg = '#09090b'
-  const barY = 60
-  pinnedBar.value = (stageRef.value?.getBoundingClientRect().bottom ?? Infinity) < barY + 60
-
-  if (reducedMotion.value) {
-    if (aboutRef.value && aboutRef.value.getBoundingClientRect().top <= barY) {
-      barTint.value = deepColor
-    } else if (similarRef.value && similarRef.value.getBoundingClientRect().top <= barY) {
-      barTint.value = deepColor
-    } else if (releasesWrapRef.value && releasesWrapRef.value.getBoundingClientRect().top <= barY) {
-      barTint.value = secondaryColor
-    } else {
-      barTint.value = baseColor
-    }
-    return
-  }
-
-  const transitionWindow = 120
-  const releasesTop = releasesWrapRef.value ? releasesWrapRef.value.getBoundingClientRect().top : Infinity
-  const deepSec = aboutRef.value || similarRef.value
-  const aboutTop = deepSec ? deepSec.getBoundingClientRect().top : Infinity
-
-  if (aboutTop <= barY) {
-    const progress = (barY - aboutTop) / transitionWindow
-    if (progress < 1) {
-      barTint.value = interpolateHex(secondaryColor, deepColor, progress)
-    } else {
-      const deepBottom = (similarRef.value || deepSec)?.getBoundingClientRect().bottom ?? Infinity
-      if (deepBottom <= barY) {
-        const endProgress = (barY - deepBottom) / 200
-        barTint.value = interpolateHex(deepColor, appBg, endProgress)
-      } else {
-        barTint.value = deepColor
-      }
-    }
-  } else if (releasesTop <= barY) {
-    const progress = (barY - releasesTop) / transitionWindow
-    barTint.value = interpolateHex(baseColor, secondaryColor, progress)
-  } else {
-    barTint.value = baseColor
-  }
-}
-
-let rafId: number | undefined
-function onScroll() {
-  if (rafId) cancelAnimationFrame(rafId)
-  rafId = requestAnimationFrame(() => {
-    updateTint()
-  })
-}
-
 let heroObserver: IntersectionObserver | undefined
 let resizeObserver: ResizeObserver | undefined
 
 /** The sections render only once the profile has loaded, so observers follow the elements instead of the mount. */
-watch(() => [heroRef.value, overviewRef.value, releasesWrapRef.value, aboutRef.value, similarRef.value] as const, elements => {
+watch(() => [heroRef.value, overviewRef.value, releasesWrapRef.value, similarRef.value] as const, elements => {
   if (!import.meta.client) return
   heroObserver?.disconnect(); resizeObserver?.disconnect()
   const [hero] = elements
@@ -233,17 +146,16 @@ watch(() => [heroRef.value, overviewRef.value, releasesWrapRef.value, aboutRef.v
     })
     heroObserver.observe(hero)
   }
-  resizeObserver ??= new ResizeObserver(() => { updateStops(); updateTint() })
+  resizeObserver ??= new ResizeObserver(() => { updateStops() })
   for (const element of elements) if (element) resizeObserver.observe(element)
   const topbar = column?.querySelector('.topbar')
   if (topbar) resizeObserver.observe(topbar)
-  void nextTick(() => { updateStops(); updateTint() })
+  void nextTick(() => { updateStops() })
 }, { flush: 'post' })
-watch(theme, () => { updateTint(); paintColumn() })
+watch(theme, () => { paintColumn() })
 
 onMounted(() => {
   document.addEventListener('visibilitychange', onVisibilityChange)
-  window.addEventListener('scroll', onScroll, { passive: true })
 })
 
 onBeforeUnmount(() => {
@@ -251,8 +163,6 @@ onBeforeUnmount(() => {
   heroObserver?.disconnect()
   resizeObserver?.disconnect()
   document.removeEventListener('visibilitychange', onVisibilityChange)
-  window.removeEventListener('scroll', onScroll)
-  if (rafId) cancelAnimationFrame(rafId)
 })
 </script>
 
@@ -271,7 +181,6 @@ onBeforeUnmount(() => {
       '--artist-cover-offset': heroBackdropOffset,
     }"
   >
-    <DetailBar :title="artist?.name" fallback="/search" :tint="detailBarTint" />
     <div v-if="disconnected" class="empty-state" role="status"><OIcon name="offline" :size="44" /><h1>Conecta para explorar este artista.</h1><p>Necesitas conexión con tu PC e Internet.</p><button class="button subtle" @click="library.refresh">Reintentar conexión</button></div>
     <div v-else-if="status === 'pending' || status === 'idle'" class="empty-state" role="status"><OIcon name="loading" class="spin" :size="36" /><p>Cargando artista…</p></div>
     <div v-else-if="error || !artist" class="empty-state" role="status"><h1>Artista no disponible.</h1><p>{{ loadError }}</p><button class="button primary" @click="refresh()">Reintentar artista</button></div>
@@ -306,8 +215,8 @@ onBeforeUnmount(() => {
             </div>
             <div class="artist-actions">
               <button class="artist-play" :disabled="!visibleSongs.length" @click="player.playYouTube(visibleSongs, 0, listeningContext)"><OIcon name="play" :size="22" /><span>Reproducir</span></button>
-              <button class="button subtle" :disabled="visibleSongs.length < 2" @click="shuffle"><OIcon name="shuffle" :size="18" />Aleatorio</button>
-              <button v-if="artist.description" class="artist-info-button" :aria-label="`Acerca de ${artist.name}`" aria-haspopup="dialog" @click="biographyOpen = true"><Info :size="20" aria-hidden="true" /></button>
+              <button class="artist-glass-button" aria-label="Reproducir en aleatorio" title="Aleatorio" :disabled="visibleSongs.length < 2" @click="shuffle"><OIcon name="shuffle" :size="20" /></button>
+              <button v-if="artist.description" class="artist-glass-button artist-info-button" title="Acerca de" :aria-label="`Acerca de ${artist.name}`" aria-haspopup="dialog" @click="biographyOpen = true"><Info :size="20" aria-hidden="true" /></button>
             </div>
           </div>
         </div>
@@ -339,14 +248,6 @@ onBeforeUnmount(() => {
         </section>
       </div>
 
-      <section v-if="artist.description" ref="aboutRef" class="catalog-section" aria-labelledby="artist-about-title">
-        <div class="section-heading"><h2 id="artist-about-title">Acerca de</h2></div>
-        <div class="artist-about">
-          <div class="artist-about-art" aria-hidden="true"><AlbumCover :src="artist.banner || artist.artwork" :size="1024" /></div>
-          <p class="catalog-biography">{{ artist.description }}</p>
-          <button class="catalog-text-button biography-toggle" aria-haspopup="dialog" @click="biographyOpen = true">Leer biografía</button>
-        </div>
-      </section>
 
       <section v-if="similar.length" ref="similarRef" class="catalog-section" aria-labelledby="artist-similar-title">
         <div class="section-heading"><h2 id="artist-similar-title">Fans también escuchan</h2></div>

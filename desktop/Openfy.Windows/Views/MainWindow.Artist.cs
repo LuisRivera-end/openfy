@@ -1,5 +1,6 @@
 ﻿using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Openfy.Core;
@@ -13,7 +14,7 @@ namespace Openfy.Windows.Views;
 /// YouTube Music artist profile, washed in the artist's own colour (docs/superpowers/specs/2026-11-19-artist-identity-design.md;
 /// web twin: app/pages/music/artist/[id].vue). The header media (Apple Music's editorial video when it exists, else the banner,
 /// else the portrait) fades into <c>base</c>; behind the scroll area one wash follows the sections: base, then secondary for the
-/// discography, then deep for the biography and related artists, ending in the panel colour.
+/// discography, then deep for related artists, ending in the panel colour.
 /// </summary>
 public sealed partial class MainWindow
 {
@@ -24,34 +25,71 @@ public sealed partial class MainWindow
     private readonly HashSet<string> artistMotionPending = [];
     private readonly LinearGradientBrush artistWashBrush = new() { StartPoint = new(0, 0), EndPoint = new(0, 1) };
     private readonly List<Action<ArtistThemeColors>> artistRepaints = [];
-    private Border? artistWash;
-    private StackPanel? artistPagePanel;
+    private Border? pageWash;
+    private readonly Canvas artistMediaLayer = new() { IsHitTestVisible = false, Visibility = Visibility.Collapsed };
+    private readonly RectangleGeometry artistMediaClip = new();
+    private Grid? artistMedia;
+    private StackPanel? pagePanel;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? albumHeaderTimer;
+    private readonly global::Windows.UI.ViewManagement.UISettings albumAccessibility = new();
     private ArtistThemeColors? artistTheme;
     private string? artistThemeKey, artistVideoKey;
     private string? artistVideoUrl;
     private ArtistMotionEntry? artistMotionEntry;
     private FrameworkElement? artistDeepAnchor, artistHeroStage;
     private LoopingVideo? artistVideo;
+    private Action<double, bool>? layoutLatestRelease;
 
     private bool ArtistSurfacePage => model.Page is "artist" or "localartist";
     private string? ArtistThemeKey => model.Page == "artist" ? model.PageContext?.Id : model.Page == "localartist" && model.PageContext?.Id is { } name ? "local:" + name : null;
     internal bool ArtistVideoVisible => artistVideo?.Visible == true;
     internal ArtistThemeColors? CurrentArtistTheme => ArtistSurfacePage ? artistTheme : null;
 
-    private void AttachArtistWash(Grid main, StackPanel page)
+    private void AttachPageWash(Grid body, StackPanel page)
     {
-        artistPagePanel = page;
+        pagePanel = page;
         for (int i = 0; i < 7; i++) artistWashBrush.GradientStops.Add(new() { Offset = i / 6.0, Color = ArtistThemes.Color("#101012") });
-        // Tagged so Appearance keeps its colour and radius; it never takes input.
-        artistWash = new Border { Tag = "home-artwork", CornerRadius = new(11), IsHitTestVisible = false, Opacity = 0, Background = artistWashBrush };
-        Grid.SetRowSpan(artistWash, 3); main.Children.Insert(0, artistWash);
-        pageScroll.ViewChanged += (_, _) => UpdateArtistWash();
-        pageScroll.SizeChanged += (_, _) => UpdateArtistWash();
-        page.SizeChanged += (_, _) => UpdateArtistWash();
-        VisibilityChanged += (_, _) => SyncArtistVideo();
-        NetworkStatusChangedEventHandler networkChanged = _ => DispatcherQueue.TryEnqueue(() => { meteredNetwork = null; SyncArtistVideo(); });
+        pageWash = new Border { IsHitTestVisible = false, Opacity = 0, Background = artistWashBrush };
+        Grid.SetColumnSpan(pageWash, 2);
+        Grid.SetColumnSpan(artistMediaLayer, 2);
+        artistMediaLayer.Clip = artistMediaClip;
+        body.Children.Insert(0, pageWash);
+        body.Children.Insert(1, artistMediaLayer);
+        artistMediaLayer.SizeChanged += (_, _) => LayoutArtistMedia();
+        pageScroll.ViewChanged += (_, _) => UpdatePageWash();
+        pageScroll.SizeChanged += (_, _) => { LayoutPageInsets(); UpdatePageWash(); };
+        page.SizeChanged += (_, _) => UpdatePageWash();
+        VisibilityChanged += (_, _) => { SyncArtistVideo(); SyncAlbumVideo(); };
+        AppWindow.Changed += (_, _) => SyncAlbumVideo();
+        NetworkStatusChangedEventHandler networkChanged = _ => DispatcherQueue.TryEnqueue(() => {
+            networkCost = null; SyncArtistVideo(); SyncAlbumVideo();
+        });
         NetworkInformation.NetworkStatusChanged += networkChanged;
-        Closed += (_, _) => { NetworkInformation.NetworkStatusChanged -= networkChanged; artistVideo?.Release(); };
+        albumHeaderTimer = DispatcherQueue.CreateTimer();
+        albumHeaderTimer.Interval = TimeSpan.FromMilliseconds(200);
+        albumHeaderTimer.Tick += (_, _) => { UpdateAlbumTint(); SyncAlbumVideo(); };
+        model.AlbumPresentationChanged += AlbumPresentationChanged;
+        albumAccessibility.AnimationsEnabledChanged += AnimationsChanged;
+        Closed += (_, _) => {
+            NetworkInformation.NetworkStatusChanged -= networkChanged;
+            model.AlbumPresentationChanged -= AlbumPresentationChanged;
+            albumAccessibility.AnimationsEnabledChanged -= AnimationsChanged;
+            albumHeaderTimer.Stop();
+            artistVideo?.Release();
+            ReleaseAlbumVideo();
+            albumCover = null;
+            if (frameTintAnimating) EndFrameTint();
+        };
+
+        void AnimationsChanged(global::Windows.UI.ViewManagement.UISettings sender, object args)
+            => DispatcherQueue.TryEnqueue(() => { UpdateAlbumTint(); UpdateFrameTint(); UpdatePageWash(); });
+    }
+
+    private void AlbumPresentationChanged()
+    {
+        refreshAlbumDescription?.Invoke();
+        UpdateAlbumTint();
+        SyncAlbumVideo();
     }
 
     /// <summary>Runs before every catalog build: forgets the previous page's surfaces and keeps the video only for the same artist.</summary>
@@ -64,8 +102,12 @@ public sealed partial class MainWindow
             artistThemeKey = key;
             artistTheme = ArtistThemes.Cached(key);
         }
-        ApplyArtistTrackContrast();
-        UpdateArtistWash();
+        LayoutPageInsets();
+        ApplyPageTrackStyle();
+        UpdateFrameTint();
+        UpdatePageWash();
+        if (ArtistSurfacePage) PaintArtist(theme => UpdateTopBarGlassColors(theme));
+        UpdateTopBar();
     }
 
     private void PaintArtist(Action<ArtistThemeColors> repaint) { artistRepaints.Add(repaint); repaint(artistTheme ?? PendingArtistTheme); }
@@ -79,25 +121,28 @@ public sealed partial class MainWindow
         artistTheme = theme;
         foreach (var repaint in artistRepaints.ToArray()) repaint(theme);
         artistTrackSurface.Color = ArtistThemes.Color(theme.Surface);
-        UpdateArtistWash();
+        StateBrushes.Refresh();
+        UpdateFrameTint();
+        UpdatePageWash();
     }
 
-    private void UpdateArtistWash()
+    private void UpdatePageWash()
     {
-        if (artistWash == null || artistPagePanel == null) return;
+        if (pageWash == null || pagePanel == null) return;
+        LayoutArtistMedia();
         bool visible = ArtistSurfacePage && artistTheme != null && pageScroll.Visibility == Visibility.Visible;
-        bool animate = model.Settings.Effects && WindowsIntegration.AnimationsEnabled;
-        if (!animate) artistWash.OpacityTransition = null;
-        else artistWash.OpacityTransition ??= new ScalarTransition { Duration = TimeSpan.FromMilliseconds(320) };
-        artistWash.Opacity = visible ? 1 : 0;
+        if (!PageEffects) pageWash.OpacityTransition = null;
+        else pageWash.OpacityTransition ??= new ScalarTransition { Duration = TimeSpan.FromMilliseconds(240) };
+        pageWash.Opacity = visible ? 1 : 0;
+        if (AlbumSurfacePage) SyncAlbumVideo();
         SyncArtistVideo();
         if (!visible) return;
-        double offset = pageScroll.VerticalOffset, viewport = Math.Max(1, pageScroll.ViewportHeight), height = Math.Max(1, artistWash.ActualHeight);
+        double offset = pageScroll.VerticalOffset, viewport = Math.Max(1, pageScroll.ViewportHeight), height = Math.Max(1, pageWash.ActualHeight);
         double top = Math.Max(0, height - viewport);
-        try { top = Math.Clamp(pageScroll.TransformToVisual(artistWash).TransformPoint(new(0, 0)).Y, 0, height); } catch (ArgumentException) { }
+        try { top = Math.Clamp(pageScroll.TransformToVisual(pageWash).TransformPoint(new(0, 0)).Y, 0, height); } catch (ArgumentException) { }
 
-        double Position(FrameworkElement element) { try { return element.TransformToVisual(artistPagePanel).TransformPoint(new(0, 0)).Y; } catch (ArgumentException) { return double.NaN; } }
-        double end = Math.Max(1, artistPagePanel.ActualHeight);
+        double Position(FrameworkElement element) { try { return element.TransformToVisual(pagePanel).TransformPoint(new(0, 0)).Y; } catch (ArgumentException) { return double.NaN; } }
+        double end = Math.Max(1, pagePanel.ActualHeight - pagePanel.Padding.Bottom);
         double heroEnd = artistHeroStage is { } hero ? Position(hero) + hero.ActualHeight : 0;
         if (!double.IsFinite(heroEnd)) heroEnd = 0;
         double tail = catalogTail.Children.Count > 0 ? Position(catalogTail) : end;
@@ -110,7 +155,7 @@ public sealed partial class MainWindow
         var baseColor = ArtistThemes.Color(theme.Base);
         var secondaryColor = ArtistThemes.Color(theme.Secondary);
         var deepColor = ArtistThemes.Color(theme.Deep);
-        var appColor = ArtistThemes.Color("#101012");
+        var appColor = ArtistThemes.Color(NeutralFrame.Background);
 
         var stops = artistWashBrush.GradientStops;
         // The bar above the scroll area takes the colour of the section passing under it.
@@ -139,22 +184,43 @@ public sealed partial class MainWindow
         }
     }
 
+    private void LayoutArtistMedia()
+    {
+        if (artistMedia == null || artistHeroStage is not { IsLoaded: true } stage || !ArtistSurfacePage)
+        {
+            artistMediaLayer.Visibility = Visibility.Collapsed;
+            return;
+        }
+        artistMediaLayer.Visibility = Visibility.Visible;
+        double width = artistMediaLayer.ActualWidth, height = artistMediaLayer.ActualHeight;
+        if (width <= 0 || height <= 0) return;
+        double viewportTop = pageScroll.TransformToVisual(artistMediaLayer).TransformPoint(new(0, 0)).Y;
+        double stageTop = stage.TransformToVisual(artistMediaLayer).TransformPoint(new(0, 0)).Y;
+        double bleed = Math.Max(0, viewportTop);
+        // Header media bleeds behind the transparent top bar like the web artist page.
+        artistMediaClip.Rect = new(0, 0, width, height);
+        artistMedia.Width = width;
+        artistMedia.Height = stage.ActualHeight + bleed;
+        Canvas.SetTop(artistMedia, stageTop - bleed);
+    }
+
     private void BuildArtistCatalog()
     {
         string? key = ArtistThemeKey;
         catalog.Children.Add(ArtistHero(key));
-        if (model.Songs.Count > 0) catalog.Children.Add(CatalogSectionHeading("Canciones populares", model.MoreSongsAvailable ? "Ver todas las canciones" : null, () => _ = model.RunAsync(model.MoreAsync)));
-        else catalog.Children.Add(CatalogEmptyState("music", "Este artista todavía no tiene canciones disponibles.", "Vuelve a buscarlo más tarde para actualizar su perfil."));
+        artistPopularHeading.Children.Add(model.Songs.Count > 0
+            ? CatalogSectionHeading("Canciones populares", model.MoreSongsAvailable ? "Ver todas las canciones" : null, () => _ = model.RunAsync(model.MoreAsync))
+            : CatalogEmptyState("music", "Este artista todavía no tiene canciones disponibles.", "Vuelve a buscarlo más tarde para actualizar su perfil."));
 
         var latest = model.Albums.Select(album => (Album: album, Kind: "Álbum")).Concat(model.Singles.Select(album => (Album: album, Kind: "Single / EP")))
             .Aggregate<(YouTubeAlbum Album, string Kind), (YouTubeAlbum Album, string Kind)?>(null, (best, item) => best is null || (item.Album.Year ?? 0) > (best.Value.Album.Year ?? 0) ? item : best);
-        if (latest is { } release) catalogTail.Children.Add(ArtistLatestRelease(release.Album, release.Kind));
+        if (latest is { } release) artistLatestRelease.Children.Add(ArtistLatestRelease(release.Album, release.Kind));
+        LayoutArtistReleases();
         CatalogReleases("Álbumes", model.Albums, false);
         CatalogReleases("Singles y EPs", model.Singles, true);
-        if (model.Description.Length > 0) { var about = ArtistAbout(); artistDeepAnchor = about; catalogTail.Children.Add(about); }
         if (model.SimilarArtists.Count > 0)
         {
-            var heading = CatalogSectionHeading("Fans también escuchan"); artistDeepAnchor ??= heading;
+            var heading = CatalogSectionHeading("Fans también escuchan"); artistDeepAnchor = heading;
             catalogTail.Children.Add(heading);
             catalogTail.Children.Add(CatalogCards(model.SimilarArtists.Select(artist => new CatalogTile(artist.Name, "Artista", artist.Artwork, () => _ = model.RunAsync(() => model.ArtistAsync(artist.Id)), true))));
         }
@@ -167,10 +233,20 @@ public sealed partial class MainWindow
         var hero = new StackPanel { Spacing = 22, Margin = new(0, 0, 0, 6) };
         bool banner = !string.IsNullOrWhiteSpace(model.CatalogBanner);
         var layers = new Grid { Height = 360 };
-        var stage = new Border { Child = layers, Tag = "home-artwork" };
+        var stage = new Border { Child = layers };
+        var media = new Grid();
         artistHeroStage = stage;
+        artistMedia = media;
+        artistMediaLayer.Children.Add(media);
+        stage.Loaded += (_, _) => LayoutArtistMedia();
+        Ui.OnRelease(stage, () => {
+            Ui.ReleaseTree(media);
+            artistMediaLayer.Children.Remove(media);
+            artistMedia = null;
+            artistMediaLayer.Visibility = Visibility.Collapsed;
+        });
         AutomationProperties.SetName(stage, model.Heading);
-        var stageColor = new SolidColorBrush(); stage.Background = stageColor;
+        var stageColor = new SolidColorBrush(); media.Background = stageColor;
         PaintArtist(theme => stageColor.Color = ArtistThemes.Color(theme.Base));
 
         var copy = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Bottom };
@@ -181,6 +257,7 @@ public sealed partial class MainWindow
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
         Grid.SetColumn(copy, 1); row.Children.Add(copy);
         var portrait = CatalogArtworkView(model.CatalogArtwork, 210, round: true);
+        Appearance.SetStyle(portrait, () => portrait.CornerRadius = new(1000));
         portrait.VerticalAlignment = VerticalAlignment.Bottom;
         row.Children.Add(portrait);
         bool hasImage = false;
@@ -193,20 +270,19 @@ public sealed partial class MainWindow
         {
             // Cover-fit by hand so the crop keeps the upper third (where faces usually are) instead of the centre.
             var image = new Image { Stretch = Stretch.Fill };
-            var frame = new Canvas(); frame.Children.Add(image); layers.Children.Add(frame);
+            var frame = new Canvas(); frame.Children.Add(image); media.Children.Add(frame);
             double sourceWidth = 0, sourceHeight = 0;
             void Place()
             {
-                double width = layers.ActualWidth, height = layers.ActualHeight;
+                double width = media.ActualWidth, height = media.ActualHeight;
                 if (width <= 0 || height <= 0) return;
-                // Without the old rounded card nothing clips the oversized image to the stage.
-                layers.Clip = new RectangleGeometry { Rect = new(0, 0, width, height) };
+                media.Clip = new RectangleGeometry { Rect = new(0, 0, width, height) };
                 if (sourceWidth <= 0) return;
                 double scale = Math.Max(width / sourceWidth, height / sourceHeight);
                 image.Width = sourceWidth * scale; image.Height = sourceHeight * scale;
                 Canvas.SetLeft(image, (width - image.Width) / 2); Canvas.SetTop(image, (height - image.Height) * .32);
             }
-            SizeChangedEventHandler place = (_, _) => Place(); layers.SizeChanged += place; Ui.OnRelease(layers, () => layers.SizeChanged -= place);
+            SizeChangedEventHandler place = (_, _) => Place(); media.SizeChanged += place; Ui.OnRelease(media, () => media.SizeChanged -= place);
             bool released = false; Ui.OnRelease(image, () => released = true);
             image.ImageOpened += (_, _) => { imagePending = false; hasImage = true; UpdateMedia(); };
             image.ImageFailed += (_, _) => { imagePending = false; hasImage = false; UpdateMedia(); };
@@ -216,7 +292,7 @@ public sealed partial class MainWindow
                 {
                     var result = await model.Artwork.GetAsync(model.CatalogBanner!, 2048); if (released) return;
                     sourceWidth = Math.Max(1, result.Width); sourceHeight = Math.Max(1, result.Height); Place();
-                    Ui.Cover(image, result.Path, Math.Max(layers.ActualWidth, 900), Math.Max(layers.ActualHeight, 300), result.Width, result.Height);
+                    Ui.Cover(image, result.Path, Math.Max(media.ActualWidth, 900), Math.Max(media.ActualHeight, 300), result.Width, result.Height);
                 }
                 catch { if (!released) { imagePending = false; UpdateMedia(); } }
             }
@@ -238,8 +314,8 @@ public sealed partial class MainWindow
         });
         scrim.Background = contrast;
         shadeLayer.Background = shade;
-        AttachArtistVideo(layers, key, visible => { hasVideo = visible; UpdateMedia(); });
-        layers.Children.Add(scrim); layers.Children.Add(shadeLayer); layers.Children.Add(row);
+        AttachArtistVideo(media, key, visible => { hasVideo = visible; UpdateMedia(); });
+        media.Children.Add(scrim); media.Children.Add(shadeLayer); layers.Children.Add(row);
         void UpdateMedia()
         {
             bool hasMedia = hasImage || hasVideo;
@@ -251,25 +327,28 @@ public sealed partial class MainWindow
         void UpdateScrim()
         {
             if (layers.ActualHeight <= 0) return;
-            double end = Math.Clamp(1 - (copy.ActualHeight + row.Margin.Bottom + 8) / layers.ActualHeight, 0, 1);
+            double total = media.ActualHeight > 0 ? media.ActualHeight : layers.ActualHeight;
+            double end = Math.Clamp(1 - (copy.ActualHeight + row.Margin.Bottom + 8) / total, 0, 1);
             contrast.GradientStops[0].Offset = Math.Max(0, end - .26);
             contrast.GradientStops[1].Offset = end;
         }
         SizeChangedEventHandler updateScrim = (_, _) => UpdateScrim();
         copy.SizeChanged += updateScrim;
         Ui.OnRelease(copy, () => copy.SizeChanged -= updateScrim);
+        media.SizeChanged += updateScrim;
+        Ui.OnRelease(media, () => media.SizeChanged -= updateScrim);
         UpdateMedia();
 
         // Bleed over the page padding, which follows the window width; the copy keeps the content's left edge.
         SizeChangedEventHandler scale = (_, args) => {
-            double inset = artistPagePanel?.Padding.Left ?? 36, top = artistPagePanel?.Padding.Top ?? 18;
+            double inset = pagePanel?.Padding.Left ?? 36, top = pagePanel?.Padding.Top ?? 18;
             if (stage.Margin.Left != -inset || stage.Margin.Top != -top) stage.Margin = new(-inset, -top, -inset, 0);
             var edge = new Thickness(inset, 0, inset, 16);
             if (row.Margin != edge) row.Margin = edge;
             layers.Height = Math.Clamp(args.NewSize.Width * .3, 260, 400);
             name.FontSize = Math.Clamp(args.NewSize.Width * .075, 40, 88);
             portrait.Width = portrait.Height = args.NewSize.Width < 700 ? 140 : 210;
-            UpdateMedia(); UpdateScrim();
+            LayoutArtistMedia(); UpdateMedia(); UpdateScrim();
         };
         stage.SizeChanged += scale; Ui.OnRelease(stage, () => stage.SizeChanged -= scale);
         hero.Children.Add(stage);
@@ -278,13 +357,70 @@ public sealed partial class MainWindow
         var play = ArtistPlayButton(() => { if (model.Songs.Count > 0) _ = model.RunAsync(() => model.PlayAsync(model.Songs[0], model.Songs.ToArray(), model.PageContext)); });
         AutomationProperties.SetName(play, "Reproducir " + model.Heading); play.IsEnabled = model.Songs.Count > 0; actions.Children.Add(play);
         var shuffle = Ui.Button("Aleatorio", () => _ = model.RunAsync(() => model.PlayCollectionAsync(model.Songs.ToArray(), true, model.PageContext)), "Reproducir en orden aleatorio");
-        var shuffleIcon = Ui.Icon("shuffle", 18); Ui.Tint(shuffleIcon, Ui.Brush("#FFFFFF"));
-        var shuffleLabel = Ui.Text("Aleatorio", 13, true); shuffleLabel.Foreground = Ui.Brush("#FFFFFF");
-        shuffle.Content = Ui.Row(shuffleIcon, shuffleLabel);
-        shuffle.IsEnabled = model.Songs.Count > 1; ArtistGlass(shuffle); actions.Children.Add(shuffle);
-        var back = Ui.Button("Volver a buscar", ReturnToSearch); ArtistGlass(back); actions.Children.Add(back);
+        var shuffleIcon = Ui.Icon("shuffle", 20); Ui.Tint(shuffleIcon, Ui.Brush("#FFFFFF"));
+        shuffle.Content = shuffleIcon;
+        shuffle.Width = 48; shuffle.Height = 48; shuffle.CornerRadius = new(24); shuffle.Padding = new(0);
+        shuffle.HorizontalContentAlignment = HorizontalAlignment.Center; shuffle.VerticalContentAlignment = VerticalAlignment.Center;
+        ToolTipService.SetToolTip(shuffle, "Aleatorio");
+        shuffle.IsEnabled = model.Songs.Count > 1; ArtistLiquidGlass(shuffle); actions.Children.Add(shuffle);
+        if (!string.IsNullOrWhiteSpace(model.Description))
+        {
+            string artistName = model.Heading, description = model.Description, artwork = model.CatalogArtwork ?? "";
+            var info = new Button { Width = 48, Height = 48, CornerRadius = new(24), Padding = new(0),
+                HorizontalContentAlignment = HorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center,
+                Content = new FontIcon { FontFamily = new("Segoe Fluent Icons"), Glyph = "\uE946", FontSize = 20 } };
+            ArtistLiquidGlass(info);
+            AutomationProperties.SetName(info, $"Acerca de {artistName}");
+            ToolTipService.SetToolTip(info, "Acerca de");
+            RoutedEventHandler show = (_, _) => _ = model.RunAsync(() => ShowArtistAboutAsync(info, artistName, artwork, description));
+            info.Click += show;
+            Ui.OnRelease(info, () => info.Click -= show);
+            actions.Children.Add(info);
+        }
         hero.Children.Add(actions);
         return hero;
+    }
+
+    private async Task ShowArtistAboutAsync(Button source, string name, string artwork, string description)
+    {
+        var portrait = CatalogArtworkView(artwork, 116, round: true);
+        Appearance.SetStyle(portrait, () => portrait.CornerRadius = new(58));
+        portrait.HorizontalAlignment = HorizontalAlignment.Center;
+        var title = Ui.Text(name, 28, true);
+        title.TextAlignment = TextAlignment.Center;
+        title.Tag = "display";
+        var heading = Ui.Text("Acerca de", 19, true);
+        AutomationProperties.SetHeadingLevel(title, AutomationHeadingLevel.Level1);
+        AutomationProperties.SetHeadingLevel(heading, AutomationHeadingLevel.Level2);
+        var biography = Ui.Text(description, 14);
+        biography.LineHeight = 22;
+        biography.IsTextSelectionEnabled = true;
+        foreach (var text in new[] { title, heading, biography }) text.Foreground = frameWhite;
+        var content = new StackPanel { Spacing = 14, Children = { portrait, title, heading, biography } };
+        var scroll = new ScrollViewer { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = Math.Clamp(root.ActualHeight - 168, 120, 540), MaxWidth = 512 };
+        var deep = Ui.Brush((artistTheme ?? PendingArtistTheme).Deep);
+        var closeStyle = new Style(typeof(Button));
+        closeStyle.Setters.Add(new Setter(Control.ForegroundProperty, frameWhite));
+        closeStyle.Setters.Add(new Setter(Control.BackgroundProperty, Ui.Brush("#FFFFFF18")));
+        closeStyle.Setters.Add(new Setter(Control.BorderBrushProperty, Ui.Brush("#FFFFFF40")));
+        var dialog = new ContentDialog { XamlRoot = root.XamlRoot, Content = scroll,
+            CloseButtonText = "Cerrar", CloseButtonStyle = closeStyle };
+        AutomationProperties.SetName(dialog, $"Acerca de {name}");
+        dialog.Resources["ContentDialogBackground"] = deep;
+        dialog.Resources["ContentDialogMaxWidth"] = 560d;
+        Appearance.SetStyle(dialog, () => {
+            dialog.Background = deep;
+            dialog.Foreground = frameWhite;
+            dialog.CornerRadius = new(16);
+        });
+        Appearance.Apply(content);
+        try { await dialog.ShowAsync(); }
+        finally
+        {
+            Ui.ReleaseTree(content);
+            if (source.IsLoaded) source.Focus(FocusState.Programmatic);
+        }
     }
 
     /// <summary>A white disc whose glyph takes the page's deep colour; green clashes with red or blue pages.</summary>
@@ -316,6 +452,47 @@ public sealed partial class MainWindow
         ArtistFocus(button);
     }
 
+    // Liquid glass for the icon-only artist header buttons, matching .artist-glass-button on the web: a translucent
+    // tint of the artist colour with a diagonal specular sheen and a rim that is brighter on the top edge.
+    private void ArtistLiquidGlass(Button button)
+    {
+        static LinearGradientBrush Sheen() => new()
+        {
+            StartPoint = new(0.2, 0), EndPoint = new(0.8, 1),
+            GradientStops = { new GradientStop { Offset = 0 }, new GradientStop { Offset = .42 }, new GradientStop { Offset = .58 }, new GradientStop { Offset = 1 } },
+        };
+        var fill = Sheen(); var hover = Sheen(); var pressed = Sheen();
+        var rim = new LinearGradientBrush
+        {
+            StartPoint = new(0.5, 0), EndPoint = new(0.5, 1),
+            GradientStops = { new GradientStop { Offset = 0, Color = Color.FromArgb(0x73, 255, 255, 255) }, new GradientStop { Offset = 1, Color = Color.FromArgb(0x1A, 255, 255, 255) } },
+        };
+        button.Background = fill; button.Foreground = Ui.Brush("#FFFFFF");
+        button.BorderBrush = rim; button.BorderThickness = new(1);
+        button.Resources["ButtonBackgroundPointerOver"] = hover;
+        button.Resources["ButtonBackgroundPressed"] = pressed;
+        button.Resources["ButtonBorderBrushPointerOver"] = rim;
+        button.Resources["ButtonBorderBrushPressed"] = rim;
+        button.Resources["ButtonForegroundPointerOver"] = button.Foreground;
+        button.Resources["ButtonForegroundPressed"] = button.Foreground;
+        ArtistFocus(button);
+        PaintArtist(theme => {
+            var deep = ArtistThemes.Color(theme.Deep);
+            var white = ArtistThemes.Color("#FFFFFF");
+            void Paint(LinearGradientBrush brush, double lift)
+            {
+                double[] sheen = [.30, .10, .06, .18];
+                for (var i = 0; i < sheen.Length; i++)
+                {
+                    var color = ArtistThemes.Mix(deep, white, sheen[i] + lift);
+                    color.A = 0xD9;
+                    brush.GradientStops[i].Color = color;
+                }
+            }
+            Paint(fill, 0); Paint(hover, .08); Paint(pressed, -.04);
+        });
+    }
+
     private void ArtistGlass(Button button)
     {
         var fill = new SolidColorBrush();
@@ -340,15 +517,19 @@ public sealed partial class MainWindow
     private bool ArtistMotionWanted => model.Settings.MotionArt && model.Settings.Effects && WindowsIntegration.AnimationsEnabled && !MeteredNetwork();
 
     // Read once and refreshed by NetworkStatusChanged: SyncArtistVideo runs on every scroll.
-    private static bool? meteredNetwork;
-    private static bool MeteredNetwork()
+    private static (bool Metered, bool Strict)? networkCost;
+    private static bool MeteredNetwork(bool requireUnrestricted = false)
     {
-        if (meteredNetwork is { } known) return known;
-        try {
-            var cost = NetworkInformation.GetInternetConnectionProfile()?.GetConnectionCost();
-            meteredNetwork = cost != null && (cost.NetworkCostType is NetworkCostType.Fixed or NetworkCostType.Variable || cost.Roaming || cost.OverDataLimit);
-        } catch { meteredNetwork = false; }
-        return meteredNetwork.Value;
+        if (networkCost == null)
+        {
+            try {
+                var cost = NetworkInformation.GetInternetConnectionProfile()?.GetConnectionCost();
+                bool restricted = cost?.Roaming == true || cost?.OverDataLimit == true;
+                networkCost = (restricted || cost?.NetworkCostType is NetworkCostType.Fixed or NetworkCostType.Variable,
+                    restricted || cost?.NetworkCostType != NetworkCostType.Unrestricted);
+            } catch { networkCost = (false, true); }
+        }
+        return requireUnrestricted ? networkCost.Value.Strict : networkCost.Value.Metered;
     }
 
     private void AttachArtistVideo(Grid layers, string? key, Action<bool> visibility)
@@ -425,35 +606,47 @@ public sealed partial class MainWindow
     private FrameworkElement ArtistLatestRelease(YouTubeAlbum album, string kind)
     {
         var section = new StackPanel();
-        section.Children.Add(CatalogSectionHeading("Último lanzamiento"));
-        var row = new Grid { ColumnSpacing = 24 };
+        var heading = CatalogSectionHeading("Último lanzamiento");
+        section.Children.Add(heading);
+        var row = new Grid { ColumnSpacing = 14, RowSpacing = 8 };
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
-        var cover = CatalogArtworkView(album.Artwork, 168); cover.CornerRadius = new(8); row.Children.Add(cover);
+        row.RowDefinitions.Add(new() { Height = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var cover = CatalogArtworkView(album.Artwork, 160); cover.CornerRadius = new(8);
+        cover.HorizontalAlignment = HorizontalAlignment.Left; row.Children.Add(cover);
+        AutomationProperties.SetAutomationId(cover, "ArtistLatestReleaseCover");
         var copy = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        var title = Ui.Text(album.Title, 24, true); title.MaxLines = 2; title.TextTrimming = TextTrimming.CharacterEllipsis; copy.Children.Add(title);
+        var title = Ui.Text(album.Title, 16, true); title.Tag = "display"; title.MaxLines = 2; title.TextTrimming = TextTrimming.CharacterEllipsis; copy.Children.Add(title);
         var meta = Ui.Text(string.Join(" · ", new[] { album.Year?.ToString() ?? "", kind }.Where(part => part.Length > 0)), 13); meta.Foreground = Ui.Brush(ArtistSecondaryText); copy.Children.Add(meta);
-        Grid.SetColumn(copy, 1); row.Children.Add(copy);
+        row.Children.Add(copy);
         var button = Ui.Button(album.Title, () => _ = model.RunAsync(() => model.AlbumAsync(album.Id)), "Abrir " + album.Title);
         button.Content = row; HomeCardChrome(button); StyleArtistCatalogButton(button); button.HorizontalAlignment = HorizontalAlignment.Stretch; button.HorizontalContentAlignment = HorizontalAlignment.Stretch; button.Margin = new(-8, 0, -8, 0);
         section.Children.Add(button);
+        layoutLatestRelease = (width, wide) => {
+            row.ColumnSpacing = wide ? 0 : 14;
+            heading.MinHeight = wide && model.MoreSongsAvailable ? 44 : 0;
+            cover.Width = cover.Height = wide ? Math.Min(160, width) : 76;
+            Grid.SetColumnSpan(cover, wide ? 2 : 1);
+            Grid.SetColumnSpan(copy, wide ? 2 : 1);
+            Grid.SetColumn(copy, wide ? 0 : 1);
+            Grid.SetRow(copy, wide ? 1 : 0);
+        };
         return section;
     }
 
-    private FrameworkElement ArtistAbout()
+    private void LayoutArtistReleases()
     {
-        var section = new StackPanel();
-        section.Children.Add(CatalogSectionHeading("Acerca de"));
-        var panel = new StackPanel { Spacing = 10 };
-        var biography = Ui.Text(model.Description, 14); biography.Foreground = Ui.Brush(ArtistSecondaryText); biography.LineHeight = 24; biography.MaxWidth = 720; biography.HorizontalAlignment = HorizontalAlignment.Left; biography.MaxLines = 4; biography.TextTrimming = TextTrimming.CharacterEllipsis;
-        panel.Children.Add(biography);
-        if (model.Description.Length > 240)
-        {
-            Button? toggle = null;
-            toggle = Ui.Button("Más información", () => { bool open = biography.MaxLines != 0; biography.MaxLines = open ? 0 : 4; toggle!.Content = open ? "Mostrar menos" : "Más información"; });
-            toggle.Background = Ui.Brush("#00000000"); toggle.BorderThickness = new(0); toggle.Padding = new(0); toggle.HorizontalAlignment = HorizontalAlignment.Left; ArtistFocus(toggle); panel.Children.Add(toggle);
-        }
-        // A translucent sheet over the deep colour rather than a grey card; tagged so Appearance keeps it.
-        section.Children.Add(new Border { Child = panel, Padding = new(30, 26, 30, 22), CornerRadius = new(14), Tag = "home-artwork", Background = Ui.Brush("#00000026"), BorderBrush = Ui.Brush("#FFFFFF28"), BorderThickness = new(1) });
-        return section;
+        const double minSongs = 480, gap = 24;
+        double width = pagePanel is { } page ? pageScroll.ActualWidth - page.Padding.Left - page.Padding.Right : 0;
+        bool hasRelease = layoutLatestRelease != null;
+        bool wide = hasRelease && width >= 700;
+        double releaseWidth = wide ? Math.Min(Math.Clamp(width * .28, 196, 300), width - minSongs - gap) : 0;
+        trackLayout.ColumnSpacing = wide ? gap : 0;
+        trackLayout.RowSpacing = hasRelease && !wide ? 16 : 0;
+        trackLayout.ColumnDefinitions[0].MinWidth = wide ? minSongs : 0;
+        trackLayout.ColumnDefinitions[1].Width = new(releaseWidth);
+        Grid.SetRow(artistLatestRelease, wide ? 0 : 1);
+        Grid.SetColumn(artistLatestRelease, wide ? 1 : 0);
+        artistLatestRelease.Visibility = hasRelease ? Visibility.Visible : Visibility.Collapsed;
+        layoutLatestRelease?.Invoke(releaseWidth, wide);
     }
 }

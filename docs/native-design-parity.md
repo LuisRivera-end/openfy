@@ -10,8 +10,8 @@ La referencia es la aplicación web existente (`app/assets/main.css`), no una nu
 
 - Color: fondo `#09090B`, panel `#18181B`, texto `#F4F4F5`, secundario `#A1A1AA`, marca `#1ED760`, divisor `#FFFFFF0D`.
 - Tipografía: Segoe UI Variable; texto 13–14, metadatos 11–12, sección 19–22, título 40. Contenido alineado a la izquierda, títulos densos y texto secundario discreto.
-- Geometría: margen y separación 9, sidebar 244 (210 en ventanas estrechas), radio de panel 12, topbar 82, contenido 36 (24/48 según ancho), reproductor 86 con portada 53.
-- Cristal: acrílico nativo en navegación, reproductor y paneles superpuestos; contenido oscuro estable para mantener legibilidad. Respaldo sólido cuando Windows desactiva transparencias.
+- La barra lateral ocupa toda la altura y mide 244 DIP (210 en ventanas estrechas). La barra superior mide 82 DIP y el contenido usa 36 DIP de margen lateral en el ancho habitual. La cápsula del reproductor flota centrada en la columna principal, mide hasta 760 × 64 DIP, tiene radio 32 y usa una portada de 40 DIP. El contenido deja 96 DIP al pie para que la última fila quede al alcance.
+- La navegación y la cápsula usan acrílico nativo con el tinte de la página y un color de respaldo. La barra lateral comparte el fondo con el panel principal y tiene un borde derecho de un píxel.
 - Iconografía: los mismos trazos Lucide de la web, como geometrías nativas, con etiquetas accesibles y foco visible.
 
 ```text
@@ -24,10 +24,8 @@ La referencia es la aplicación web existente (`app/assets/main.css`), no una nu
 | Tu colección   + | álbumes / artistas / lista de canciones  |
 | Favoritas        |                                         |
 | Playlists        |                                         |
-| Ajustes / estado |                                         |
+| Ajustes / estado |     (portada · transporte · volumen)   |
 +------------------+-----------------------------------------+
-| portada / título | transporte + progreso | letras / volumen |
-+------------------------------------------------------------+
 ```
 
 ## Revisión contra el encargo
@@ -82,10 +80,10 @@ Cambios aplicados por igual en la PWA (ambas apariencias) y en la aplicación na
 - Tarjeta destacada: la portada se muestra completa y cuadrada; la franja inferior continúa en el color dominante. Ver [Inicio centrado en la música](home-design.md).
 - Portadas: la decodificación nativa calcula el ancho que necesita `UniformToFill` según la caja y la proporción de la fuente; la web mide el lado mayor. Las miniaturas de `i.ytimg.com` se piden en `maxresdefault`, se recortan las franjas negras y se cuadran. Los banners de artista se sirven hasta 2048 px. La caché de portadas pasa a la versión 2 y regenera cada entrada al pedirla, conservando la anterior sin conexión.
 - Buscador: sección «Álbumes» entre Artistas y Canciones (`/api/music/search?type=album`).
-- Perfil de artista: banner a todo el ancho (o retrato sobre su propio color), nombre en tipografía de display, Reproducir y Aleatorio, «Canciones populares», «Último lanzamiento», discografía, «Acerca de» y «Fans también escuchan». El contrato `ArtistProfile` añade `banner` y `similar`, fijados en `tests/fixtures/desktop-catalog-contract.json`.
-- Reproductor: el slider nativo mide exactamente la altura de su plantilla (32) y los tiempos usan límites de línea ajustados y dígitos tabulares, de modo que comparten la línea central de la pista. En la web, dígitos tabulares de ancho fijo.
+- El perfil de artista muestra el banner, el nombre, Reproducir, Aleatorio, las canciones populares, la discografía y «Fans también escuchan». Cuando hay una biografía, el botón de información abre «Acerca de» con el retrato y el texto completo. Desde 700 DIP de ancho útil, «Último lanzamiento» aparece junto a las canciones populares con portada de hasta 160 DIP. En anchos menores se apila en una fila con portada de 76 DIP. El contrato `ArtistProfile` fija `banner` y `similar` en `tests/fixtures/desktop-catalog-contract.json`.
+- La cápsula del reproductor coloca el transporte encima de una pista de 3 DIP y abre el volumen en un desplegable. En columnas de menos de 900 DIP oculta Aleatorio, Repetición y los tiempos. Al iniciar con la cola vacía solo muestra el marcador de portada y Reproducir deshabilitado.
 - Filas icono + texto: `Ui.Row` centra verticalmente a todos sus hijos, también a los añadidos después.
-- Sidebar: «Ajustes» es un destino más (caja de 48, radio 7, estado seleccionado); el hover es más tenue que la selección.
+- «Ajustes» comparte el diseño de los destinos de la barra lateral. Las filas de navegación miden 36 DIP, con iconos de 20 DIP y texto regular de 14 DIP. El destino activo usa la superficie de la página y radio 8.
 
 Verificado:
 
@@ -98,4 +96,8 @@ Pendiente: revisión en iPhone físico; las ejecuciones WebKit emuladas no la su
 
 ## Identidad de artista (20 de noviembre de 2026)
 
-Windows replica la página de artista de la web: `MainWindow.Artist.cs` pinta un lavado detrás de todo el panel (barra superior incluida) que sigue al desplazamiento por secciones, y la cabecera ocupa todo el ancho del panel con el banner o el vídeo (`LoopingVideo.cs`) fundidos en `base`. `ArtistThemes.cs` muestrea la portada preparada a 16 × 16 con `BitmapDecoder` y guarda la paleta por artista durante la sesión, para que «Resultado más relevante» (`MainWindow.SearchFeatured.cs`) use los mismos colores. La comprobación `--visual-check <dir> --visual-artists-only --visual-artists "Bad Bunny;Lady Gaga;Rauw Alejandro"` captura búsqueda, cabecera, mitad y final de cada artista con datos reales; las comprobaciones apagan el vídeo.
+El lavado del artista sigue al desplazamiento y acaba en el fondo de la aplicación. El tono profundo empieza en «Fans también escuchan» cuando hay artistas similares. El banner y el vídeo de cabecera se extienden detrás de la barra lateral. La paleta de `ArtistThemes.cs` también llega a la barra superior y al reproductor, y se reutiliza en «Resultado más relevante». La comprobación `--visual-check <dir> --visual-artists-only --visual-artists "Bad Bunny;Lady Gaga;Rauw Alejandro"` captura la cabecera y el recorrido con datos reales, además del diálogo y el lanzamiento compacto cuando están disponibles. Las comprobaciones apagan el vídeo.
+
+## Páginas de álbum (20 de noviembre de 2026)
+
+El tinte de álbum usa OKLab con luminosidad máxima de 0,30 y cromaticidad máxima de 0,125. El texto secundario se aclara hasta alcanzar un contraste mínimo de 4,5:1 con la superficie. `AlbumTint` comparte el contrato `tests/fixtures/album-tint-contract.json` con la web. El fondo, la superficie, el texto secundario y el borde se propagan por el marco con una transición sRGB de 240 ms. Con movimiento reducido el cambio es inmediato. La portada mide 224 DIP (168 entre 560 y 719), la descripción de tres líneas se amplía con «Más» y `LoopingVideo` muestra el vídeo en la portada. [Diseño de páginas de álbum](superpowers/specs/2026-11-19-album-pages-design.md)

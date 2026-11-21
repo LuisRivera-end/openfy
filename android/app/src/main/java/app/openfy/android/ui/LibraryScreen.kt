@@ -81,13 +81,22 @@ internal fun LazyListScope.libraryItems(vm: OpenfyViewModel,librarySongs: List<S
         val shape=if(albums) RoundedCornerShape(Radii.row) else CircleShape
         val type=if(albums) "Álbum" else "Artista"
         val untitled=if(albums) "Sin álbum" else "Artista desconocido"
-        val groups=librarySongs.groupBy { if(albums) it.album else it.artist }
-            .entries.sortedBy { it.key.ifBlank { untitled } }
+        val groups=librarySongs.groupBy {
+            if(albums) {
+                val albumArtist = it.albumArtist()
+                if (albumArtist.isNotBlank()) "$albumArtist\u0000${it.album}" else it.album
+            } else it.artist
+        }.entries.sortedBy {
+            val songs = it.value
+            if (albums) songs.firstOrNull()?.album?.ifBlank { untitled } ?: untitled else it.key.ifBlank { untitled }
+        }
         gutterItems(groups,key={ "library:$kind:${it.key}" }) { (id,songs) ->
             val artwork=songs.firstNotNullOfOrNull { it.artwork }
-            val name=id.ifBlank { untitled }
+            val name=if(albums) songs.firstOrNull()?.album?.ifBlank { untitled } ?: untitled else id.ifBlank { untitled }
+            val distinctArtists = songs.map { it.albumArtist() }.filter(String::isNotBlank).distinct()
+            val albumArtist = if (distinctArtists.size == 1) distinctArtists.first() else null
             LibraryCollectionRow(name,"$type · ${songCount(songs.size)}",{
-                vm.openLocal(kind,id,name,songs,artwork)
+                vm.openLocal(kind,id,name,songs,artwork,artist=albumArtist)
             }) {
                 Cover(artwork,Modifier.size(44.dp).clip(shape),44.dp)
             }

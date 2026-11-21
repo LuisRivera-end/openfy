@@ -10,6 +10,7 @@ const onReduced = () => { reduced.value = !!reducedQuery?.matches }
 const active = computed(() => props.playing && appearance.effects && !reduced.value)
 const instant = computed(() => !appearance.effects || reduced.value)
 const canvas = ref<HTMLCanvasElement>()
+const surface = ref<HTMLElement>()
 const failed = ref(false)
 const fallback = ref<string[]>(['#234d3b', '#273c4e', '#3e2849'])
 let renderer: AmbientRenderer | null = null, observer: ResizeObserver | undefined, generation = 0, loaded = false
@@ -18,16 +19,22 @@ let previewPixels: Uint8ClampedArray | null = null, previewSource: string | null
 
 async function preparePreview(artwork?: string | null, palette: string[] = []) {
   const own = ++previewGeneration
-  let pixels: Uint8ClampedArray
-  try { pixels = artwork ? await artworkPixels(artwork) : ambientPaletteTexture(palette) }
-  catch { pixels = ambientPaletteTexture(palette) }
-  if (own !== previewGeneration) return
-  previewPixels = pixels; previewSource = artwork; previewColors.value = thirds(pixels)
-  renderer?.setPreview(pixels)
+  function setPreview(pixels: Uint8ClampedArray) {
+    previewPixels = pixels; previewSource = artwork; previewColors.value = thirds(pixels)
+    renderer?.setPreview(pixels)
+  }
+  setPreview(ambientPaletteTexture(palette))
+  if (!artwork) return
+  try {
+    const pixels = await artworkPixels(artwork)
+    if (own === previewGeneration) setPreview(pixels)
+  } catch { /* Keep the preview palette. */ }
 }
-function positionPreview(rect: AmbientRect, radius = 16) {
-  renderer?.setPreviewRegion(rect, radius)
-  previewClip.value = `inset(${rect.y}px ${Math.max(0, innerWidth - rect.x - rect.width)}px ${Math.max(0, innerHeight - rect.y - rect.height)}px ${rect.x}px round ${radius}px)`
+function positionPreview(rect: AmbientRect, radius = 16, frameTime?: number) {
+  renderer?.setPreviewRegion(rect, radius, frameTime)
+  const width = surface.value?.clientWidth ?? innerWidth
+  const height = surface.value?.clientHeight ?? innerHeight
+  previewClip.value = `inset(${rect.y}px ${width - rect.x - rect.width}px ${height - rect.y - rect.height}px ${rect.x}px round ${radius}px)`
 }
 function clearPreview(promote = false) {
   previewGeneration++
@@ -81,7 +88,7 @@ watch(() => props.lyricsScrim, value => renderer?.setLyricsScrim(value, instant.
 </script>
 
 <template>
-  <div class="ambient" :class="{ fallback: failed }" :data-ambient="failed ? 'css' : 'webgl'" aria-hidden="true" :style="{ '--ambient-one': fallback[0], '--ambient-two': fallback[1], '--ambient-three': fallback[2] }">
+  <div ref="surface" class="ambient" :class="{ fallback: failed }" :data-ambient="failed ? 'css' : 'webgl'" aria-hidden="true" :style="{ '--ambient-one': fallback[0], '--ambient-two': fallback[1], '--ambient-three': fallback[2] }">
     <canvas v-if="!failed" ref="canvas" class="ambient-canvas"></canvas>
     <template v-else><i></i><i></i><i></i></template>
     <div v-if="failed && previewColors.length" class="ambient ambient-preview fallback" :style="{ clipPath: previewClip, '--ambient-one': previewColors[0], '--ambient-two': previewColors[1], '--ambient-three': previewColors[2] }"><i></i><i></i><i></i></div>

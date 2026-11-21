@@ -2,6 +2,7 @@ package app.openfy.android.ui
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.util.AtomicFile
 import androidx.datastore.preferences.core.edit
@@ -86,16 +87,49 @@ private enum class MotionStatus {
 }
 
 @Serializable
+internal data class AlbumPresentationColors(
+    val background: String,
+    val text1: String? = null,
+    val text2: String? = null,
+    val text3: String? = null,
+    val text4: String? = null
+)
+
+@Serializable
+internal data class AlbumDescription(
+    val text: String,
+    val source: String = "apple"
+)
+
+internal data class AlbumPresentation(
+    val motion: MotionLookup = MotionLookup(),
+    val description: AlbumDescription? = null,
+    val colors: AlbumPresentationColors? = null
+)
+
+@Serializable
 private data class MotionResult(
     val status: MotionStatus,
     val checkedAt: Long,
-    val video: MotionVideo? = null
+    val video: MotionVideo? = null,
+    val lastAccess: Long = checkedAt,
+    val editorial: String? = null,
+    val colors: AlbumPresentationColors? = null,
+    val metadataCheckedAt: Long = checkedAt,
+    val metadataStatus: MotionStatus = status
 ) {
     val expiresAt: Long
         get() = when (status) {
             MotionStatus.READY -> Long.MAX_VALUE
             MotionStatus.NONE -> checkedAt + 30 * DayMs
             MotionStatus.UNMATCHED -> checkedAt + DayMs
+        }
+
+    val metadataExpiresAt: Long
+        get() = when (metadataStatus) {
+            MotionStatus.READY -> metadataCheckedAt + 7 * DayMs
+            MotionStatus.NONE -> metadataCheckedAt + DayMs
+            MotionStatus.UNMATCHED -> metadataCheckedAt + DayMs
         }
 }
 
@@ -104,6 +138,7 @@ internal data class MotionLookup(val video: MotionVideo? = null, val retryAt: Lo
 private const val DayMs = 86_400_000L
 private const val RetryMs = 15 * 60_000L
 private const val MaxCandidates = 3
+private const val MaxStoredResults = 2000
 private const val MaxPlaylistBytes = 512 * 1024
 private const val MaxVideoEdge = 1080
 private const val MaxVideoRate = 30f
@@ -162,11 +197,21 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     private val connectivity = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val http = app.http.newBuilder().followRedirects(false).followSslRedirects(false)
         .addInterceptor { chain ->
-            val metered = connectivity.isActiveNetworkMetered && !(app.isDebuggable && app.qaUnmetered)
-            if (metered || !isAppleUrl(chain.request().url)) {
-                throw IOException("Motion needs an unmetered Apple connection")
+            val request = chain.request()
+            val url = request.url
+            if (!isAppleUrl(url)) {
+                throw IOException("Motion needs an Apple connection")
             }
-            chain.proceed(chain.request())
+            val path = url.encodedPath
+            val isMedia = path.endsWith(".m3u8") || path.endsWith(".ts") || path.endsWith(".mp4")
+            val caps = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+            val dataSaver = connectivity.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
+            val metered = (connectivity.isActiveNetworkMetered || caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) == false || dataSaver) &&
+                !(app.isDebuggable && app.qaUnmetered)
+            if (metered && isMedia) {
+                throw IOException("Motion needs an unmetered Apple connection without Data Saver for video")
+            }
+            chain.proceed(request)
         }.build()
     private val mutex = Mutex()
     private val file = AtomicFile(File(app.filesDir, "motion/results.json"))
@@ -174,6 +219,7 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         runCatching { Json.decodeFromString<Map<String, MotionResult>>(file.readFully().decodeToString()) }
             .getOrDefault(emptyMap()).toMutableMap()
     }
+    private val inUseKeys = mutableSetOf<String>()
     private val failures = mutableMapOf<String, Pair<Int, Long>>()
     private var token: String? = null
     private var tokenExpires = 0L
@@ -207,41 +253,49 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         withContext(Dispatchers.IO) {
             mutex.withLock {
                 val key = key(artist, album)
-                val now = System.currentTimeMillis()
-                val cached = results[key]?.takeIf { it.expiresAt > now }
-                val maxEdge = decoderPolicy().maxEdge
-                if (!allowNetwork) {
-                    return@withLock MotionLookup(cached?.video?.let { offlineVideo(it, maxEdge) })
-                }
-                failures[key]?.second?.takeIf { it > now }?.let { return@withLock MotionLookup(retryAt = it) }
+                inUseKeys.add(key)
                 try {
-                    if (cached != null) {
-                        val video = cached.video ?: return@withLock MotionLookup(retryAt = cached.expiresAt)
-                        val legacyNeedsCheck = video.renditions == null && avcDecoders(decoderSelector(video.maxEdge)).let { decoders ->
-                            decoders.isNotEmpty() && decoders.none { codec ->
-                                runCatching { codec.isVideoSizeAndRateSupportedV21(video.width, video.height, MaxVideoRate.toDouble()) }
-                                    .getOrDefault(true)
-                            }
-                        }
-                        if (video.renditions.isNullOrEmpty() && video.maxEdge <= maxEdge && !legacyNeedsCheck) {
-                            return@withLock MotionLookup(video)
-                        }
-                        val current = refreshLegacyVideo(artist, album, video, maxEdge)
-                        val preferred = preferredRendition(current.renditions.orEmpty(), maxEdge, ::decoderSupports)
-                            ?.let(current::withRendition) ?: current.takeIf { it.maxEdge <= maxEdge }
-                            ?: return@withLock MotionLookup()
-                        if (preferred != video) saveVideo(key, preferred)
-                        return@withLock MotionLookup(preferred)
+                    val now = System.currentTimeMillis()
+                    val cached = results[key]?.takeIf { it.expiresAt > now }
+                    val maxEdge = decoderPolicy().maxEdge
+                    if (!allowNetwork) {
+                        return@withLock MotionLookup(cached?.video?.let { offlineVideo(it, maxEdge) })
                     }
-                    val result = lookup(artist, album, maxEdge)
-                    results[key] = result
-                    failures.remove(key)
-                    saveResults()
-                    MotionLookup(result.video, result.expiresAt.takeIf { result.video == null })
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    MotionLookup(retryAt = scheduleRetry(key))
+                    failures[key]?.second?.takeIf { it > now }?.let { return@withLock MotionLookup(retryAt = it) }
+                    try {
+                        if (cached != null) {
+                            if (cached.video != null) {
+                                results[key] = cached.copy(lastAccess = now)
+                            }
+                            val video = cached.video ?: return@withLock MotionLookup(retryAt = cached.expiresAt)
+                            val legacyNeedsCheck = video.renditions == null && avcDecoders(decoderSelector(video.maxEdge)).let { decoders ->
+                                decoders.isNotEmpty() && decoders.none { codec ->
+                                    runCatching { codec.isVideoSizeAndRateSupportedV21(video.width, video.height, MaxVideoRate.toDouble()) }
+                                        .getOrDefault(true)
+                                }
+                            }
+                            if (video.renditions.isNullOrEmpty() && video.maxEdge <= maxEdge && !legacyNeedsCheck) {
+                                return@withLock MotionLookup(video)
+                            }
+                            val current = refreshLegacyVideo(artist, album, video, maxEdge)
+                            val preferred = preferredRendition(current.renditions.orEmpty(), maxEdge, ::decoderSupports)
+                                ?.let(current::withRendition) ?: current.takeIf { it.maxEdge <= maxEdge }
+                                ?: return@withLock MotionLookup()
+                            if (preferred != video) saveVideo(key, preferred)
+                            return@withLock MotionLookup(preferred)
+                        }
+                        val result = lookup(artist, album, maxEdge)
+                        results[key] = result
+                        failures.remove(key)
+                        saveResults()
+                        MotionLookup(result.video, result.expiresAt.takeIf { result.video == null })
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        MotionLookup(retryAt = scheduleRetry(key))
+                    }
+                } finally {
+                    inUseKeys.remove(key)
                 }
             }
         }
@@ -433,7 +487,16 @@ internal class MotionRepository(private val app: OpenfyApplication) {
     }
 
     private fun saveResults() {
-        results.entries.removeAll { it.value.expiresAt <= System.currentTimeMillis() }
+        val now = System.currentTimeMillis()
+        results.entries.removeAll { it.value.expiresAt <= now && it.value.metadataExpiresAt <= now && it.key !in inUseKeys }
+        if (results.size > MaxStoredResults) {
+            val evictable = results.entries.filter { it.key !in inUseKeys }
+                .sortedBy { it.value.lastAccess }
+            val excess = results.size - MaxStoredResults
+            for (i in 0 until minOf(excess, evictable.size)) {
+                results.remove(evictable[i].key)
+            }
+        }
         val stream = try { file.startWrite() } catch (_: IOException) { return }
         try {
             stream.write(Json.encodeToString(results).encodeToByteArray())
@@ -463,7 +526,90 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         playlist.segments.all { part -> hasPart(part) && part.initializationSegment?.let(::hasPart) != false }
     }.getOrDefault(false)
 
-    private suspend fun lookup(artist: String, album: String, maxEdge: Int): MotionResult {
+    suspend fun albumPresentation(artist: String, album: String, allowMotion: Boolean): AlbumPresentation =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val key = key(artist, album)
+                inUseKeys.add(key)
+                try {
+                    val now = System.currentTimeMillis()
+                    val cached = results[key]
+                    val policy = decoderPolicy()
+                    val maxEdge = policy.maxEdge
+
+                    val failureUntil = failures[key]?.second
+                    if (failureUntil != null && failureUntil > now && cached == null) {
+                        return@withLock AlbumPresentation(motion = MotionLookup(retryAt = failureUntil))
+                    }
+
+                    if (cached != null && cached.metadataExpiresAt > now) {
+                        results[key] = cached.copy(lastAccess = now)
+                        val motionLookup = if (allowMotion) {
+                            if (cached.video != null) {
+                                val video = cached.video
+                                if (video.renditions.isNullOrEmpty() && video.maxEdge <= maxEdge) {
+                                    MotionLookup(video)
+                                } else {
+                                    val current = refreshLegacyVideo(artist, album, video, maxEdge)
+                                    val preferred = preferredRendition(current.renditions.orEmpty(), maxEdge, ::decoderSupports)
+                                        ?.let(current::withRendition) ?: current.takeIf { it.maxEdge <= maxEdge }
+                                    MotionLookup(preferred)
+                                }
+                            } else if (cached.status == MotionStatus.NONE && cached.expiresAt > now) {
+                                MotionLookup()
+                            } else {
+                                try {
+                                    val refreshed = lookup(artist, album, maxEdge, allowMotion = true)
+                                    results[key] = refreshed
+                                    failures.remove(key)
+                                    saveResults()
+                                    MotionLookup(refreshed.video, refreshed.expiresAt.takeIf { refreshed.video == null })
+                                } catch (_: Exception) {
+                                    MotionLookup(retryAt = scheduleRetry(key))
+                                }
+                            }
+                        } else {
+                            MotionLookup()
+                        }
+
+                        return@withLock AlbumPresentation(
+                            motion = motionLookup,
+                            description = cached.editorial?.let { AlbumDescription(it, "apple") },
+                            colors = cached.colors
+                        )
+                    }
+
+                    try {
+                        val result = lookup(artist, album, maxEdge, allowMotion = allowMotion)
+                        results[key] = result
+                        failures.remove(key)
+                        saveResults()
+                        AlbumPresentation(
+                            motion = if (allowMotion) MotionLookup(result.video, result.expiresAt.takeIf { result.video == null }) else MotionLookup(),
+                            description = result.editorial?.let { AlbumDescription(it, "apple") },
+                            colors = result.colors
+                        )
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        val retryAt = scheduleRetry(key)
+                        if (cached != null) {
+                            AlbumPresentation(
+                                motion = if (allowMotion && cached.video != null) MotionLookup(cached.video) else MotionLookup(retryAt = retryAt),
+                                description = cached.editorial?.let { AlbumDescription(it, "apple") },
+                                colors = cached.colors
+                            )
+                        } else {
+                            AlbumPresentation(motion = MotionLookup(retryAt = retryAt))
+                        }
+                    }
+                } finally {
+                    inUseKeys.remove(key)
+                }
+            }
+        }
+
+    private suspend fun lookup(artist: String, album: String, maxEdge: Int, allowMotion: Boolean = true): MotionResult {
         val checked = mutableSetOf<String>()
         val unresolved = mutableSetOf<String>()
         var verified = false
@@ -475,17 +621,85 @@ internal class MotionRepository(private val app: OpenfyApplication) {
                 for (id in candidates.take(MaxCandidates)) {
                     checked.add(id)
                     try {
-                        val attributes = catalog("albums/$id", mapOf("extend" to "editorialVideo"))
-                            ?.getValue("data")?.jsonArray?.firstOrNull()?.jsonObject?.getValue("attributes")?.jsonObject
+                        val spanishData = runCatching {
+                            catalog("albums/$id", mapOf("extend" to "editorialVideo", "l" to "es-MX"))
+                                ?.getValue("data")?.jsonArray?.firstOrNull()?.jsonObject
+                        }.getOrNull()
+                        val spanishId = spanishData?.string("id")
+                        val spanishAttrs = spanishData?.getValue("attributes")?.jsonObject
+                        val spanishValid = spanishData != null && spanishAttrs != null &&
+                            runCatching { albumId(spanishId.orEmpty()) == id }.getOrDefault(false) &&
+                            matches(artist, album, spanishAttrs.string("artistName"), spanishAttrs.string("name"))
+
+                        var attributes = if (spanishValid) spanishAttrs else null
+                        if (attributes == null) {
+                            try {
+                                val englishData = catalog("albums/$id", mapOf("extend" to "editorialVideo", "l" to "en-US"))
+                                    ?.getValue("data")?.jsonArray?.firstOrNull()?.jsonObject
+                                val englishId = englishData?.string("id")
+                                val englishAttrs = englishData?.getValue("attributes")?.jsonObject
+                                if (englishData != null && englishAttrs != null &&
+                                    runCatching { albumId(englishId.orEmpty()) == id }.getOrDefault(false) &&
+                                    matches(artist, album, englishAttrs.string("artistName"), englishAttrs.string("name"))
+                                ) {
+                                    attributes = englishAttrs
+                                }
+                            } catch (_: Exception) {}
+                        }
                         if (attributes == null) {
                             unresolved.add(id)
                             continue
                         }
-                        val editorial = attributes["editorialVideo"]?.takeUnless { it is JsonNull }?.jsonObject
-                        val video = editorial?.let { squareVideo(it, maxEdge) }
-                        if (video != null) return MotionResult(MotionStatus.READY, System.currentTimeMillis(), video)
-                        unresolved.remove(id)
+
                         verified = true
+                        var notes = parseEditorialNotes(attributes)
+                        if (notes == null && spanishValid) {
+                            try {
+                                val englishData = catalog("albums/$id", mapOf("extend" to "editorialVideo", "l" to "en-US"))
+                                    ?.getValue("data")?.jsonArray?.firstOrNull()?.jsonObject
+                                val englishId = englishData?.string("id")
+                                val englishAttrs = englishData?.getValue("attributes")?.jsonObject
+                                if (englishData != null && englishAttrs != null &&
+                                    runCatching { albumId(englishId.orEmpty()) == id }.getOrDefault(false) &&
+                                    matches(artist, album, englishAttrs.string("artistName"), englishAttrs.string("name"))
+                                ) {
+                                    notes = parseEditorialNotes(englishAttrs)
+                                    if (parseArtworkColors(attributes["artwork"]?.jsonObject) == null) {
+                                        if (parseArtworkColors(englishAttrs["artwork"]?.jsonObject) != null) {
+                                            attributes = englishAttrs
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        val colors = parseArtworkColors(attributes["artwork"]?.jsonObject)
+                        val editorial = attributes["editorialVideo"]?.takeUnless { it is JsonNull }?.jsonObject
+                        val now = System.currentTimeMillis()
+                        val (videoStatus, videoCheckedAt, finalVideo) = if (allowMotion) {
+                            val v = editorial?.let { squareVideo(it, maxEdge) }
+                            Triple(if (v != null) MotionStatus.READY else MotionStatus.NONE, now, v)
+                        } else {
+                            val existing = results[key(artist, album)]
+                            if (existing?.status == MotionStatus.READY) {
+                                Triple(existing.status, existing.checkedAt, existing.video)
+                            } else if (existing?.status == MotionStatus.NONE && existing.expiresAt > now) {
+                                Triple(existing.status, existing.checkedAt, null)
+                            } else {
+                                Triple(MotionStatus.UNMATCHED, 0L, null)
+                            }
+                        }
+                        unresolved.remove(id)
+                        val metaStatus = if (notes != null || colors != null) MotionStatus.READY else MotionStatus.NONE
+                        return MotionResult(
+                            status = videoStatus,
+                            checkedAt = videoCheckedAt,
+                            video = finalVideo,
+                            lastAccess = now,
+                            editorial = notes,
+                            colors = colors,
+                            metadataCheckedAt = now,
+                            metadataStatus = metaStatus
+                        )
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
@@ -500,7 +714,29 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         }
         failure?.let { throw it }
         val status = if (verified && unresolved.isEmpty()) MotionStatus.NONE else MotionStatus.UNMATCHED
-        return MotionResult(status, System.currentTimeMillis())
+        val now = System.currentTimeMillis()
+        val existing = results[key(artist, album)]
+        val (finalStatus, finalCheckedAt, finalVideo) = if (allowMotion) {
+            Triple(status, now, null)
+        } else {
+            if (existing?.status == MotionStatus.READY) {
+                Triple(existing.status, existing.checkedAt, existing.video)
+            } else if (existing?.status == MotionStatus.NONE && existing.expiresAt > now) {
+                Triple(existing.status, existing.checkedAt, null)
+            } else {
+                Triple(MotionStatus.UNMATCHED, 0L, null)
+            }
+        }
+        return MotionResult(
+            status = finalStatus,
+            checkedAt = finalCheckedAt,
+            video = finalVideo,
+            lastAccess = now,
+            editorial = null,
+            colors = null,
+            metadataCheckedAt = now,
+            metadataStatus = status
+        )
     }
 
     private suspend fun squareVideo(editorial: JsonObject, maxEdge: Int): MotionVideo? {
@@ -639,7 +875,7 @@ internal class MotionRepository(private val app: OpenfyApplication) {
             try {
                 return json(request(url.build(), mapOf("Authorization" to "Bearer ${playerToken()}", "Origin" to ApplePlayer)))
             } catch (error: HttpFailure) {
-                if (error.code == 404 && path.startsWith("albums/")) return null
+                if (error.code in setOf(400, 404) && path.startsWith("albums/")) return null
                 if (attempt > 0 || error.code !in setOf(401, 403)) throw error
                 token = null
             }
@@ -654,12 +890,10 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         val html = request("$ApplePlayer/us/browse".toHttpUrl(), redirects = 3).decodeToString()
         val bundles = BundlePattern.findAll(html).take(3).map { it.groupValues[1] }
         for (bundle in bundles) {
-            val source = request("$ApplePlayer$bundle".toHttpUrl(), limit = 32 * 1024 * 1024).decodeToString()
-            for (candidate in TokenPattern.findAll(source).map { it.value }) {
-                val expiry = runCatching {
-                    json(Base64.getUrlDecoder().decode(candidate.split('.')[1])).getValue("exp").jsonPrimitive.long * 1000
-                }.getOrNull() ?: continue
-                if (expiry > minimum) {
+            val candidate = streamBundleToken("$ApplePlayer$bundle".toHttpUrl(), minimum, limit = 32 * 1024 * 1024, redirects = 3)
+            if (candidate != null) {
+                val expiry = parseTokenExpiry(candidate)
+                if (expiry != null && expiry > minimum) {
                     token = candidate
                     tokenExpires = expiry
                     return candidate
@@ -668,6 +902,24 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         }
         error("Motion token unavailable")
     }
+
+    private suspend fun streamBundleToken(url: HttpUrl, minimumExpiry: Long, limit: Int = 32 * 1024 * 1024, redirects: Int = 3): String? =
+        withContext(Dispatchers.IO) {
+            check(isAppleUrl(url)) { "Motion URL rejected" }
+            val builder = Request.Builder().url(url).header("User-Agent", UserAgent)
+            val call = http.newCall(builder.build())
+            val response = call.execute()
+            response.use { resp ->
+                if (resp.code in RedirectCodes && redirects > 0) {
+                    val next = resp.header("Location")?.let(url::resolve) ?: throw HttpFailure(resp.code)
+                    check(isAppleUrl(next)) { "Motion redirect rejected" }
+                    return@withContext streamBundleToken(next, minimumExpiry, limit, redirects - 1)
+                }
+                if (!resp.isSuccessful) throw HttpFailure(resp.code)
+                val stream = checkNotNull(resp.body).byteStream()
+                findTokenInStream(stream, limit = limit, minimumExpiry = minimumExpiry)
+            }
+        }
 
     private suspend fun request(url: HttpUrl, headers: Map<String, String> = emptyMap(), limit: Int = 4 * 1024 * 1024,
         redirects: Int = 0): ByteArray {
@@ -785,6 +1037,69 @@ internal class MotionRepository(private val app: OpenfyApplication) {
                 else -> null
             }
         }
+        fun parseArtworkColors(artwork: JsonObject?): AlbumPresentationColors? {
+            if (artwork == null) return null
+            fun color(key: String): String? {
+                val value = artwork[key]?.jsonPrimitive?.contentOrNull?.trim() ?: return null
+                val match = Regex("^#?([0-9a-fA-F]{6})$").matchEntire(value) ?: return null
+                return "#" + match.groupValues[1].uppercase()
+            }
+            val background = color("bgColor") ?: return null
+            return AlbumPresentationColors(
+                background = background,
+                text1 = color("textColor1"),
+                text2 = color("textColor2"),
+                text3 = color("textColor3"),
+                text4 = color("textColor4")
+            )
+        }
+
+        fun parseEditorialNotes(attributes: JsonObject?): String? {
+            if (attributes == null) return null
+            val notesObj = attributes["editorialNotes"]?.takeUnless { it is JsonNull }?.jsonObject ?: return null
+            val raw = notesObj["standard"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+                ?: notesObj["short"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+                ?: return null
+            return stripHtmlAndDecode(raw).ifEmpty { null }
+        }
+
+        fun stripHtmlAndDecode(input: String): String {
+            var text = input.replace(Regex("<(?:br\\b[^>]*|/p\\s*)>", RegexOption.IGNORE_CASE), "\n")
+            text = text.replace(Regex("<!--[\\s\\S]*?-->|</?[a-zA-Z](?:[^>\"']|\"[^\"]*\"|'[^']*')*>"), "")
+            text = decodeHtmlEntities(text)
+            text = text.replace("\r\n", "\n").replace('\r', '\n')
+            text = text.replace(Regex("[^\\S\\n]+"), " ")
+            text = text.replace(Regex(" *\\n *"), "\n")
+            text = text.replace(Regex("\\n{3,}"), "\n\n")
+            text = text.trim()
+            if (text.length > 4000) {
+                text = text.substring(0, 4000).replace(Regex("[\\uD800-\\uDBFF]$"), "").trimEnd()
+            }
+            return text
+        }
+
+        fun decodeHtmlEntities(input: String): String {
+            val named = mapOf(
+                "&amp;" to "&", "&lt;" to "<", "&gt;" to ">", "&quot;" to "\"",
+                "&apos;" to "'", "&#39;" to "'", "&nbsp;" to " ", "&copy;" to "©",
+                "&mdash;" to "—", "&ndash;" to "–", "&hellip;" to "…",
+                "&rsquo;" to "’", "&lsquo;" to "‘", "&rdquo;" to "”", "&ldquo;" to "“"
+            )
+            var text = input
+            for ((entity, replacement) in named) {
+                text = text.replace(entity, replacement, ignoreCase = true)
+            }
+            text = Regex("&#(\\d+);").replace(text) { match ->
+                val code = match.groupValues[1].toIntOrNull()
+                if (code != null && code > 0) Character.toString(code) else match.value
+            }
+            text = Regex("&#x([0-9a-fA-F]+);").replace(text) { match ->
+                val code = match.groupValues[1].toIntOrNull(16)
+                if (code != null && code > 0) Character.toString(code) else match.value
+            }
+            return text
+        }
+
         fun json(bytes: ByteArray) = Json.parseToJsonElement(bytes.decodeToString()).jsonObject
         fun JsonObject.string(key: String) = get(key)?.jsonPrimitive?.contentOrNull.orEmpty()
         fun albumId(id: String) = id.also { check(it.toLongOrNull()?.let { value -> value > 0 } == true) }
@@ -812,5 +1127,57 @@ internal class MotionRepository(private val app: OpenfyApplication) {
         fun isAppleUrl(url: HttpUrl) = url.isHttps && url.port == 443 &&
             url.username.isEmpty() && url.password.isEmpty() &&
             (url.host == "apple.com" || url.host.endsWith(".apple.com"))
+
+        internal fun findTokenInStream(
+            input: java.io.InputStream,
+            limit: Int = 32 * 1024 * 1024,
+            chunkSize: Int = 16 * 1024,
+            overlapSize: Int = 4096,
+            minimumExpiry: Long = System.currentTimeMillis() + 3_600_000L
+        ): String? {
+            val buffer = ByteArray(chunkSize)
+            var totalRead = 0
+            var tail = ""
+            while (totalRead < limit) {
+                val toRead = minOf(buffer.size, limit - totalRead)
+                val count = input.read(buffer, 0, toRead)
+                if (count <= 0) {
+                    for (candidate in TokenPattern.findAll(tail).map { it.value }) {
+                        val expiry = parseTokenExpiry(candidate)
+                        if (expiry != null && expiry > minimumExpiry) return candidate
+                    }
+                    break
+                }
+                totalRead += count
+                val chunkStr = String(buffer, 0, count, Charsets.ISO_8859_1)
+                val text = tail + chunkStr
+                val matches = TokenPattern.findAll(text).toList()
+                for (match in matches) {
+                    if (match.range.last == text.length - 1 && totalRead < limit) {
+                        continue
+                    }
+                    val candidate = match.value
+                    val expiry = parseTokenExpiry(candidate)
+                    if (expiry != null && expiry > minimumExpiry) {
+                        return candidate
+                    }
+                }
+                val partialMatch = matches.firstOrNull { it.range.last == text.length - 1 }
+                val keepFrom = if (partialMatch != null) {
+                    minOf(partialMatch.range.first, (text.length - overlapSize).coerceAtLeast(0))
+                } else {
+                    (text.length - overlapSize).coerceAtLeast(0)
+                }
+                tail = text.substring(keepFrom)
+            }
+            return null
+        }
+
+        internal fun parseTokenExpiry(candidate: String): Long? = runCatching {
+            val parts = candidate.split('.')
+            if (parts.size < 2) return null
+            val payload = Base64.getUrlDecoder().decode(parts[1]).decodeToString()
+            Json.parseToJsonElement(payload).jsonObject.getValue("exp").jsonPrimitive.long * 1000
+        }.getOrNull()
     }
 }

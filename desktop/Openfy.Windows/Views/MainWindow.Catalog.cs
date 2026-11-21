@@ -4,7 +4,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using Openfy.Core;
+using Openfy.Windows.Services;
 using Openfy.Windows.ViewModels;
+using Color = global::Windows.UI.Color;
 
 namespace Openfy.Windows.Views;
 
@@ -13,6 +15,24 @@ public sealed partial class MainWindow
     private string libraryTab = "songs", renderedCatalogPage = "";
     private bool applyingCatalogFilter;
     private Action? refreshCatalogFilter;
+    private static readonly AlbumTint NeutralAlbumTint = AlbumTint.From(null);
+    private SolidColorBrush albumTrackSurface => frameSurface;
+    private SolidColorBrush albumMuted => frameMuted;
+    private readonly SolidColorBrush albumPrimary = Ui.Brush("#F4F4F5");
+    private readonly SolidColorBrush albumFocus = Ui.Brush("#6DED9A");
+    private readonly Dictionary<string, long> failedAlbumVideos = [];
+    private AlbumTint albumTintTarget = NeutralAlbumTint;
+    private long albumDominantAfter;
+    private string? albumWashKey, albumCoverSource, albumDominant, albumTintInput, albumVideoUrl;
+    private Border? albumCover;
+    private LoopingVideo? albumVideo;
+    private long albumVideoStarted, albumVideoElapsed;
+    private bool albumDialogOpen;
+    private Action? refreshAlbumDescription;
+    private bool AlbumSurfacePage => model.Page is "album" or "localalbum";
+    private bool CompactAlbum => AlbumSurfacePage && pageScroll.ActualWidth < 560;
+    private string? AlbumPageKey => AlbumSurfacePage ? model.Page + ":" + model.PageContext?.Id : null;
+    private bool PageEffects => model.Settings.Effects && WindowsIntegration.AnimationsEnabled;
 
     private void BuildCatalog()
     {
@@ -93,7 +113,12 @@ public sealed partial class MainWindow
             cachedFavoritesRefresh = refreshCatalogFilter; catalog.Children.Clear();
         } else ClearCatalogPanel(catalog);
         ClearCatalogPanel(catalogTail);
-        // Every way out of a page passes here (search, errors, rebuilds): the artist wash and video follow the new page.
+        ClearCatalogPanel(artistPopularHeading);
+        ClearCatalogPanel(artistLatestRelease);
+        layoutLatestRelease = null;
+        LayoutArtistReleases();
+        // Search, errors, and rebuilds all pass through here.
+        SyncAlbumSurface();
         SyncArtistSurface();
     }
 
@@ -190,32 +215,299 @@ public sealed partial class MainWindow
             if (model.Page == "favorites") { renderedFavoritesLibrary = model.Library; renderedFavoritesStatistics = model.Statistics; renderedFavoritesFilter = FavoritesFilterKey(); }
             return;
         }
-        bool artist = model.Page is "artist" or "localartist";
-        var copy = new StackPanel { Spacing = 13, VerticalAlignment = VerticalAlignment.Bottom };
-        copy.Children.Add(Ui.Muted(model.CatalogKind, 12)); copy.Children.Add(Ui.Text(model.Heading, artist ? 54 : 48, true));
-        string time = CatalogDuration(model.Songs.Sum(song => song.Duration));
-        string detail = (model.CatalogSubtitle.Length > 0 ? model.CatalogSubtitle + " · " : "") + model.Songs.Count + " canciones" + (time.Length > 0 ? " · " + time : "");
-        copy.Children.Add(Ui.Muted(detail, 12));
-        var hero = CatalogHeroLayout(CatalogArtworkView(model.CatalogArtwork, 208, artist, model.Page == "favorites"), copy, 208); hero.Margin = new Thickness(0, 12, 0, 8); catalog.Children.Add(hero);
-        if (model.Description.Length > 0)
+        if (model.Page == "album") BuildAlbumPage(local: false);
+    }
+
+    private void BuildAlbumPage(bool local)
+    {
+        string title = model.Heading;
+        var header = new StackPanel();
+        var back = new HyperlinkButton { Content = local ? "Volver a la biblioteca" : "Volver a buscar", Foreground = albumPrimary, Padding = new(0), Margin = new(0, 0, 0, 12) };
+        back.Click += (_, _) => { if (local) NavigateLocal("library"); else ReturnToSearch(); };
+        AlbumFocus(back);
+        header.Children.Add(back);
+
+        string? coverSource = model.CatalogArtwork;
+        Border? cover = null;
+        cover = CatalogArtworkView(coverSource, 224, opened: async prepared => {
+            if (coverSource == null || cover != albumCover) return;
+            var dominant = await ArtistThemes.LoadAlbumDominantAsync(coverSource, prepared);
+            if (cover == null || cover != albumCover) return;
+            albumDominant = dominant;
+            UpdateAlbumTint();
+        });
+        cover.CornerRadius = new(12);
+        cover.Tag = "home-artwork";
+        albumCover = cover;
+        if (albumVideo != null)
         {
-            var biography = Ui.Muted(model.Description, 13); biography.MaxWidth = 680; biography.HorizontalAlignment = HorizontalAlignment.Left; biography.LineHeight = 23; biography.MaxLines = 3; biography.TextTrimming = TextTrimming.CharacterEllipsis; catalog.Children.Add(biography);
-            if (model.Description.Length > 240) catalog.Children.Add(Ui.Button("Más información", () => biography.MaxLines = biography.MaxLines == 3 ? 0 : 3));
+            var view = albumVideo.View;
+            (view.Parent as Panel)?.Children.Remove(view);
+            ((Grid)cover.Child).Children.Add(view);
         }
-        var controls = Ui.Row(); controls.Spacing = 18; controls.Margin = new Thickness(0, 16, 0, 12);
-        var play = Ui.PlayButton(() => { if (model.Songs.Count > 0) _ = model.RunAsync(() => model.PlayAsync(model.Songs[0], model.Songs.ToArray(), model.PageContext)); }, 56, true); AutomationProperties.SetName(play, "Reproducir esta colección"); play.IsEnabled = model.Songs.Count > 0; controls.Children.Add(play);
-        if (model.CurrentOfflineKey != null) controls.Children.Add(Ui.AsyncButton(model.CollectionDownloadLabel, model, model.ToggleCollectionDownloadAsync));
-        if (model.Page is "artist" or "album") controls.Children.Add(Ui.Button("Volver a buscar", ReturnToSearch));
-        if (model.CurrentPlaylist is { } playlist)
+        var copy = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
+        var heading = Ui.Text(title, 44, true);
+        heading.Tag = "display";
+        heading.FontWeight = Microsoft.UI.Text.FontWeights.Bold;
+        heading.CharacterSpacing = -30;
+        copy.Children.Add(heading);
+        if (model.CatalogAlbumArtists.Length > 0)
         {
-            controls.Children.Add(Ui.Button("Editar nombre", () => _ = model.RunAsync(async () => { var name = await AskAsync("Editar playlist", playlist.Name); if (name != null) await model.EditPlaylistAsync(playlist, name); })));
+            var credits = Ui.Wrap();
+            credits.Margin = new(0, 4, 0, 0);
+            foreach (var artist in model.CatalogAlbumArtists)
+            {
+                if (string.IsNullOrWhiteSpace(artist.Name)) continue;
+                if (artist.Id != null || local && model.Library.Tracks.Any(track => track.Artist == artist.Name))
+                {
+                    var credit = new HyperlinkButton { Content = artist.Name, Foreground = albumPrimary, FontSize = 17, Padding = new(0) };
+                    credit.Click += (_, _) => { if (artist.Id is { } artistId) _ = model.RunAsync(() => model.ArtistAsync(artistId)); else LocalArtist(artist.Name); };
+                    AlbumFocus(credit);
+                    credits.Children.Add(credit);
+                }
+                else credits.Children.Add(new TextBlock { Text = artist.Name, FontSize = 17, LineHeight = 23, Tag = "display", Foreground = albumPrimary });
+            }
+            copy.Children.Add(credits);
         }
-        catalog.Children.Add(controls);
-        if (artist)
+        if (model.CatalogAlbumYear is > 0 and var year)
+            copy.Children.Add(new TextBlock { Text = year.ToString(), Foreground = albumMuted, FontSize = 13, LineHeight = 18, Tag = "display", Margin = new(0, 4, 0, 0) });
+        copy.Children.Add(BuildAlbumDescription(title));
+        header.Children.Add(CatalogHeroLayout(cover, copy, heading));
+
+        var actions = CollectionPlaybackControls(out var refreshPlayback);
+        actions.Margin = new(0, 20, 0, 0);
+        if (model.CurrentOfflineKey != null)
         {
-            if (model.Songs.Count > 0) catalog.Children.Add(CatalogSectionHeading("Canciones populares", model.MoreSongsAvailable ? "Ver todas las canciones" : null, () => _ = model.RunAsync(model.MoreAsync)));
+            var download = Ui.AsyncButton(model.CollectionDownloadLabel, model, model.ToggleCollectionDownloadAsync);
+            StyleAlbumButton(download);
+            actions.Children.Add(download);
         }
-        else if (model.Songs.Count == 0 && model.Page == "album") catalog.Children.Add(CatalogEmptyState("music", "No hay canciones disponibles.", "Vuelve a buscar el álbum para actualizar su contenido."));
+        header.Children.Add(actions);
+        var songs = model.UnfilteredSongs;
+        string time = songs.All(song => double.IsFinite(song.Duration) && song.Duration > 0) ? CatalogDuration(songs.Sum(song => song.Duration)) : "";
+        var summary = new TextBlock { Text = (songs.Length == 1 ? "1 canción" : $"{songs.Length} canciones") + (time.Length > 0 ? " · " + time : ""),
+            FontSize = 13, Tag = "display", Foreground = albumMuted, Margin = new(0, 24, 0, 4) };
+        header.Children.Add(summary);
+        catalog.Children.Add(header);
+
+        Action? refreshToolbar = null;
+        if (local) catalog.Children.Add(CollectionToolbar(out refreshToolbar));
+        var empty = new StackPanel();
+        catalog.Children.Add(empty);
+        refreshCatalogFilter = () => {
+            refreshPlayback();
+            refreshToolbar?.Invoke();
+            ClearCatalogPanel(empty);
+            trackSection.Visibility = model.Songs.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            empty.Visibility = model.Songs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            if (model.Songs.Count == 0) empty.Children.Add(local ? CollectionEmptyState()
+                : CatalogEmptyState("music", "No hay canciones disponibles.", "Vuelve a buscar el álbum para actualizar su contenido."));
+        };
+        refreshCatalogFilter();
+        refreshAlbumDescription?.Invoke();
+        albumHeaderTimer?.Start();
+        SyncAlbumVideo();
+    }
+
+    private FrameworkElement BuildAlbumDescription(string title)
+    {
+        var block = new StackPanel { Spacing = 4, Margin = new(0, 12, 0, 0), Visibility = Visibility.Collapsed };
+        var preview = new TextBlock { Tag = "display", FontSize = 14, LineHeight = 21, Foreground = albumMuted,
+            TextWrapping = TextWrapping.Wrap, MaxLines = 3, TextTrimming = TextTrimming.CharacterEllipsis, HorizontalAlignment = HorizontalAlignment.Left };
+        var more = new HyperlinkButton { Content = "Más", Foreground = albumPrimary, Padding = new(0), Visibility = Visibility.Collapsed };
+        AutomationProperties.SetHelpText(more, "Abre un diálogo con la descripción del álbum");
+        AlbumFocus(more);
+        block.Children.Add(preview);
+        block.Children.Add(more);
+        preview.IsTextTrimmedChanged += (_, _) => more.Visibility = preview.IsTextTrimmed ? Visibility.Visible : Visibility.Collapsed;
+
+        var measure = new TextBlock { FontFamily = preview.FontFamily, FontSize = preview.FontSize,
+            Text = new string('0', 65), IsTextScaleFactorEnabled = false };
+        void MeasureWidth()
+        {
+            measure.Measure(new(double.PositiveInfinity, double.PositiveInfinity));
+            preview.MaxWidth = measure.DesiredSize.Width * albumAccessibility.TextScaleFactor;
+        }
+        block.Loaded += (_, _) => MeasureWidth();
+        albumAccessibility.TextScaleFactorChanged += TextScaleChanged;
+        void TextScaleChanged(global::Windows.UI.ViewManagement.UISettings sender, object args)
+            => DispatcherQueue.TryEnqueue(() => { if (block.IsLoaded) MeasureWidth(); });
+        Ui.OnRelease(block, () => albumAccessibility.TextScaleFactorChanged -= TextScaleChanged);
+        MeasureWidth();
+
+        more.Click += async (_, _) => {
+            if (model.CatalogAlbumDescription is not { } description || albumDialogOpen) return;
+            double offset = pageScroll.VerticalOffset;
+            albumDialogOpen = true;
+            SyncAlbumVideo();
+            try {
+                var full = Ui.Text(description.Text, 14);
+                full.LineHeight = 21; full.IsTextSelectionEnabled = true;
+                var source = Ui.Muted(description.Source == "apple" ? "Texto de Apple Music" : "Texto de YouTube Music", 13);
+                var text = new StackPanel { Spacing = 16, Children = { full, source } };
+                var scroll = new ScrollViewer { Content = text, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    MaxHeight = Math.Clamp(root.ActualHeight - 220, 120, 440) };
+                await new ContentDialog { Title = title, Content = scroll, CloseButtonText = "Cerrar", XamlRoot = root.XamlRoot }.ShowAsync();
+            }
+            finally {
+                albumDialogOpen = false;
+                if (more.IsLoaded) {
+                    more.Focus(FocusState.Programmatic);
+                    pageScroll.ChangeView(null, offset, null, true);
+                }
+                SyncAlbumVideo();
+            }
+        };
+
+        refreshAlbumDescription = () => {
+            var text = model.CatalogAlbumDescription?.Text ?? "";
+            if (preview.Text == text) return;
+            double before = trackScroll.TransformToVisual(pageScroll).TransformPoint(new(0, 0)).Y;
+            bool anchor = block.IsLoaded && trackSection.Visibility == Visibility.Visible && pageScroll.VerticalOffset > 0
+                && before < pageScroll.ViewportHeight;
+            preview.Text = text;
+            block.Visibility = text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            if (!anchor) return;
+            DispatcherQueue.TryEnqueue(() => {
+                if (!block.IsLoaded) return;
+                root.UpdateLayout();
+                double after = trackScroll.TransformToVisual(pageScroll).TransformPoint(new(0, 0)).Y;
+                pageScroll.ChangeView(null, pageScroll.VerticalOffset + after - before, null, true);
+            });
+        };
+        return block;
+    }
+
+    private void SyncAlbumSurface()
+    {
+        albumCover = null;
+        refreshAlbumDescription = null;
+        albumHeaderTimer?.Stop();
+        string? key = AlbumPageKey;
+        if (albumWashKey != key || albumCoverSource != model.CatalogArtwork || model.ContentLoading || model.PageLoadError.Length > 0)
+        {
+            ReleaseAlbumVideo();
+            if (albumWashKey == null || key == null)
+            {
+                albumTintInput = null;
+                albumTintTarget = NeutralAlbumTint;
+            }
+            if (key != null && albumWashKey != key) pageScroll.ChangeView(null, 0, null, true);
+            albumWashKey = key;
+            albumCoverSource = model.CatalogArtwork;
+            albumDominant = key != null && !model.ContentLoading ? ArtistThemes.CachedAlbumDominant(albumCoverSource) : null;
+            albumDominantAfter = Environment.TickCount64 + 800;
+        }
+        UpdateAlbumTint();
+    }
+
+    private void UpdateAlbumTint()
+    {
+        if (!AlbumSurfacePage) return;
+        string? color = model.ContentLoading ? null : model.AlbumArtworkColor;
+        if (color == null && !model.ContentLoading && (!model.AlbumMetadataLoading || Environment.TickCount64 >= albumDominantAfter))
+            color = albumDominant;
+        if (color != albumTintInput)
+        {
+            albumTintInput = color;
+            albumTintTarget = AlbumTint.From(color);
+        }
+        UpdateFrameTint();
+    }
+
+    private void AlbumFocus(FrameworkElement control)
+    {
+        control.FocusVisualPrimaryBrush = albumFocus;
+        control.FocusVisualPrimaryThickness = new(2);
+        control.FocusVisualSecondaryThickness = new(0);
+        control.FocusVisualMargin = new(-2);
+    }
+
+    private void StyleAlbumButton(Button button)
+    {
+        button.Foreground = albumPrimary;
+        button.Background = albumTrackSurface;
+        button.BorderThickness = new(0);
+        button.MinHeight = 48;
+        button.Resources["ButtonBackgroundPointerOver"] = albumTrackSurface;
+        button.Resources["ButtonBackgroundPressed"] = albumTrackSurface;
+        AlbumFocus(button);
+    }
+
+    private void SyncAlbumVideo()
+    {
+        if (albumCover is not { } cover || albumWashKey != AlbumPageKey || !cover.IsLoaded) return;
+        if (!model.Settings.MotionArt || !PageEffects || MeteredNetwork(requireUnrestricted: true))
+        {
+            ReleaseAlbumVideo();
+            return;
+        }
+        var position = cover.TransformToVisual(pageScroll).TransformPoint(new(0, 0));
+        bool onScreen = Visible && AppWindow.IsVisible && WindowsIntegration.Visible(WindowsIntegration.Handle(this))
+            && pageScroll.Visibility == Visibility.Visible && position.Y + cover.ActualHeight > 0 && position.Y < pageScroll.ViewportHeight
+            && position.X + cover.ActualWidth > 0 && position.X < pageScroll.ViewportWidth && !albumDialogOpen
+            && (root.XamlRoot == null || VisualTreeHelper.GetOpenPopupsForXamlRoot(root.XamlRoot).Count == 0);
+        long now = Environment.TickCount64;
+        if (!onScreen)
+        {
+            if (albumVideoStarted != 0) albumVideoElapsed += now - albumVideoStarted;
+            albumVideoStarted = 0;
+            albumVideo?.Pause();
+            return;
+        }
+        var url = model.AlbumMotion is { Status: "ready" } motion ? motion.Url : null;
+        if (albumVideoUrl != url) ReleaseAlbumVideo();
+        if (albumVideo is { } existing)
+        {
+            albumVideoStarted = albumVideoStarted == 0 ? now : albumVideoStarted;
+            if (!existing.Visible && albumVideoElapsed + now - albumVideoStarted >= 8_000)
+            {
+                FailAlbumVideo(url!, retryAt: now + 15 * 60_000);
+                return;
+            }
+            existing.Play();
+            return;
+        }
+        if (string.IsNullOrEmpty(url))
+        {
+            _ = model.RequestAlbumMotionAsync();
+            return;
+        }
+        if (failedAlbumVideos.GetValueOrDefault(url) > now || !Uri.TryCreate(model.Api.Http.BaseAddress, url, out var source)) return;
+        var video = new LoopingVideo(DispatcherQueue) { VerticalAnchor = .5, Fade = true, FadeMilliseconds = 160 };
+        albumVideo = video;
+        albumVideoUrl = url;
+        albumVideoStarted = now;
+        ((Grid)cover.Child).Children.Add(video.View);
+        video.Failed += () => {
+            if (ReferenceEquals(albumVideo, video)) FailAlbumVideo(url);
+        };
+        try { video.Show(source); video.Play(); }
+        catch (Exception) { FailAlbumVideo(url); }
+    }
+
+    private void FailAlbumVideo(string url, long retryAt = long.MaxValue)
+    {
+        if (albumWashKey != AlbumPageKey || model.AlbumMotion?.Url != url)
+        {
+            ReleaseAlbumVideo();
+            return;
+        }
+        bool retry = model.InvalidateAlbumMotionForRetry(url);
+        if (!retry) failedAlbumVideos[url] = retryAt;
+        ReleaseAlbumVideo();
+        if (retry) _ = model.RequestAlbumMotionAsync();
+    }
+
+    private void ReleaseAlbumVideo()
+    {
+        var video = albumVideo;
+        albumVideo = null;
+        albumVideoUrl = null;
+        albumVideoStarted = albumVideoElapsed = 0;
+        if (video == null) return;
+        (video.View.Parent as Panel)?.Children.Remove(video.View);
+        video.Release();
     }
 
     private void CatalogReleases(string title, IEnumerable<YouTubeAlbum> releases, bool singles)
@@ -225,13 +517,31 @@ public sealed partial class MainWindow
         catalogTail.Children.Add(CatalogCards(albums.Select(album => new CatalogTile(album.Title, (album.Year is { } year ? year + " · " : "") + (singles ? "Single / EP" : "Álbum"), album.Artwork, () => _ = model.RunAsync(() => model.AlbumAsync(album.Id))))));
     }
 
-    private static Grid CatalogHeroLayout(FrameworkElement artwork, FrameworkElement copy, double size)
+    private Grid CatalogHeroLayout(FrameworkElement artwork, FrameworkElement copy, TextBlock title)
     {
-        var hero = new Grid { ColumnSpacing = 30 };
+        var hero = new Grid();
         hero.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); hero.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        hero.Children.Add(artwork); Grid.SetColumn(copy, 1); hero.Children.Add(copy);
-        SizeChangedEventHandler resize = (_, args) => { double artSize = args.NewSize.Width < 650 ? Math.Min(150, size) : size; artwork.Width = artSize; artwork.Height = artSize; hero.ColumnSpacing = args.NewSize.Width < 650 ? 20 : 30; };
-        hero.SizeChanged += resize; Ui.OnRelease(hero, () => hero.SizeChanged -= resize); return hero;
+        hero.RowDefinitions.Add(new() { Height = GridLength.Auto }); hero.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        hero.Children.Add(artwork); hero.Children.Add(copy);
+        void Layout()
+        {
+            double width = pageScroll.ActualWidth;
+            bool compact = width < 560, wide = width >= 720;
+            double size = compact ? Math.Max(0, Math.Min(216, Math.Min(Math.Floor(width * .56), width - 40))) : wide ? 224 : 168;
+            artwork.Width = artwork.Height = size;
+            artwork.HorizontalAlignment = compact ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+            artwork.VerticalAlignment = VerticalAlignment.Top;
+            Grid.SetColumnSpan(artwork, compact ? 2 : 1);
+            Grid.SetColumn(copy, compact ? 0 : 1); Grid.SetColumnSpan(copy, compact ? 2 : 1); Grid.SetRow(copy, compact ? 1 : 0);
+            hero.RowSpacing = compact ? 16 : 0;
+            hero.ColumnSpacing = compact ? 0 : wide ? 28 : 20;
+            title.FontSize = compact ? 28 : wide ? 44 : 34;
+            title.LineHeight = compact ? 32 : wide ? 48 : 40;
+        }
+        SizeChangedEventHandler resize = (_, _) => Layout();
+        pageScroll.SizeChanged += resize; Ui.OnRelease(hero, () => pageScroll.SizeChanged -= resize);
+        Layout();
+        return hero;
     }
 
     private FrameworkElement CatalogSectionHeading(string title, string? actionLabel = null, Action? action = null)
@@ -272,7 +582,7 @@ public sealed partial class MainWindow
     // Thresholds assume 150 % scaling, the common Windows default; the server never upscales.
     private static int ArtworkRequest(double logical) => logical <= 85 ? 128 : logical <= 341 ? 512 : logical <= 682 ? 1024 : 2048;
 
-    private Border CatalogArtworkView(string? url, double size, bool round = false, bool favorite = false, double height = 0, Action<string[]>? palette = null)
+    private Border CatalogArtworkView(string? url, double size, bool round = false, bool favorite = false, double height = 0, Action<string[]>? palette = null, Action<ArtworkResult>? opened = null)
     {
         var artwork = new Grid(); var placeholder = Ui.Icon(favorite ? "heart" : "music", Math.Min(46, size * .4)); placeholder.HorizontalAlignment = HorizontalAlignment.Center; placeholder.VerticalAlignment = VerticalAlignment.Center; placeholder.Opacity = favorite ? 1 : .55; artwork.Children.Add(placeholder);
         if (favorite && placeholder is Viewbox box && box.Child is Panel shapes) foreach (var shape in shapes.Children.OfType<Shape>()) { shape.Fill = Ui.Brush("#FFFFFF"); shape.Stroke = Ui.Brush("#FFFFFF"); }
@@ -287,7 +597,17 @@ public sealed partial class MainWindow
                 // The border may be resized after creation (responsive grids, hero); read its final box at load time.
                 double Box(double value, double actual, double fallback) => double.IsFinite(value) && value > 0 ? value : actual > 0 ? actual : fallback;
                 double boxWidth = Box(border.Width, border.ActualWidth, size), boxHeight = Box(border.Height, border.ActualHeight, height > 0 ? height : size);
-                try { var result = await model.Artwork.GetAsync(url, ArtworkRequest(Math.Max(boxWidth, boxHeight))); if (released) return; Ui.Cover(image, result.Path, Box(border.Width, border.ActualWidth, boxWidth), Box(border.Height, border.ActualHeight, boxHeight), result.Width, result.Height); if (result.Palette.Length > 0) palette?.Invoke(result.Palette); }
+                try {
+                    var result = await model.Artwork.GetAsync(url, ArtworkRequest(Math.Max(boxWidth, boxHeight)));
+                    if (released) return;
+                    if (opened != null) {
+                        void OnOpened(object sender, RoutedEventArgs args) { if (!released) opened(result); }
+                        image.ImageOpened += OnOpened;
+                        Ui.OnRelease(image, () => image.ImageOpened -= OnOpened);
+                    }
+                    Ui.Cover(image, result.Path, Box(border.Width, border.ActualWidth, boxWidth), Box(border.Height, border.ActualHeight, boxHeight), result.Width, result.Height);
+                    if (result.Palette.Length > 0) palette?.Invoke(result.Palette);
+                }
                 catch { if (!released) failed(); }
             }
             _ = Load();

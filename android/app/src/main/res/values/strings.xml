@@ -2,4 +2,12 @@
     <string name="download_channel_name">Descargas de música</string>
     <string name="spotify_import_channel_name">Importación de Spotify</string>
     <string name="spotify_import_notification_progress">%1$d de %2$d canciones procesadas</string>
+    <string name="wallpaper_label">Fondo animado de Openfy</string>
+    <string name="wallpaper_author">Openfy</string>
+    <string name="wallpaper_description">La portada de lo que suena, con la iluminación del reproductor. Sin música queda una imagen fija.</string>
+    <string name="wallpaper_lock_summary">Bloqueo: portada completa y, si está guardada, la portada animada</string>
+    <string name="wallpaper_home_summary">Inicio: portada atenuada</string>
+    <string name="featured_result_title">Resultado más relevante</string>
+    <string name="featured_play_description">Reproducir %1$s</string>
+    <string name="artist_play_description">Reproducir canciones populares de %1$s</string>
 </resources>

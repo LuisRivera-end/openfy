@@ -1,6 +1,6 @@
 # Portadas animadas (motion art)
 
-En el Big Picture de escritorio, la portada se sustituye por el vídeo corto en bucle del álbum cuando Apple Music tiene uno. Aplica a la web fuera de PWA y a la ventana `fullscreen` de Windows. El teléfono y la PWA instalada no hacen la petición ni muestran el vídeo.
+La portada grande del reproductor ampliado se sustituye por el vídeo corto en bucle del álbum cuando Apple Music tiene uno. Aplica a la web y la PWA (escritorio y teléfono, también en el Big Picture girado), a la ventana `fullscreen` de Windows y a Android nativo.
 
 ## Origen y riesgo
 
@@ -41,7 +41,7 @@ Tamaño orientativo: entre 5 y 15 MB por álbum con vídeo.
 
 - `POST /api/motion/resolve` con la entrada en reproducción devuelve `{ status: 'ready', url, width, height }`, `{ status: 'none', retryAfterMs }` o `{ status: 'unmatched', retryAfterMs }`. Los clientes siguen admitiendo `none` sin tiempo de espera para compatibilidad. Si el proveedor no responde, devuelve 503 con `Retry-After` y `data.retryAfterMs`; se conserva la portada fija.
 - `GET /api/motion/<clave>.mp4` sirve el archivo con Range.
-- Web: `useMotionArt.ts` y `MotionArt.vue`. El vídeo aparece con un fundido cuando empieza a reproducirse y se detiene con la música o al ocultar la pestaña.
+- Web: `useMotionArt.ts` y `MotionArt.vue`. El vídeo aparece con un fundido cuando empieza a reproducirse y se detiene con la música o al ocultar la pestaña. En el teléfono se muestra en la portada grande del reproductor ampliado, igual que en Android; si el navegador informa ahorro de datos o red móvil (`navigator.connection`), se queda la portada fija. Safari en iPhone no expone ese dato, así que allí el vídeo también se pide con datos móviles. El service worker deja `/api/motion/*` en la red sin despertarse, como el audio en streaming.
 - Windows: `Views/PlayerWindow.Motion.cs`, con `MediaPlayer` en bucle, silenciado y fuera de los controles multimedia del sistema. Win2D dibuja los fotogramas en una superficie XAML con el mismo radio que la portada; los fotogramas permanecen en la GPU y solo se solicita dibujo al recibir uno nuevo o al cambiar de tamaño. En pausa se conserva el último fotograma sin un bucle de renderizado.
 - La portada de 56 px del diseño apilado, la tarjeta «A continuación» y el fondo ambiental usan siempre la imagen fija.
 - Las cachés de web y Windows vencen los negativos y los errores; un resultado temporal vuelve a consultarse cuando corresponde si el mismo álbum sigue visible. Ocultar/cerrar la vista detiene el temporizador; volver a abrirlo respeta o reactiva la espera restante.
@@ -70,6 +70,12 @@ Desde la 0.5.5, la cabecera de la página de artista muestra el vídeo editorial
 - **Clientes:** el vídeo se reproduce silenciado y en bucle, con un fundido al primer fotograma, solo mientras la cabecera está en pantalla y la ventana o pestaña está visible. Lo desactivan «Portadas animadas», «Movimiento ambiental», el movimiento reducido, el ahorro de datos o la red medida, y `OPENFY_MOTION_ART=off`. Respaldo: el banner fijo de YouTube Music.
 - **Windows:** `Views/LoopingVideo.cs` reutiliza el modo de fotogramas de `MediaPlayer` con Win2D. Una reconstrucción de la misma página mueve el vídeo en curso en vez de reiniciarlo.
 
+## Presentación de la página de álbum
+
+La misma ficha de Apple que da el vídeo aporta también la nota editorial (`editorialNotes`, pedida en `es-MX` y en `en-US` si no hay texto) y el color de la portada (`artwork.bgColor`). `POST /api/albums/presentation` devuelve los tres datos juntos y guarda la nota y el color en la caché de archivos del motion art: 7 días si existen, 24 h si Apple confirma que no hay y 15 min tras un fallo. El vídeo solo se resuelve si la petición lleva `motion: true`, y los clientes solo la envían cuando se permiten las portadas animadas. Si Apple no tiene nota, los álbumes de YouTube Music usan la descripción del propio álbum. Con `OPENFY_MOTION_ART=off` no se consulta a Apple, pero se puede leer lo que ya esté en caché. Diseño completo: [páginas de álbum](superpowers/specs/2026-11-19-album-pages-design.md).
+
+En la cabecera del álbum, el vídeo aparece con un fundido tras el primer fotograma, se pausa fuera de la vista, con la pestaña o ventana oculta, o bajo el reproductor ampliado, y vuelve a la portada fija tras 8 s sin fotogramas mientras debería reproducirse.
+
 ## Configuración
 
 | Variable | Efecto |
@@ -82,14 +88,14 @@ Playwright y las comprobaciones autoejecutables de Windows arrancan el servidor 
 ## Verificación
 
 - `tests/unit/motion-art.test.ts`: elección de variante, rangos de bytes, medios cifrados u hosts ajenos, coincidencia estricta, renovación del token, caché, fijados, expulsión y paso de fondo. Doce canciones descargadas previamente del mismo álbum, con invitados distintos, se completan con un solo archivo y no vuelven a descargarlo al reiniciar. Todo con `fetch` simulado.
-- `tests/e2e/motion-art.spec.ts`: respuestas simuladas. En `chromium` el vídeo sustituye a la portada, sigue a la pausa y al cambio de canción, y respeta el interruptor y el movimiento reducido. En `mobile-webkit` no hay ninguna petición a `/api/motion`.
+- `tests/e2e/motion-art.spec.ts`: respuestas simuladas. En `chromium` el vídeo sustituye a la portada, sigue a la pausa y al cambio de canción, y respeta el interruptor y el movimiento reducido. En `mobile-webkit` la portada grande del reproductor ampliado pide el vídeo, la vista apilada con letras lo retira, el ahorro de datos lo evita y el Big Picture girado lo conserva.
 - Windows, con datos y estado aislados y el vídeo de al menos un álbum de prueba ya presente en `motion-cache`:
 
 ```powershell
 Openfy.exe --workspace E:\openfy --state-dir <estado-aislado> --data-dir <datos-aislados> --port <puerto-libre> --visual-players <informe> --visual-fixtures <audios-de-prueba> --motion-check
 ```
 
-Las pruebas automáticas no contactan con Apple. La estabilidad del token en el tiempo y el comportamiento en un iPhone físico no están comprobados.
+Las pruebas automáticas no contactan con Apple. La estabilidad del token en el tiempo y el comportamiento en un iPhone físico (reproducción automática del vídeo silenciado, modo de bajo consumo) no están comprobados.
 
 La comprobación nativa guarda capturas del vídeo en reproducción y redimensionado en pausa. Lee los píxeles del mismo dibujo Win2D en ambos tamaños y exige cuatro esquinas transparentes y un centro opaco; también exige fotogramas nuevos en reproducción y ningún fotograma nuevo en pausa, además del cambio a portada fija y los ajustes de movimiento.
 

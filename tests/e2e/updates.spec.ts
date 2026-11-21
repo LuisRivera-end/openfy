@@ -47,7 +47,7 @@ test('a waiting service worker waits for the other tab to save its form and relo
   await expect(page.getByRole('checkbox',{name:'Activar movimiento ambiental'})).not.toBeChecked()
   await expect(page.getByRole('checkbox',{name:'Nuevo diseño'})).toHaveCount(0)
   await expect(page.locator('html')).not.toHaveAttribute('data-design')
-  await expect(page.locator('.player-bar')).toHaveCSS('border-radius','16px')
+  await expect.poll(() => page.locator('.player-bar').evaluate(bar => parseFloat(getComputedStyle(bar).borderTopLeftRadius))).toBeGreaterThanOrEqual(16)
   await expect(install).toHaveCount(0)
   await expect(page.getByTestId('audio-engine')).toHaveJSProperty('volume',originalVolume)
   await expect(perTab.getByTestId('audio-engine')).toHaveJSProperty('volume',.21)

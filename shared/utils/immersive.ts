@@ -7,7 +7,7 @@
  */
 export type ImmersiveLayout = 'cover' | 'split' | 'stacked'
 export const IMMERSIVE = { splitMinWidth: 900, splitMinAspect: 1.1 } as const
-export const BIG_PICTURE = { idleMs: 4000, leadSeconds: 10, transitionMs: 1200, compactScale: 1.2, compactMs: 320, layoutMs: 600, lyricsTop: .2, lyricsEdge: .18, sideMargin: 48, cardWidth: 420, cardHeight: 120, cornerHeight: 160, cornerMargin: 32, cornerWidth: .38, cornerMaxWidth: 640 } as const
+export const BIG_PICTURE = { idleMs: 4000, leadSeconds: 10, transitionMs: 1200, compactScale: 1.2, compactMs: 320, cardEnterMs: 320, layoutMs: 600, lyricsTop: .2, lyricsEdge: .18, sideMargin: 48, cardWidth: 420, cardHeight: 120, cornerHeight: 160, cornerMargin: 32, cornerWidth: .38, cornerMaxWidth: 640, avoidGap: 24 } as const
 
 /** The queue is already in playback order, including shuffle. No mutation or random choice here. */
 export function nextAutomaticIndex(count: number, index: number, repeat: string): number | null {
@@ -28,16 +28,47 @@ export interface NextCardBounds { x: number, y: number, width: number, height: n
 /**
  * The "A continuación" card: above the dock while the controls are visible, and in compact (idle)
  * mode anchored to the bottom-right corner, the same layout uniformly scaled and widened.
+ * When an obstacle rectangle is given (such as the centred cover column without synced lyrics),
+ * the card narrows and reduces its scale if needed to maintain avoidGap clearance.
  * The card's own layout box is (width / scale) × cardHeight.
  */
-export function nextCardBounds(viewportWidth: number, viewportHeight: number, contentRight: number, contentWidth: number, dockTop: number, idle: boolean): NextCardBounds {
-  const { cardWidth, cardHeight, cornerHeight, cornerMargin, cornerWidth, cornerMaxWidth } = BIG_PICTURE
+export function nextCardBounds(viewportWidth: number, viewportHeight: number, contentRight: number, contentWidth: number, dockTop: number, idle: boolean, avoid: { right: number, bottom: number } | null = null): NextCardBounds {
+  const { cardWidth, cardHeight, cornerHeight, cornerMargin, cornerWidth, cornerMaxWidth, avoidGap } = BIG_PICTURE
+  let width: number, height: number, scale: number, x: number, y: number
   if (!idle) {
-    const width = Math.max(1, Math.min(cardWidth, contentWidth))
-    return { x: contentRight - width, y: Math.max(68, dockTop - 136), width, height: cardHeight, scale: 1 }
+    width = Math.max(1, Math.min(cardWidth, contentWidth))
+    height = cardHeight
+    scale = 1
+    x = contentRight - width
+    y = Math.max(68, dockTop - 136)
+  } else {
+    width = Math.max(1, Math.min(viewportWidth - 2 * cornerMargin, Math.max(cardWidth, Math.min(cornerMaxWidth, viewportWidth * cornerWidth))))
+    height = cornerHeight
+    scale = cornerHeight / cardHeight
+    x = viewportWidth - cornerMargin - width
+    y = Math.max(68, viewportHeight - cornerMargin - cornerHeight)
   }
-  const width = Math.max(1, Math.min(viewportWidth - 2 * cornerMargin, Math.max(cardWidth, Math.min(cornerMaxWidth, viewportWidth * cornerWidth))))
-  return { x: viewportWidth - cornerMargin - width, y: Math.max(68, viewportHeight - cornerMargin - cornerHeight), width, height: cornerHeight, scale: cornerHeight / cardHeight }
+  if (avoid && avoid.bottom + avoidGap > y) {
+    const minWidth = cardWidth * .75
+    if (idle) {
+      const available = viewportWidth - cornerMargin - (avoid.right + avoidGap)
+      if (available >= cardWidth) {
+        width = Math.min(width, available)
+        x = viewportWidth - cornerMargin - width
+      } else {
+        scale = Math.max(1, available / minWidth)
+        height = cardHeight * scale
+        width = Math.max(available, minWidth)
+        x = viewportWidth - cornerMargin - width
+        y = Math.max(68, viewportHeight - cornerMargin - height)
+      }
+    } else {
+      const available = contentRight - (avoid.right + avoidGap)
+      width = Math.max(minWidth, Math.min(width, available))
+      x = contentRight - width
+    }
+  }
+  return { x, y, width, height, scale }
 }
 
 /**

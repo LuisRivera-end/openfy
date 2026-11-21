@@ -7,6 +7,9 @@ namespace Openfy.Windows.Views;
 
 public sealed partial class MainWindow
 {
+    private const string TransparencyLabel = "Efectos de transparencia";
+    private static readonly string[] TransparencyModes = ["default", "on", "off"];
+
     private void BuildSettingsCatalog()
     {
         catalog.Children.Add(CatalogPageHeading("A tu manera", "Ajustes"));
@@ -49,6 +52,21 @@ public sealed partial class MainWindow
         var motionArt = new ToggleSwitch { IsOn = model.Settings.MotionArt, OffContent = "", OnContent = "", MinWidth = 48 }; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(motionArt, "Activar portadas animadas");
         motionArt.Toggled += (_, _) => { model.Settings.MotionArt = motionArt.IsOn; _ = model.RunAsync(model.PersistAsync); };
         appearance.Children.Add(SettingRow("Portadas animadas", "La pantalla completa muestra la portada en movimiento cuando el álbum tiene una.", motionArt));
+        var transparency = new ComboBox
+        {
+            ItemsSource = new[] { "Predeterminado", "Activados", "Desactivados" },
+            SelectedIndex = Array.IndexOf(TransparencyModes, model.Settings.Transparency)
+        };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(transparency, TransparencyLabel);
+        SelectionChangedEventHandler transparencyChanged = (_, _) => {
+            if (transparency.SelectedIndex < 0) return;
+            model.Settings.Transparency = TransparencyModes[transparency.SelectedIndex];
+            UpdatePlaybackTransparency();
+            _ = model.RunAsync(model.PersistAsync);
+        };
+        transparency.SelectionChanged += transparencyChanged;
+        Ui.OnRelease(transparency, () => transparency.SelectionChanged -= transparencyChanged);
+        appearance.Children.Add(SettingRow(TransparencyLabel, "El reproductor, la cola y las letras dejan ver el color de la página como cristal. Predeterminado sigue el ajuste de transparencia del sistema.", transparency));
         var limit = new ToggleSwitch { IsOn = model.Settings.Force24, OffContent = "", OnContent = "", MinWidth = 48 }; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(limit, "Forzar límite de 24 FPS");
         limit.Toggled += (_, _) => { model.Settings.Force24 = limit.IsOn; _ = model.RunAsync(model.PersistAsync); };
         appearance.Children.Add(SettingRow("Reducir los efectos a 24 FPS", "Con otra aplicación a pantalla completa, Openfy aplica este límite automáticamente.", limit));
@@ -57,6 +75,7 @@ public sealed partial class MainWindow
         appearance.Children.Add(SettingRow("Letra en minirreproductor y widget", "Muestra el verso que suena cuando la canción tiene letra sincronizada.", compactLyrics));
         appearance.Children.Add(SettingRow("Minirreproductor", "Escucha desde una ventana pequeña que permanece visible sobre tus aplicaciones.", Ui.Button("Abrir mini", () => openPlayer("mini"))));
         appearance.Children.Add(SettingRow("Widget de escritorio", "Una ventana para tu música que puedes colocar y bloquear donde prefieras.", Ui.Button("Abrir widget", () => openPlayer("widget"))));
+        ShortcutSettings();
         var conversions = SettingsSection("Preparando para tu iPhone");
         int pending = model.Library.Tracks.Count(track => track.Conversion != "ready");
         conversions.Children.Add(SettingRow("Versiones para el iPhone", pending == 0 ? "Tu colección está preparada." : pending + " canciones pendientes o en preparación.", Ui.AsyncButton("Reanudar / reintentar", model, async () => { await model.Api.SendAsync<System.Text.Json.JsonElement>("api/conversions", HttpMethod.Post); })));

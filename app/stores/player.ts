@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { connectAudioAnalysis, ambientAnalysis } from '../lib/audio-reactivity'
-import { identifyQueue, restoreQueue, reorderPending, orderPending } from '../../shared/utils/queue'
-import { nextAutomaticIndex } from '../../shared/utils/immersive'
+import { identifyQueue, restoreQueue, reorderPending, orderPending, mixNextRound, repeatShuffleRecoveryMatches } from '../../shared/utils/queue'
 import { localDatabase, readLocal, writeLocal } from '../lib/local'
 import { assetUrl, streamingAssetUrl } from '../../shared/utils/media'
 import { artworkUrl, localArtwork } from '../../shared/utils/artwork'
@@ -33,12 +32,20 @@ export const usePlayerStore = defineStore('player', () => {
   const current = computed(() => describeEntry(currentEntry.value))
   const queueTracks = computed(() => queue.value.map(describeEntry))
   const upcoming = computed(() => queue.value.slice(index.value + 1).map((entry, i) => ({ entry, track: describeEntry(entry), index: index.value + 1 + i })))
+  const nextShuffleRound = computed(() => shuffle.value && repeat.value === 'all' && queue.value.length > 1 ? mixNextRound(queue.value) : undefined)
+  const automaticStart = computed(() => repeat.value === 'one' ? index.value : index.value + 1)
+  function* playbackCandidates(start: number) {
+    const entries = queue.value
+    for (let i = start; i < entries.length; i++) yield { entry: entries[i]!, index: i, nextRound: undefined }
+    if (repeat.value !== 'all') return
+    // After a reshuffle, scan the full new round so offline tracks cannot hide a playable one.
+    const nextRound = nextShuffleRound.value
+    const end = nextRound?.length ?? Math.min(start, entries.length)
+    for (let i = 0; i < end; i++) yield { entry: (nextRound ?? entries)[i]!, index: i, nextRound }
+  }
   const nextAutomatic = computed(() => {
-    let next = nextAutomaticIndex(queue.value.length, index.value, repeat.value)
-    for (let attempts = 0; next !== null && attempts < queue.value.length; attempts++) {
-      const entry = queue.value[next]!
+    for (const { entry } of playbackCandidates(automaticStart.value)) {
       if (chooseAsset(entry)) return { entry, track: describeEntry(entry) }
-      next = next + 1 < queue.value.length ? next + 1 : repeat.value === 'all' ? 0 : null
     }
     return null
   })
@@ -52,7 +59,8 @@ export const usePlayerStore = defineStore('player', () => {
   const tabResumeKey = 'openfy-update-session'
   function sessionSnapshot(): PlaybackSnapshotV3 {
     return { version: 3, queue: queue.value, originalOrder: originalQueue.map(entry => entry.queueId!), index: index.value,
-      position: position.value, repeat: repeat.value, shuffle: shuffle.value, volume: volume.value }
+      position: position.value, repeat: repeat.value, shuffle: shuffle.value, volume: volume.value,
+      ...(shuffle.value && repeat.value === 'all' && queue.value.length - index.value > repeatShuffleRecoveryMatches ? { repeatShuffleMigrated: true } : {}) }
   }
   function checkpointTab() {
     // sessionStorage belongs to this tab. Two paused tabs can have different queues.
@@ -308,25 +316,17 @@ export const usePlayerStore = defineStore('player', () => {
   function advance(direction: number, automatic = false) {
     if (!audio || !queue.value.length) return
     if (direction === -1 && position.value > 3) { seek(0); return }
-    let nextIndex = index.value + direction
-    if (automatic) nextIndex = nextAutomaticIndex(queue.value.length, index.value, repeat.value) ?? queue.value.length
-    if (nextIndex >= queue.value.length) {
-      if (repeat.value === 'all') nextIndex = 0
-      else { wantsPlayback = false; audio.pause(); buffering.value = false; log('queue-ended'); return }
+    const start = automatic ? automaticStart.value : Math.max(0, index.value + direction)
+    if (start >= queue.value.length && repeat.value !== 'all') {
+      wantsPlayback = false; audio.pause(); buffering.value = false; log('queue-ended'); return
     }
-    if (nextIndex < 0) nextIndex = 0
     audio.pause()
-    index.value = nextIndex
-    // Missing offline tracks must not trap automatic advancement in a loop.
-    for (let attempts = 0; attempts < queue.value.length; attempts++) {
-      telemetry.select(queue.value[index.value]!)
+    for (const candidate of playbackCandidates(start)) {
+      if (candidate.nextRound && candidate.index === 0) queue.value = candidate.nextRound
+      index.value = candidate.index
+      telemetry.select(candidate.entry)
       if (loadCurrent(true)) { log('next-track'); return }
       if (!automatic) return
-      index.value++
-      if (index.value >= queue.value.length) {
-        if (repeat.value === 'all') index.value = 0
-        else break
-      }
     }
     audio.pause()
     buffering.value = false
@@ -519,6 +519,7 @@ export const usePlayerStore = defineStore('player', () => {
     })
     watch([buffering, () => library.importing, () => Object.values(downloads.records).some(record => ['preparing', 'queued', 'downloading'].includes(record.state))], activity)
     document.addEventListener('toggle', event => { if (event.target instanceof HTMLDialogElement) void activity() }, true)
+    // The 10 s heartbeat also keeps the server's 90 s client expiry from dropping a live page.
     activity(); setInterval(activity, 10000)
     setInterval(() => { if (audio) telemetry.sample(audio.currentTime, audio.duration, !audio.paused && !audio.seeking && !buffering.value); void telemetry.checkpoint() }, 10000)
     document.addEventListener('visibilitychange', () => { if (audio) telemetry.sample(audio.currentTime, audio.duration, !audio.paused && !audio.seeking && !buffering.value); void telemetry.checkpoint(); log('visibility'); activity(); void persist() })
@@ -528,11 +529,7 @@ export const usePlayerStore = defineStore('player', () => {
       void persist()
       if (clientId) navigator.sendBeacon('/api/activity', new Blob([JSON.stringify({ clientId: activityId, playing: false, closed: true })], { type: 'application/json' }))
     })
-    window.addEventListener('keydown', (event) => {
-      if (useStartupStore().blocked) return
-      const element = event.target as HTMLElement
-      if (event.code === 'Space' && !/INPUT|TEXTAREA|SELECT|BUTTON/.test(element.tagName) && !element.isContentEditable) { event.preventDefault(); toggle() }
-    })
+    // Space and the other keyboard shortcuts live in app/plugins/shortcuts.client.ts.
   }
 
   async function exportDiagnostics() {

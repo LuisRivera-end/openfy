@@ -34,6 +34,26 @@ public class CoreTests
         Assert.Equal(("unmatched", 86400000L, null), (unresolved.Status, unresolved.RetryAfterMs, unresolved.Url));
     }
 
+    [Theory]
+    [InlineData(null, "default")]
+    [InlineData("null", "default")]
+    [InlineData("42", "default")]
+    [InlineData("""{"mode":"on"}""", "default")]
+    [InlineData("\"unknown\"", "default")]
+    [InlineData("\"default\"", "default")]
+    [InlineData("\"on\"", "on")]
+    [InlineData("\"off\"", "off")]
+    public void TransparencyNormalizesAndRoundTrips(string? transparencyJson, string expected)
+    {
+        var json = transparencyJson == null ? """{"effects":false}"""
+            : $$"""{"transparency":{{transparencyJson}},"effects":false}""";
+        var settings = JsonSerializer.Deserialize<DesktopSettings>(json, Contracts.Json)!;
+        Assert.False(settings.Effects);
+        Assert.Equal(expected, settings.Transparency);
+        var saved = JsonSerializer.SerializeToNode(settings, Contracts.Json)!;
+        Assert.Equal(expected, saved["transparency"]!.GetValue<string>());
+    }
+
     [Fact]
     public async Task MotionProviderRetryHeaderSurvivesTheHttpClientError()
     {

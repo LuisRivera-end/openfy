@@ -8,8 +8,15 @@ import { diagnosticError, sessionDiagnostic } from './session-diagnostics'
 import { notifyDesktop } from './desktop-events'
 
 /** Completes old downloads independently of playback, imports and audio jobs. */
+const FAILURE_DELAY = 300_000
+const MAX_FAILURE_DELAY = 86_400_000
+
+/** Per-song wait after consecutive failures: 5 min, doubling, capped at one day. */
+export const backfillFailureDelay = (failures: number) => Math.min(MAX_FAILURE_DELAY, FAILURE_DELAY * 2 ** Math.max(0, failures - 1))
+
 export class DownloadedLyricsBackfill {
   private retries = new Map<string, number>()
+  private failures = new Map<string, number>()
   private stopped = true
   private timer?: ReturnType<typeof setTimeout>
   private running?: Promise<void>
@@ -48,12 +55,16 @@ export class DownloadedLyricsBackfill {
     sessionDiagnostic('lyrics.backfill', 'started', { target })
     try {
       const result = await this.resolve({ entry: { source: 'youtube', song: next.song }, duration: next.duration })
+      this.failures.delete(target)
       sessionDiagnostic('lyrics.backfill', 'completed', { target, lyricsStatus: result.status })
       if (result.status !== 'not_found') notifyDesktop('lyricsChanged', { key: result.key })
     } catch (error) {
       const delay = error instanceof LyricsProviderError ? error.retryAfter * 1000 : 0
-      this.retries.set(target, this.now() + Math.max(300_000, delay))
-      sessionDiagnostic('lyrics.backfill', 'failed', { target, ...diagnosticError(error) })
+      const failures = (this.failures.get(target) || 0) + 1
+      this.failures.set(target, failures)
+      const wait = Math.max(backfillFailureDelay(failures), delay)
+      this.retries.set(target, this.now() + wait)
+      sessionDiagnostic('lyrics.backfill', 'failed', { target, failures, retryInMs: wait, ...diagnosticError(error) })
       // A service outage should not turn into a request for every missing song.
       return Math.max(60_000, delay)
     }

@@ -129,6 +129,10 @@ test.describe('Artist visual identity and header motion', () => {
     expect(banner!.y).toBeLessThan(search!.y + search!.height / 2)
     expect(banner!.y + banner!.height).toBeGreaterThanOrEqual(controls!.y + controls!.height)
     await expect(page.locator('.app-shell')).toHaveClass(/\bartist-chrome\b/)
+    await expect(page.locator('html')).toHaveClass(/\bpage-chrome\b/)
+    // As in Apple Music, the biography lives only behind the hero's information button.
+    await expect(page.getByRole('heading', { name: 'Acerca de', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Leer biografía' })).toHaveCount(0)
 
     await stage.getByRole('button', { name: /acerca de|información/i }).click()
     const dialog = page.getByRole('dialog')

@@ -37,10 +37,12 @@ class NativeSmokeTest {
             val file=File(app.cacheDir,"fixture.$extension")
             instrumentation.context.assets.open("fixture.$extension").use { input -> file.outputStream().use { input.copyTo(it) } }
             app.repository.importFile(Uri.fromFile(file),file.name)
-            val first=app.database.library().songs().filter { it.source=="local" && it.path?.endsWith(".$extension")==true }
+            // Only this fixture: QA runs may leave other local songs (such as the wallpaper's) in the debug data.
+            val fixture={ song: Song -> song.source=="local" && song.title=="Horizonte" && song.path?.endsWith(".$extension")==true }
+            val first=app.database.library().songs().filter(fixture)
             assertTrue(first.isNotEmpty())
             app.repository.importFile(Uri.fromFile(file),file.name)
-            assertEquals(first.size,app.database.library().songs().count { it.source=="local" && it.path?.endsWith(".$extension")==true })
+            assertEquals(first.size,app.database.library().songs().count(fixture))
             val song=first.last(); assertEquals("Horizonte",song.title); assertTrue(song.duration>=7900)
             val player=controller()
             try {

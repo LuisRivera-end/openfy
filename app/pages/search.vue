@@ -14,7 +14,8 @@ async function restorePosition() {
 }
 function selectCategory(category: SearchCategory) { if (search.category !== category) { recordPosition(); search.category = category; void restorePosition() } }
 function moveCategory(event: KeyboardEvent) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  // Modified arrows are app shortcuts (previous/next, seek, Back/Forward).
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return
   event.preventDefault()
   const index = searchCategories.findIndex(item => item.key === search.category)
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? searchCategories.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + searchCategories.length) % searchCategories.length

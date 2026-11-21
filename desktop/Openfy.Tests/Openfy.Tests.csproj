@@ -6,7 +6,9 @@
   <ItemGroup><None Include="../../tests/fixtures/listening-contract.json" Link="listening-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
   <ItemGroup><None Include="../../tests/fixtures/ambient-contract.json" Link="ambient-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
   <ItemGroup><None Include="../../tests/fixtures/artist-theme-contract.json" Link="artist-theme-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/album-tint-contract.json" Link="album-tint-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
   <ItemGroup><None Include="../../tests/fixtures/immersive-layout-contract.json" Link="immersive-layout-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
   <ItemGroup><None Include="../../tests/fixtures/lyrics-contract.json" Link="lyrics-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
   <ItemGroup><None Include="../../tests/fixtures/release-notes-contract.json" Link="release-notes-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
+  <ItemGroup><None Include="../../tests/fixtures/shortcuts-contract.json" Link="shortcuts-contract.json" CopyToOutputDirectory="PreserveNewest"/></ItemGroup>
 </Project>

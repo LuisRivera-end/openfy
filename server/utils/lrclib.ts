@@ -3,7 +3,10 @@ import { normalizeLyricsName, parseLrc } from '../../shared/utils/lyrics'
 import type { LyricsContent, LyricsSignature } from '../../shared/types/lyrics'
 
 export class LyricsProviderError extends Error {
-  constructor(message = 'No se pudieron consultar las letras. Vuelve a intentarlo.', public retryAfter = 0) { super(message) }
+  constructor(message = 'No se pudieron consultar las letras. Vuelve a intentarlo.', public retryAfter = 0) {
+    super(message)
+    this.name = 'LyricsProviderError'
+  }
 }
 
 const recordSchema = z.object({

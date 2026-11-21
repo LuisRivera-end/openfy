@@ -112,8 +112,133 @@ public sealed partial class MainWindow
             bool cancelledRanking = model.Page == "favorites" && model.Songs.Count == 500;
             await model.ArtistAsync("failure"); await Task.Delay(40); root.UpdateLayout(); bool errorRecovered = !model.ContentLoading && model.PageLoadError.Length > 0 && DownloadText(catalog).Contains("Reintentar");
             await model.NavigateLocalAsync("library"); bool leftError = model.PageLoadError.Length == 0 && model.Page == "library";
+            var artistExit = await CheckArtistExitAsync(fixture);
             if (!reusedArtist || !cancelledAlbum || !partialSearch || !rankingSkeleton || !latestRanking || !cancelledRanking || !errorRecovered || !leftError) throw new IOException($"Carga de secciones: caché={reusedArtist}, álbum cancelado={cancelledAlbum}, búsqueda parcial={partialSearch}, ranking={rankingSkeleton}/{latestRanking}/{cancelledRanking}, error={errorRecovered}/{leftError}.");
-            return new { artistSkeleton, albumSkeleton, rankingSkeleton, partialSearch, reusedArtist, cancelledAlbum, latestRanking, cancelledRanking, errorRecovered, leftError, integratedSearch };
+            return new { artistSkeleton, albumSkeleton, rankingSkeleton, partialSearch, reusedArtist, cancelledAlbum, latestRanking, cancelledRanking, errorRecovered, leftError, integratedSearch, artistExit };
         } finally { model.SwapCheckBackend(originalApi); }
+    }
+
+    /// <summary>
+    /// Leaves a transparent artist page through the same controls a person uses, with the clicked control, the
+    /// search box and the top bar held in their pointer/focus visual states, so a page change that rewrites the
+    /// resources those states resolve fails here instead of in the installed app.
+    /// </summary>
+    private async Task<object> CheckArtistExitAsync(SectionFixtureServer fixture)
+    {
+        // Ordinary rows and buttons fall back to the theme colours: they must resolve, or hover feedback disappears.
+        foreach (string key in ArtistTrackBackgroundKeys.Concat(AlbumButtonStateKeys).Append("ButtonBackgroundDisabled"))
+            if (StateBrushes.ThemeColor(key).A == 0) throw new IOException($"El tema no resuelve el color de {key}.");
+        string transparency = model.Settings.Transparency;
+        model.Settings.Transparency = "on"; UpdatePlaybackTransparency();
+        var routes = new List<object>();
+        // TextBox PointerOver and Focused share one state group, so each route holds one of them.
+        string searchState = "PointerOver";
+        try {
+            var exits = new[] { ("home", false), ("home", true), ("library", false), ("downloads", false), ("most-played", false) };
+            for (int i = 0; i < exits.Length; i++) {
+                var (target, cached) = exits[i];
+                searchState = i % 2 == 0 ? "PointerOver" : "Focused";
+                await OpenArtistFromSearchAsync();
+                if (target == "home" && !cached && cachedHome != null) { foreach (var child in cachedHome) Ui.ReleaseTree(child); cachedHome = null; }
+                else if (cached && !CanReuseLocalCatalog(target)) throw new IOException($"{target} no conserva su vista para volver desde el artista.");
+                var (visible, skeleton) = await LeaveArtistAsync(navButtons[target], target);
+                if (cached && skeleton) throw new IOException($"{target} volvió a cargar pese a estar en caché.");
+                routes.Add(new { target, cached, searchState, skeleton, visible });
+            }
+
+            searchState = "Focused";
+            await OpenArtistFromSearchAsync();
+            int albumRequests = fixture.AlbumRequests;
+            var open = FindButton(artistLatestRelease, "Abrir Álbum del artista") ?? FindButton(catalogTail, "Abrir Álbum del artista")
+                ?? throw new IOException("La ficha de artista no muestra su álbum.");
+            var (albumText, albumSkeleton) = await LeaveArtistAsync(open, "album");
+            if (fixture.AlbumRequests != albumRequests + 1 || model.Songs.Count != 30)
+                throw new IOException($"El álbum abierto desde el artista no se cargó: solicitudes={fixture.AlbumRequests - albumRequests}, canciones={model.Songs.Count}.");
+            // Rows reused from the artist list keep the brushes registered when their container was created.
+            var row = tracks.ContainerFromIndex(0) as ListViewItem;
+            var rowButtons = (row?.ContentTemplateRoot as Grid)?.Children.OfType<Button>().ToArray() ?? [];
+            if (row == null || StateBrushes.Of(row)?.Has(ArtistTrackBackgroundKeys) != true || rowButtons.Length != 2 || rowButtons.Any(button => StateBrushes.Of(button)?.Has(AlbumButtonStateKeys) != true))
+                throw new IOException($"Las filas del álbum no conservan sus pinceles de estado: fila={row != null}, contenedor={(row == null ? null : StateBrushes.Of(row)?.Has(ArtistTrackBackgroundKeys))}, botones={rowButtons.Length}/{rowButtons.Count(button => StateBrushes.Of(button)?.Has(AlbumButtonStateKeys) == true)}.");
+            routes.Add(new { target = "album", cached = false, searchState, skeleton = albumSkeleton, visible = albumText });
+
+            searchState = "PointerOver";
+            await OpenArtistFromSearchAsync();
+            await LeaveArtistAsync(navButtons["home"], "home");
+            bool clearedAfterHome = await ClearSearchAsync();
+            searchState = "Focused";
+            await OpenArtistFromSearchAsync();
+            bool clearedOnArtist = await ClearSearchAsync();
+            if (!clearedAfterHome || !clearedOnArtist) throw new IOException($"La X no dejó el buscador limpio y enfocado: tras Inicio={clearedAfterHome}, en el artista={clearedOnArtist}.");
+            var (after, _) = await LeaveArtistAsync(navButtons["library"], "library", fromArtist: false);
+            return new { routes, clearedAfterHome, clearedOnArtist, operativeAfterClear = after };
+        } finally { model.Settings.Transparency = transparency; UpdatePlaybackTransparency(); }
+
+        async Task OpenArtistFromSearchAsync()
+        {
+            // TextChanged is raised asynchronously: let the box empty first so the query is typed again from scratch.
+            if (search.Text.Length > 0) { search.Text = ""; await WaitForAsync(() => model.Page == "search" && model.Query.Length == 0, "La búsqueda no se vació."); }
+            search.Text = "Rauw";
+            await WaitForAsync(() => model.Page == "search" && model.Query == "Rauw" && !model.Busy, "La búsqueda no responde.");
+            await model.ArtistAsync("fixture-artist");
+            await WaitForAsync(() => model.Page == "artist" && !model.ContentLoading && !model.Busy, "La ficha de artista no termina de cargar.");
+            if (!TopBarGlass) throw new IOException("La barra superior del artista no usa la transparencia activada.");
+            await Task.Delay(60); root.UpdateLayout();
+        }
+
+        async Task<(int Texts, bool Skeleton)> LeaveArtistAsync(Button control, string page, bool fromArtist = true)
+        {
+            if (fromArtist && model.Page != "artist") throw new IOException("La prueba no partió de la ficha de artista.");
+            int skeletons = skeletonPresentations;
+            HoldPointerStates(searchState);
+            VisualStateManager.GoToState(control, "Pressed", false);
+            new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(control).Invoke();
+            VisualStateManager.GoToState(control, "PointerOver", false);
+            await WaitForAsync(() => model.Page == page && !model.ContentLoading && !model.Busy, $"No se pudo abrir {page} desde el artista.");
+            HoldPointerStates(searchState);
+            await WaitForAsync(() => { root.UpdateLayout(); return !renderedCatalogPage.StartsWith("loading:", StringComparison.Ordinal) && catalog.ActualHeight > 0 && pageScroll.ActualHeight > 0; }, $"{page} no termina de presentarse.");
+            if (TopBarGlass) throw new IOException($"{page} conserva la barra superior del artista.");
+            if (model.Error.Length > 0 || model.PageLoadError.Length > 0) throw new IOException($"{page} terminó con error: {model.Error}{model.PageLoadError}");
+            int texts = DownloadText(catalog).Concat(DownloadText(catalogTail)).Concat(DownloadText(trackLayout)).Count(text => text.Trim().Length > 0);
+            if (texts == 0 || renderedCatalogPage.StartsWith("loading:", StringComparison.Ordinal) || catalog.Children.Count == 0 || catalog.ActualHeight <= 0 || pageScroll.ActualHeight <= 0)
+                throw new IOException($"{page} quedó vacío o cargando al salir del artista ({renderedCatalogPage}).");
+            return (texts, skeletonPresentations > skeletons);
+        }
+
+        async Task<bool> ClearSearchAsync()
+        {
+            if (clearSearchButton.Visibility != Visibility.Visible) throw new IOException("La X del buscador no está disponible.");
+            HoldPointerStates(searchState);
+            new Microsoft.UI.Xaml.Automation.Peers.ButtonAutomationPeer(clearSearchButton).Invoke();
+            await WaitForAsync(() => search.Text.Length == 0 && model.Query.Length == 0 && !model.Busy, "La X no limpió la búsqueda.");
+            HoldPointerStates("Focused");
+            await Task.Delay(80); root.UpdateLayout();
+            return clearSearchButton.Visibility == Visibility.Collapsed && search.FocusState != FocusState.Unfocused && model.Error.Length == 0;
+        }
+    }
+
+    /// <summary>What a pointer resting on the top bar (or focus in the search box) leaves while the page changes.</summary>
+    private void HoldPointerStates(string searchState)
+    {
+        if (!VisualStateManager.GoToState(search, searchState, false)) throw new IOException($"El buscador no entra en el estado {searchState}.");
+        foreach (var button in new[] { topbarImport, topbarAvatar, topbarBack }.Where(button => button.Visibility == Visibility.Visible))
+            if (!VisualStateManager.GoToState(button, "PointerOver", false)) throw new IOException("Un botón superior no entra en PointerOver.");
+        foreach (var button in navButtons.Values) VisualStateManager.GoToState(button, "PointerOver", false);
+    }
+
+    private static Button? FindButton(DependencyObject parent, string name)
+    {
+        if (parent is Button button && Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == name) return button;
+        for (int i = 0; i < Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(parent); i++)
+            if (FindButton(Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(parent, i), name) is { } found) return found;
+        return null;
+    }
+
+    private async Task WaitForAsync(Func<bool> condition, string failure)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!condition()) {
+            if (clock.ElapsedMilliseconds > 6000) throw new IOException($"{failure} página={model.Page}, cargando={model.ContentLoading}, ocupado={model.Busy}, consulta={model.Query}, texto={search.Text}, error={model.PageLoadError}{model.Error}.");
+            await Task.Delay(25);
+        }
     }
 }

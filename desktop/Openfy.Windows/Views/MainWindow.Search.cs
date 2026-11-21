@@ -12,10 +12,10 @@ namespace Openfy.Windows.Views;
 
 public sealed partial class MainWindow
 {
-    private readonly Grid searchSurface = new() { Visibility = Visibility.Collapsed, Padding = new(36, 0, 36, 18), RowSpacing = 12 };
+    private readonly Grid searchSurface = new() { Visibility = Visibility.Collapsed, Padding = new(36, 0, 36, 0), RowSpacing = 12 };
     private readonly Dictionary<string, Button> searchTabs = [];
     private readonly Dictionary<string, double> searchOffsets = new() { ["all"] = 0, ["song"] = 0, ["artist"] = 0, ["album"] = 0 };
-    private readonly StackPanel searchOverview = new() { Spacing = 24 };
+    private readonly StackPanel searchOverview = new() { Spacing = 24, Padding = new(0, 0, 0, PlayerInset) };
     private readonly StackPanel searchCategoryStatus = new() { Spacing = 10, Margin = new(0, 16, 0, 12) };
     private ScrollViewer searchOverviewScroll = null!;
     private ListView searchSongRows = null!;
@@ -40,11 +40,14 @@ public sealed partial class MainWindow
         }
         searchSurface.Children.Add(tabs);
         searchOverviewScroll = new() { Content = searchOverview, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        KeepAbovePlayer(searchOverview, searchOverviewScroll);
         searchSongRows = new ListView { SelectionMode = ListViewSelectionMode.None, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(0) };
         searchSongRows.ItemTemplate = SearchHostTemplate(); searchSongRows.ContainerContentChanging += PrepareSearchSong;
         searchSongRows.Header = SearchSongHeading();
         AutomationProperties.SetName(searchSongRows, "Canciones de YouTube Music");
         searchArtistCards = SearchCards("artist"); searchAlbumCards = SearchCards("album");
+        foreach (var results in new ListViewBase[] { searchSongRows, searchArtistCards, searchAlbumCards })
+            results.Margin = new(0, 0, 0, PlayerInset);
         foreach (var element in new FrameworkElement[] { searchOverviewScroll, searchSongRows, searchArtistCards, searchAlbumCards }) { Grid.SetRow(element, 1); searchSurface.Children.Add(element); }
         searchOverviewScroll.ViewChanged += (_, _) => { if (!restoringSearchOffset && model.Page == "search" && searchCategory == "all") searchOffsets["all"] = searchOverviewScroll.VerticalOffset; };
         searchSurface.SizeChanged += (_, _) => QueueSearchMore();

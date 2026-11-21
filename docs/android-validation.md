@@ -78,4 +78,29 @@ Pendiente de aceptación:
 
 - **Teléfono físico:** portadas animadas con el decodificador por hardware, latencia de la primera canción, contraste del reproductor con portadas claras y gestos del minirreproductor.
 - **Spotify:** importación con un export real de la cuenta.
-- **Pantalla de bloqueo:** prototipo del fondo animado propuesto en [Pantalla de bloqueo animada](android-lock-screen.md).
+- **Pantalla de bloqueo:** prototipo del fondo animado, validado abajo en el emulador.
+
+## Fondo animado de Openfy (18 de noviembre de 2026)
+
+Prototipo descrito en [Pantalla de bloqueo animada](android-lock-screen.md#prototipo-fondo-animado-de-openfy). Cambios locales sin commit. Verificado con el paquete debug `app.openfy.android.debug` en `emulator-5556` (API 37, x86_64) y, para el respaldo sin AGSL, en `emulator-5554` (API 29), con datos de prueba sintéticos.
+
+| Área | Evidencia y resultado |
+|---|---|
+| JVM | 24 pruebas correctas; 4 nuevas en `WallpaperPolicyTest` (destino, versión de pantalla y modo de dibujo). |
+| Instrumentadas | `test-android.ps1` con el código final: OK (16 tests) en `emulator-5556` (API 37) y OK (16 tests) en `emulator-5554` (API 29). `WallpaperSmokeTest` comprueba que el sistema lee el servicio como fondo animado (etiqueta, miniatura y permiso `BIND_WALLPAPER`). `WallpaperQaTest` se omite sin su argumento. |
+| Lint | 0 errores y 37 advertencias, las mismas que antes del cambio. |
+| Selector del sistema | `ACTION_CHANGE_LIVE_WALLPAPER` abre `com.android.wallpaper.livepicker` con «Fondo animado de Openfy» ya elegido. «Set wallpaper» ofrece «Home screen», «Lock screen» y «Home screen and lock screen». Con «ambos» queda un motor con `target=BOTH`. Al elegir después solo el bloqueo hay dos motores, `HOME` y `LOCK`, y el de inicio cambia de destino por `onWallpaperFlagsChanged`. «Wallpaper & style» de Google muestra las dos versiones: la portada completa bajo el reloj en el bloqueo y la versión atenuada en el inicio. |
+| Ajustes | La sección muestra la vista previa con la portada que suena, el estado «Activo en el bloqueo y el inicio» (leído al volver del selector) y «Cambiar en el sistema», que abre el selector; «Atrás» vuelve a Openfy. |
+| Android 16+ | El selector AOSP no llama a `onApplyWallpaper`: el registro del servicio quedó en «none» y los motores, con `described=null`. La vía de `WallpaperDescription` no se pudo ejercitar en el emulador; el destino salió de `getWallpaperFlags()`. |
+| Animación | Inicio con música: modo `AMBIENT`, 154 fotogramas en unos 5 s (unos 30 FPS). Pantalla apagada: `IDLE` y el contador quieto (537 → 537). En pausa: `STILL`, sin fotogramas nuevos. |
+| Portada animada | `WallpaperQaTest -e wallpaperSeed motion` guarda un HLS sintético de 720 × 720 en la caché bajo una URL de Apple, sin red. La vista previa de bloqueo de «Wallpaper & style» pasó a `VIDEO`, con el vídeo a pantalla completa: 132 fotogramas decodificados al abrirla. En pausa el contador se quedó en 1035 con el decodificador retenido; al reanudar siguió (1127). El motor de inicio, oculto, quedó en `IDLE`. |
+| API 29 | `Openfy_API29` (`emulator-5554`): el selector solo ofrece «Home screen» y «Home screen and lock screen», sin bloqueo solo. Con ambos, el motor usa el respaldo de dos capas (`shader=false`) con `HardwareRenderer`: `AMBIENT` con 111 fotogramas en unos 5 s mientras suena, y `STILL` con el contador quieto (160 → 160) en pausa. |
+| Energía | Tres escenarios de 60 s con la batería simulada desconectada (`dumpsys battery unplug`); CPU del proceso leída de `/proc` (100 ticks = 1 s). Inicio visible y sonando: 14,3 s de CPU, 3,7 s en `RenderThread` y 1,95 s en el hilo principal, con 1831 fotogramas. Inicio visible en pausa: 0,18 s y ningún fotograma. Pantalla apagada y sonando: 7,5 s y ningún fotograma. En el emulador, el fondo cuesta unos 6,8 s de CPU por minuto mientras se ve y suena, y nada en pausa o con la pantalla apagada. `batterystats` se recogió en cada escenario, pero su CPU por uid no cuadra con `/proc` en el emulador (0,97 s con la pantalla apagada frente a 7,5 s), así que la referencia es `/proc`. Capturas en `output/android-wallpaper/`. |
+
+Hallazgos:
+
+- Los dos emuladores tienen desactivada la pantalla de bloqueo (`locksettings get-disabled` devuelve `true`). No se cambió ese ajuste, así que el motor compartido, que sigue al teclado para elegir versión, no se vio sobre un bloqueo real. La versión de bloqueo se comprobó en la vista previa de bloqueo del sistema, que ejecuta un motor real con `target=LOCK`.
+- `am instrument`, y por tanto `test-android.ps1`, fuerza la detención del paquete, y Android restablece el fondo predeterminado (`mBindSource=SET_LIVE_TO_CLEAR`). Pasa con cualquier fondo animado: tras las pruebas hay que volver a elegirlo, y lo mismo si alguien fuerza la detención de Openfy.
+- La canción que siembra `WallpaperQaTest` es otro `.m4a` local en los datos debug, y `NativeSmokeTest` tomaba la última canción local con esa extensión, así que falló una vez. Ahora filtra también por el título de su propio fixture.
+
+Pendiente de aceptación en el teléfono físico: el selector del fabricante (si deja elegir solo el bloqueo), el cambio entre bloqueo e inicio con un bloqueo real, la batería con `batterystats` en uso normal y la portada animada con el decodificador por hardware.

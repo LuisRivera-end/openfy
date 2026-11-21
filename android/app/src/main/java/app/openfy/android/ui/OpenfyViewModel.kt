@@ -31,7 +31,8 @@ data class LibraryState(val songs: List<Song> = emptyList(),val playlists: List<
     internal val homePlaylists: List<RecentContext> = emptyList())
 data class PlayerState(val id: String? = null,val playing: Boolean = false,val position: Long = 0,val duration: Long = 0,
     val queue: List<String> = emptyList(),val index: Int = 0,val shuffle: Boolean = false,val repeat: Int = Player.REPEAT_MODE_OFF,
-    val context: String? = null,val upcoming: List<Int>? = null)
+    val context: String? = null,val upcoming: List<Int>? = null,
+    val nextIndex: Int? = null,val buffering: Boolean = false,val failed: Boolean = false)
 data class SearchState(val query: String = "",val kind: String = "songs",val songs: List<Song> = emptyList(),
     val cards: List<JsonObject> = emptyList(),val cursor: String? = null,val loading: Boolean = false,val error: String? = null,
     val pending: Boolean = false)
@@ -40,6 +41,16 @@ data class DetailState(val kind: String,val id: String,val title: String,val sub
     val loading: Boolean = false,val error: String? = null,val cursor: String? = null,val moreSongs: Boolean = false,
     val moreAlbums: Boolean = false,val moreSingles: Boolean = false,val releaseCursors: Map<String,String> = emptyMap(),
     val year: Int? = null,val artist: String? = null,val banner: String? = null,val singles: List<JsonObject> = emptyList())
+
+/** True once the first page arrived; later loading only means pagination. */
+internal val DetailState.hasContent get() = songs.isNotEmpty() || albums.isNotEmpty() || singles.isNotEmpty() || artists.isNotEmpty()
+
+/**
+ * The state kept in history when another page opens over this one, which cancels its job.
+ * Interrupted pagination is dropped so the restored page can paginate again; an interrupted
+ * first load stays loading so back() fetches it again.
+ */
+internal fun DetailState.forHistory() = if (loading && hasContent) copy(loading = false) else this
 
 @Serializable
 private data class DiscoveryCache(val songs: List<Song>, val albums: List<JsonObject>, val fetchedAt: Long)
@@ -90,7 +101,7 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
             .sortedByDescending { it.lastPlayedAt }.take(10)
         contents.copy(downloads = downloads, listening = listening, recents = contexts, ready = true,
             recentSongs = if (contexts.isEmpty()) recentHomeSongs(listening, contents.songs) else emptyList())
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope,SharingStarted.Eagerly,LibraryState())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope,SharingStarted.WhileSubscribed(5_000),LibraryState())
     val player=MutableStateFlow(PlayerState())
     private val positionClock = MutableStateFlow(0L)
     val position: StateFlow<Long> = positionClock.asStateFlow()
@@ -105,21 +116,24 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
     val recommendationsFailed: StateFlow<Boolean> = discoveryFailed.asStateFlow()
     private val knownMusic = library.filter { it.ready }.map { DiscoveryInputs(it) }.distinctUntilChanged()
         .map { DiscoveryExclusions(it) }.flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val recommendations: StateFlow<List<Song>> = combine(
         discoveryCache, knownMusic, player.map { it.id }.distinctUntilChanged(),
     ) { cache, exclusions, activeId ->
         if (cache == null || exclusions == null) emptyList()
         else cache.songs.filter { exclusions.permits(it, activeId) }
-    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val releases: StateFlow<List<JsonObject>> = combine(discoveryCache, knownMusic) { cache, exclusions ->
         if (cache == null || exclusions == null) emptyList()
         else cache.albums.filter { it.homeAlbumId !in exclusions.albumIds }
     }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val tab=MutableStateFlow(0)
     val artistThemes = mutableStateMapOf<String, ArtistThemeColors>()
     private val themeSources = mutableMapOf<String, String>()
+    internal val albumPresentations = mutableStateMapOf<String, AlbumPresentation>()
+    internal val albumTints = mutableStateMapOf<String, AlbumTintColors>()
+    private val albumPresentationSources = mutableMapOf<String, String>()
 
     private suspend fun sampleTheme(context: android.content.Context, artworkUrl: String): ArtistThemeColors? = withContext(Dispatchers.IO) {
         val sized = ArtworkUrls.sized(artworkUrl, 128) ?: artworkUrl
@@ -158,6 +172,60 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
         val theme = sampleTheme(context, artworkUrl) ?: return NEUTRAL
         artistThemes[artworkUrl] = theme
         return theme
+    }
+
+    internal suspend fun loadAlbumPresentation(
+        context: android.content.Context,
+        kind: String,
+        id: String,
+        title: String,
+        artist: String?,
+        artworkUrl: String?,
+        youtubeDescription: String?,
+        allowMotion: Boolean
+    ): AlbumPresentation {
+        val key = "$kind:$id"
+        val sourceSignature = "$title|$artist|$artworkUrl|$youtubeDescription|$allowMotion"
+        if (albumPresentationSources[key] == sourceSignature && albumPresentations.containsKey(key)) {
+            return albumPresentations.getValue(key)
+        }
+
+        val dominantHex = CoverPalette.albumDominant(context, artworkUrl)
+
+        var failed = false
+        val apple = if (!artist.isNullOrBlank() && title.isNotBlank()) {
+            try {
+                app.motion.albumPresentation(artist, title, allowMotion)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                failed = true
+                AlbumPresentation()
+            }
+        } else {
+            AlbumPresentation()
+        }
+
+        val description: AlbumDescription? = apple.description ?: if (kind == "album" && !youtubeDescription.isNullOrBlank()) {
+            AlbumDescription(youtubeDescription, "youtube")
+        } else null
+
+        val chosenColorHex = apple.colors?.background ?: dominantHex
+        val tint = albumTint(chosenColorHex)
+
+        val presentation = AlbumPresentation(
+            motion = apple.motion,
+            description = description,
+            colors = apple.colors
+        )
+
+        if (!failed && apple.motion.retryAt == null) {
+            albumPresentationSources[key] = sourceSignature
+            albumPresentations[key] = presentation
+        } else {
+            albumPresentationSources.remove(key)
+        }
+        albumTints[key] = tint
+        return presentation
     }
     private var searchJob: Job?=null
     private var detailJob: Job?=null
@@ -199,18 +267,20 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
         }
         viewModelScope.launch { player.map { it.id }.distinctUntilChanged().collect { loadLyrics() } }
         viewModelScope.launch {
-            library.collect { snapshot ->
-                val current = player.value
-                if (controller?.duration?.let { it <= 0 } == true && current.id != null) {
-                    val duration = snapshot.songs.find { it.id == current.id }?.duration ?: 0
-                    if (duration != current.duration) player.value = current.copy(duration = duration)
+            player.map { it.id to (it.duration <= 0) }.distinctUntilChanged().collectLatest { (id, needsDuration) ->
+                if (needsDuration && id != null) {
+                    val song = dao.song(id)
+                    if (song != null && song.duration > 0 && player.value.id == id && player.value.duration <= 0) {
+                        player.value = player.value.copy(duration = song.duration)
+                    }
                 }
             }
         }
     }
     fun run(action: suspend () -> Unit) = viewModelScope.launch {
         try { action() } catch(error: Exception) {
-            if(error is CancellationException) throw error
+            // Rethrow only a real cancellation of this job; any other CancellationException is a failure.
+            currentCoroutineContext().ensureActive()
             notice.value=error.message?.takeIf { !it.contains("https://") }?.take(200) ?: "No se pudo completar la acción. Reintenta."
         }
     }
@@ -237,8 +307,10 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                     add(index)
                 }
             }
+        val nextIndex = c.nextMediaItemIndex.takeIf { c.repeatMode != Player.REPEAT_MODE_ONE && it in queue.indices && it != c.currentMediaItemIndex }
         val updated = PlayerState(id, c.isPlaying, previous.position, duration,
-            queue, c.currentMediaItemIndex, c.shuffleModeEnabled, c.repeatMode, context, upcoming)
+            queue, c.currentMediaItemIndex, c.shuffleModeEnabled, c.repeatMode, context, upcoming,
+            nextIndex, c.playbackState == Player.STATE_BUFFERING, c.playerError != null)
         val now = c.currentPosition
         if (updated != previous) player.value = updated.copy(position = now)
         positionClock.value = now
@@ -247,7 +319,9 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
     fun back(): Boolean {
         if(detail.value==null) return false
         detailJob?.cancel(); generation++
-        detail.value=if(history.isEmpty()) null else history.removeAt(history.lastIndex)
+        val restored=if(history.isEmpty()) null else history.removeAt(history.lastIndex)
+        detail.value=restored
+        if(restored!=null && restored.loading) loadRemote(restored.kind,restored.id,restored.title)
         return true
     }
     fun play(song: Song, songs: List<Song> = listOf(song), shuffled: Boolean = false, explicitContext: RecentContext? = null) = run {
@@ -388,14 +462,18 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                 error=if(expired) "La búsqueda caducó. Pulsa Reintentar para actualizarla." else "No se pudo cargar la búsqueda. Puedes reintentar.")
         }
     }
-    fun openLocal(kind: String,id: String,title: String,songs: List<Song>,artwork: String? = null) {
+    fun openLocal(kind: String,id: String,title: String,songs: List<Song>,artwork: String? = null,artist: String? = null) {
         cancelFeaturedPlayback()
-        detail.value?.let(history::add); detailJob?.cancel(); generation++
-        detail.value=DetailState(kind,id,title,artwork=artwork,songs=songs)
+        detail.value?.let { history.add(it.forHistory()) }; detailJob?.cancel(); generation++
+        detail.value=DetailState(kind,id,title,artwork=artwork,songs=songs,artist=artist)
     }
     fun openRemote(kind: String,id: String,title: String) {
         cancelFeaturedPlayback()
-        detail.value?.let(history::add); detailJob?.cancel(); val token=++generation
+        detail.value?.let { history.add(it.forHistory()) }
+        loadRemote(kind,id,title)
+    }
+    private fun loadRemote(kind: String,id: String,title: String) {
+        detailJob?.cancel(); val token=++generation
         detail.value=DetailState(kind,id,title,loading=true)
         detailJob=run {
             try {
@@ -414,7 +492,8 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                     banner=value["banner"]?.jsonPrimitive?.contentOrNull,
                     singles=value["singles"]?.jsonArray.orEmpty().map { it.jsonObject })
             } catch(error: Exception) {
-                if(error is CancellationException) throw error
+                // A provider timeout is a failure with Reintentar, unlike leaving the page.
+                currentCoroutineContext().ensureActive()
                 if(token==generation) detail.value=detail.value?.copy(loading=false,error="No se pudo abrir esta página. Reintenta.")
             }
         }
@@ -430,7 +509,7 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                 val cursor=value["nextCursor"]?.jsonPrimitive?.contentOrNull
                 if(token==generation) detail.value=old.copy(songs=(old.songs+value.getValue("songs").jsonArray.map { remoteSong(it.jsonObject) }).distinctBy { it.id },
                     cursor=cursor,moreSongs=cursor!=null,loading=false,error=null)
-            } catch(error: Exception) { if(error is CancellationException) throw error; if(token==generation) detail.value=old.copy(error="No se pudieron cargar más canciones.") }
+            } catch(error: Exception) { currentCoroutineContext().ensureActive(); if(token==generation) detail.value=old.copy(error="No se pudieron cargar más canciones.") }
         }
     }
     fun artistReleases(kind: String) {
@@ -449,7 +528,7 @@ class OpenfyViewModel(application: Application) : AndroidViewModel(application) 
                     loading=false,error=null,
                     moreAlbums=if(kind=="albums") cursor!=null else old.moreAlbums,moreSingles=if(kind=="singles") cursor!=null else old.moreSingles,
                     releaseCursors=if(cursor==null) old.releaseCursors-kind else old.releaseCursors+(kind to cursor))
-            } catch(error: Exception) { if(error is CancellationException) throw error; if(token==generation) detail.value=old.copy(error="No se pudieron cargar más lanzamientos.") }
+            } catch(error: Exception) { currentCoroutineContext().ensureActive(); if(token==generation) detail.value=old.copy(error="No se pudieron cargar más lanzamientos.") }
         }
     }
     fun discover(force: Boolean = false) {

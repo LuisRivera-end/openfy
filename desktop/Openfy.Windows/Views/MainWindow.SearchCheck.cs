@@ -29,7 +29,7 @@ public sealed partial class MainWindow
         double offset = ActiveSearchScroll()?.VerticalOffset ?? 0; int before = fixture.SearchRequests;
         await model.ArtistAsync("fixture-artist"); ReturnToSearch(); await Task.Delay(180);
         if (model.Page != "search" || searchCategory != "song" || model.Songs.Count != 30 || Math.Abs((ActiveSearchScroll()?.VerticalOffset ?? 0) - offset) > 2 || fixture.SearchRequests != before)
-            throw new IOException("Volver del artista pierde la categoría, resultados o posición.");
+            throw new IOException($"Volver del artista pierde la categoría, resultados o posición: página={model.Page}, categoría={searchCategory}, canciones={model.Songs.Count}, posición={ActiveSearchScroll()?.VerticalOffset}/{offset}, solicitudes={fixture.SearchRequests - before}.");
         SelectSearchCategory("artist"); await Task.Delay(150); ActiveSearchScroll()?.ChangeView(null, ActiveSearchScroll()!.ScrollableHeight, null, true);
         await Until(() => model.Artists.Count == 12 && !model.SearchArtistsLoading);
         SelectSearchCategory("album"); await Task.Delay(150); ActiveSearchScroll()?.ChangeView(null, ActiveSearchScroll()!.ScrollableHeight, null, true);

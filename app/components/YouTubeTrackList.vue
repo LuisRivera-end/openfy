@@ -36,6 +36,10 @@ const shown = computed(() => props.songs.slice(props.start, props.end).map((song
 
 <style scoped>
 .youtube-list .track-row, .youtube-list .track-list-heading { grid-template-columns: 28px minmax(150px, 2fr) minmax(100px, 1fr) 60px 126px; }
+.youtube-list .track-row { border-bottom: 1px solid var(--album-surface, transparent); }
+@media (hover: hover) { .youtube-list .track-row:hover { background: var(--album-surface, #ffffff07); } }
+.youtube-list .track-row.selected { background: var(--album-surface, #ffffff04); }
+.youtube-list :is(.track-number, .track-album, .track-duration, .track-list-heading span) { color: var(--album-muted, var(--muted)); }
 .song-actions { display: flex; align-items: center; }
 .search-compact .track-list-heading, .search-compact .track-number, .search-compact .track-album { display: none; }
 .search-compact .track-row { grid-template-columns: minmax(0, 1fr) 50px 44px; gap: 8px; }

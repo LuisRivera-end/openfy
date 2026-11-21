@@ -20,8 +20,8 @@ La regla `artistTheme` (más abajo) devuelve:
 | --- | --- |
 | `base` | Fondo de la cabecera y de «Canciones populares». Color al que se funde el medio de la cabecera. |
 | `secondary` | Fondo de «Último lanzamiento», «Álbumes» y «Singles y EPs». |
-| `deep` | Fondo de «Acerca de» y «Fans también escuchan»; icono del botón de reproducir. |
-| `surface` | Filas de la tabla en hover/selección, tarjeta de «Acerca de» y botones de cristal. |
+| `deep` | Fondo de «Fans también escuchan»; icono del botón de reproducir. |
+| `surface` | Filas de la tabla en hover/selección y botones de cristal. |
 | `neutral` | `true` cuando la imagen es casi gris (por ejemplo, retratos en blanco y negro). |
 
 - El texto principal es blanco (`#FFFFFF`) y el secundario usa `#EDEDF0` opaco.
@@ -45,13 +45,13 @@ La regla `artistTheme` (más abajo) devuelve:
 ├──────────────────────────────────────────────────────────────┤ base → secondary
 │  Último lanzamiento · Álbumes · Singles y EPs                │
 ├──────────────────────────────────────────────────────────────┤ secondary → deep
-│  Acerca de · Fans también escuchan                           │
+│  Fans también escuchan                                       │
 └──────────────────────────────────────────────────────────────┘ deep → fondo de la app
 * «Volver a buscar» solo existe en Windows.
 ```
 
 - La cabecera ocupa todo el ancho del área de contenido. En la web, la foto o vídeo se extiende desde el buscador y la barra de regreso hasta el nombre y los controles. El fundido protege la lectura sobre fotogramas claros y conecta la cabecera con las canciones. La navegación lateral, el buscador, el perfil y el reproductor toman tonos del mismo artista mientras la ficha está abierta.
-- En la web, el botón circular de información abre un diálogo con el retrato y la biografía disponible. «Acerca de» en el catálogo abre el mismo diálogo. Los controles y la biografía conservan su propio foco y destino al cerrar.
+- El botón circular de información de la cabecera abre un diálogo con el retrato y la biografía, en la web, Windows y Android. Desde el 2026-11-20 no hay sección «Acerca de» en el cuerpo de la página (como en Apple Music): la biografía solo se repite en ese diálogo. Los controles y la biografía conservan su propio foco y destino al cerrar.
 - Las canciones y el último lanzamiento quedan en dos columnas únicamente cuando el panel de contenido mide al menos 700 px. En paneles compactos, como el Fold 2 desplegado con barra lateral, el lanzamiento queda debajo de la lista.
 - Sin banner: el retrato redondo (210 px, 140 px en estrecho) queda a la izquierda del nombre, sobre `base`. Ya no se usa el retrato desenfocado.
 - El fondo de la página es un único degradado vertical con paradas ancladas a las secciones. La barra superior (DetailBar en web, la barra del catálogo en Windows y la barra de Android) toma el color de la sección que pasa por debajo; el cambio se interpola a medida que se desplaza la página.

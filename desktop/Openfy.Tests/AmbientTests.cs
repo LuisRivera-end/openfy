@@ -91,9 +91,15 @@ public sealed class ImmersiveTests
         Assert.Equal(presentation.GetProperty("cornerMargin").GetDouble(), Immersive.CornerMargin);
         Assert.Equal(presentation.GetProperty("cornerWidth").GetDouble(), Immersive.CornerWidth);
         Assert.Equal(presentation.GetProperty("cornerMaxWidth").GetDouble(), Immersive.CornerMaxWidth);
+        Assert.Equal(presentation.GetProperty("avoidGap").GetDouble(), Immersive.AvoidGap);
         foreach (var card in fixture.GetProperty("cards").EnumerateArray()) {
             var viewport = card.GetProperty("viewport");
-            var bounds = Immersive.NextCardBounds(viewport[0].GetDouble(), viewport[1].GetDouble(), card.GetProperty("contentRight").GetDouble(), card.GetProperty("contentWidth").GetDouble(), card.GetProperty("dockTop").GetDouble(), card.GetProperty("idle").GetBoolean());
+            double? avoidRight = null, avoidBottom = null;
+            if (card.TryGetProperty("avoid", out var avoid)) {
+                avoidRight = avoid[0].GetDouble();
+                avoidBottom = avoid[1].GetDouble();
+            }
+            var bounds = Immersive.NextCardBounds(viewport[0].GetDouble(), viewport[1].GetDouble(), card.GetProperty("contentRight").GetDouble(), card.GetProperty("contentWidth").GetDouble(), card.GetProperty("dockTop").GetDouble(), card.GetProperty("idle").GetBoolean(), avoidRight, avoidBottom);
             double[] actual = [bounds.X, bounds.Y, bounds.Width, bounds.Height, bounds.Scale];
             int i = 0;
             foreach (var expected in card.GetProperty("bounds").EnumerateArray()) Assert.Equal(expected.GetDouble(), actual[i++], 6);

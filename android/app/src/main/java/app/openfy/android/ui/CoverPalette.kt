@@ -39,6 +39,41 @@ object CoverPalette {
         return color
     }
 
+    /** Dominant colour of the cover according to the shared album dominant algorithm. */
+    suspend fun albumDominant(context: Context, source: String?): String? {
+        if (source.isNullOrBlank()) return null
+        val key = "album:" + ArtworkUrls.identity(source)
+        val cached = synchronized(colors) { colors[key] }
+        if (cached != null) return String.format("#%06X", cached and 0xFFFFFF)
+        val sized = ArtworkUrls.sized(source, 128) ?: return null
+        val data = File(sized).takeIf { it.isAbsolute } ?: sized
+        val request = ImageRequest.Builder(context).data(data).size(64).allowHardware(false).build()
+        val image = (SingletonImageLoader.get(context).execute(request) as? SuccessResult)?.image ?: return null
+        val hex = withContext(Dispatchers.Default) {
+            val bitmap = image.toBitmap()
+            val width = bitmap.width
+            val height = bitmap.height
+            if (width < 1 || height < 1) return@withContext null
+            val pixels = IntArray(width * height)
+            bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+            val channelPixels = IntArray(width * height * 4)
+            for (i in pixels.indices) {
+                val p = pixels[i]
+                val offset = i * 4
+                channelPixels[offset] = (p ushr 16) and 0xFF
+                channelPixels[offset + 1] = (p ushr 8) and 0xFF
+                channelPixels[offset + 2] = p and 0xFF
+                channelPixels[offset + 3] = (p ushr 24) and 0xFF
+            }
+            app.openfy.android.ui.albumDominant(channelPixels, width, height, 4)
+        }
+        if (hex != null) {
+            val rgb = hex.removePrefix("#").toInt(16)
+            synchronized(colors) { colors[key] = rgb }
+        }
+        return hex
+    }
+
     /** Card/miniplayer surface: [dominant] mixed 32 % over #09090B, then darkened to WCAG AA contrast with white. */
     fun surface(dominant: Int?): Int {
         val tint = dominant ?: 0xff28483e.toInt()

@@ -25,7 +25,15 @@ public sealed class BackendClient : IDisposable
     }
     public Task<T> SendAsync<T>(string path, HttpMethod method, object? body = null, CancellationToken cancellation = default)
         => Task.Run(() => SendCoreAsync<T>(path, method, body, cancellation), cancellation);
-    private async Task<T> SendCoreAsync<T>(string path, HttpMethod method, object? body, CancellationToken cancellation)
+    public Task<(AlbumPresentation Presentation, long RetryAfterMs)> AlbumPresentationAsync(AlbumPresentationRequest request, CancellationToken cancellation = default)
+        => Task.Run(async () => {
+            long retryAfter = 0;
+            var result = await SendCoreAsync<AlbumPresentation>("api/albums/presentation", HttpMethod.Post, request, cancellation,
+                response => retryAfter = RetryAfterMilliseconds(response));
+            return (result, retryAfter);
+        }, cancellation);
+
+    private async Task<T> SendCoreAsync<T>(string path, HttpMethod method, object? body, CancellationToken cancellation, Action<HttpResponseMessage>? readHeaders = null)
     {
         using var request = new HttpRequestMessage(method, path) { Content = body is null ? null : JsonContent.Create(body, options: Contracts.Json) };
         var elapsed = System.Diagnostics.Stopwatch.StartNew();
@@ -33,6 +41,7 @@ public sealed class BackendClient : IDisposable
         try {
             using var response = await Http.SendAsync(request, cancellation);
             await EnsureAsync(response);
+            readHeaders?.Invoke(response);
             var result = (await response.Content.ReadFromJsonAsync<T>(Contracts.Json, cancellation))!;
             SessionLog.Write("http." + method, "completed", path.Split('?')[0], elapsed.Elapsed.TotalMilliseconds, (int)response.StatusCode);
             return result;
@@ -44,11 +53,17 @@ public sealed class BackendClient : IDisposable
         string message = $"No se pudo completar la operación ({(int)response.StatusCode}).";
         try { message = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("message").GetString() ?? message; } catch { }
         var failure = new HttpRequestException(message, null, response.StatusCode);
+        long retryMs = RetryAfterMilliseconds(response);
+        if (retryMs > 0) failure.Data["RetryAfterMs"] = retryMs;
+        throw failure;
+    }
+
+    private static long RetryAfterMilliseconds(HttpResponseMessage response)
+    {
         var retry = response.Headers.RetryAfter;
         double? retryMs = retry?.Delta?.TotalMilliseconds;
         if (retryMs == null && retry?.Date is { } date) retryMs = (date - DateTimeOffset.UtcNow).TotalMilliseconds;
-        if (retryMs > 0) failure.Data["RetryAfterMs"] = (long)Math.Min(retryMs.Value, 30L * 24 * 3_600_000);
-        throw failure;
+        return retryMs > 0 ? (long)Math.Min(retryMs.Value, 30L * 24 * 3_600_000) : 0;
     }
     public void Dispose() => Http.Dispose();
 }

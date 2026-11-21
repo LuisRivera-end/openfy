@@ -33,8 +33,13 @@ test.afterAll(async () => {
   await rm(directory, { recursive: true, force: true })
 })
 
-/** The first imported song has a video; every other album has none. */
-async function simulate(page: Page) {
+/**
+ * The first imported song has a video; every other album has none. Playwright's WebKit on Windows decodes neither
+ * VP8 nor H.264, and its media requests bypass page routing, so phone tests (`undecodable`) stop media `error` events
+ * at the window before they reach the layer: it stays mounted instead of being dropped as unplayable.
+ */
+async function simulate(page: Page, undecodable = false) {
+  if (undecodable) await page.addInitScript(() => window.addEventListener('error', event => { if (event.target instanceof HTMLMediaElement) event.stopImmediatePropagation() }, true))
   const requests: unknown[] = []
   await page.route('**/api/motion/resolve', async route => {
     const body = route.request().postDataJSON()
@@ -43,6 +48,10 @@ async function simulate(page: Page) {
   })
   await page.route(`**/api/motion/${KEY}.mp4`, route => route.fulfill({ body: video, contentType: 'video/webm' }))
   return requests
+}
+/** The suite's storage opens the narrow player on the lyrics; the phone tests start on the cover, as a person does. */
+async function coverFirst(page: Page) {
+  await page.addInitScript(() => { if (!sessionStorage.getItem('openfy-test-cover-first')) { localStorage.setItem('openfy-immersive-lyrics', 'off'); sessionStorage.setItem('openfy-test-cover-first', '1') } })
 }
 async function open(page: Page) {
   await page.goto('/library')
@@ -84,16 +93,10 @@ test.describe('Motion art', () => {
     })
   }
 
-  test('replaces the cover with the looping video on desktop, and never asks on the phone', async ({ page }, info) => {
+  test('replaces the cover with the looping video on desktop', async ({ page }, info) => {
+    test.skip(isPhone(info), 'Desktop only')
     const requests = await simulate(page)
     const dialog = await open(page), motion = dialog.locator('.immersive-artwork .motion-art')
-    if (isPhone(info)) {
-      await expect(dialog.locator('.immersive-artwork')).toBeVisible()
-      await page.waitForTimeout(1200)
-      expect(requests).toHaveLength(0)
-      await expect(motion).toHaveCount(0)
-      return
-    }
     await expect.poll(() => requests.length).toBe(1)
     expect(requests[0]).toEqual({ entry: { source: 'local', trackId: tracks[0]!.id } })
     // Paused: the static cover stays in front until the video is really playing.
@@ -102,8 +105,17 @@ test.describe('Motion art', () => {
     await dialog.getByRole('button', { name: 'Reproducir en reproductor ampliado' }).click()
     await expect(motion).toHaveClass(/is-ready/)
     expect(await motion.evaluate((element: HTMLVideoElement) => ({ loop: element.loop, muted: element.muted, paused: element.paused }))).toEqual({ loop: true, muted: true, paused: false })
-    const cover = await dialog.locator('.immersive-artwork').boundingBox(), frame = await motion.boundingBox()
-    expect(frame).toEqual(cover)
+    const art = await motion.evaluate(video => {
+      const cover = video.parentElement!
+      return {
+        frame: video.getBoundingClientRect().toJSON(),
+        cover: cover.getBoundingClientRect().toJSON(),
+        clip: getComputedStyle(video).clipPath,
+        radius: getComputedStyle(cover).borderTopLeftRadius
+      }
+    })
+    expect(art.frame).toEqual(art.cover)
+    expect(art.clip).toBe(`inset(0px round ${art.radius})`)
     await page.mouse.move(200, 200)
     await dialog.getByRole('button', { name: 'Pausar en reproductor ampliado' }).click()
     await expect.poll(() => motion.evaluate((element: HTMLVideoElement) => element.paused)).toBe(true)
@@ -114,6 +126,9 @@ test.describe('Motion art', () => {
     await expect(motion).toHaveCount(0)
     await expect.poll(() => requests.length).toBe(2)
     await page.mouse.move(220, 220)
+    // Previous restarts the current song once playback passes three seconds.
+    await dialog.getByRole('button', { name: 'Pausar en reproductor ampliado' }).click()
+    await dialog.getByRole('slider', { name: 'Posición en reproductor ampliado' }).fill('0')
     await dialog.getByRole('button', { name: 'Anterior en reproductor ampliado' }).click()
     await expect(dialog.getByRole('heading', { name: 'Portada animada uno' })).toBeVisible()
     await expect(motion).toHaveCount(1)
@@ -139,12 +154,69 @@ test.describe('Motion art', () => {
     await expect(dialog.locator('.motion-art')).toHaveCount(0)
   })
 
-  test('offers the motion switch in settings on desktop and phones', async ({ page }) => {
+  test('offers the switch in settings on every device', async ({ page }) => {
     await page.goto('/settings')
     const toggle = page.getByRole('switch', { name: 'Activar portadas animadas' }).or(page.getByRole('checkbox', { name: 'Activar portadas animadas' }))
     await expect(toggle).toBeChecked()
     await page.getByText('Portadas animadas', { exact: true }).locator('xpath=ancestor::div[contains(@class,"setting-row")]').locator('.switch').click()
     await expect(toggle).not.toBeChecked()
     expect(await page.evaluate(() => localStorage.getItem('openfy-motion-art'))).toBe('off')
+  })
+
+  test('animates the large cover of the phone player and keeps the stacked lyrics cover static', async ({ page }, info) => {
+    test.skip(!isPhone(info), 'Phone only')
+    await coverFirst(page)
+    const requests = await simulate(page, true)
+    const dialog = await open(page), motion = dialog.locator('.immersive-artwork .motion-art')
+    await expect(dialog.locator('.immersive-content')).toHaveAttribute('data-layout', 'cover')
+    await expect.poll(() => requests.length).toBe(1)
+    expect(requests[0]).toEqual({ entry: { source: 'local', trackId: tracks[0]!.id } })
+    await expect(motion).toHaveCount(1)
+    await expect(dialog.locator('.motion-art')).toHaveCount(1)
+    // The video stays inside the cover instead of covering the whole player.
+    const art = await motion.evaluate(video => ({ frame: video.getBoundingClientRect().toJSON(), cover: video.parentElement!.getBoundingClientRect().toJSON() }))
+    expect(art.frame).toEqual(art.cover)
+    expect(art.cover.width).toBeLessThan(page.viewportSize()!.width)
+    await dialog.getByRole('button', { name: 'Letra en reproductor ampliado' }).tap()
+    await expect(dialog.locator('.immersive-content')).toHaveAttribute('data-layout', 'stacked')
+    await expect(dialog.locator('.motion-art')).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Letra en reproductor ampliado' }).tap()
+    await expect(motion).toHaveCount(1)
+    // The next album has no video: the static cover returns.
+    await dialog.getByRole('button', { name: 'Siguiente en reproductor ampliado' }).tap()
+    await expect(dialog.getByRole('heading', { name: 'Portada animada dos' })).toBeVisible()
+    await expect(motion).toHaveCount(0)
+    expect(requests).toHaveLength(2)
+  })
+
+  test('keeps the cover static in the installed phone PWA with data saver on', async ({ page }, info) => {
+    test.skip(!isPhone(info), 'Phone only')
+    await coverFirst(page)
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'standalone', { value: true })
+      const connection = Object.assign(new EventTarget(), { saveData: true, type: 'wifi' })
+      Object.defineProperty(navigator, 'connection', { value: connection })
+    })
+    const requests = await simulate(page)
+    const dialog = await open(page)
+    await expect(dialog.locator('.immersive-artwork')).toBeVisible()
+    await page.waitForTimeout(1200)
+    expect(requests).toHaveLength(0)
+    await expect(dialog.locator('.motion-art')).toHaveCount(0)
+  })
+
+  test('keeps animating the cover in phone Big Picture', async ({ page }, info) => {
+    test.skip(!isPhone(info), 'Installed phone PWA')
+    await coverFirst(page)
+    await page.addInitScript(() => Object.defineProperty(navigator, 'standalone', { value: true }))
+    const requests = await simulate(page, true)
+    const dialog = await open(page)
+    await expect(dialog.locator('.immersive-artwork .motion-art')).toHaveCount(1)
+    await dialog.getByRole('button', { name: 'Abrir Big Picture' }).tap()
+    await expect(dialog).toHaveClass(/mobile-picture/)
+    await expect(dialog.locator('.immersive-artwork .motion-art')).toHaveCount(1)
+    await dialog.getByRole('button', { name: 'Salir de Big Picture' }).tap()
+    await expect(dialog.locator('.immersive-artwork .motion-art')).toHaveCount(1)
+    expect(requests).toHaveLength(1)
   })
 })

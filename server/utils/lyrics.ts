@@ -35,10 +35,21 @@ export async function youtubeLyrics(videoId: string): Promise<ProviderLyrics | n
     return { plainText, lines: [], instrumental: false, source: 'youtube',
       attribution: shelf?.footer?.toString().trim() || 'Letras de YouTube Music', sourceUrl: `https://music.youtube.com/watch?v=${videoId}` }
   } catch (error) {
-    // The SDK throws for a missing/disabled lyrics tab. Network/parser failures are retryable.
-    if (error instanceof Error && /Could not find target tab|lyrics (?:are |is )?not available|letras no (?:están )?disponibles/i.test(error.message)) return null
+    if (missingYouTubeLyrics(error, videoId)) return null
     throw new LyricsProviderError()
   }
+}
+
+/**
+ * The SDK throws for a missing lyrics tab and for the message YouTube Music shows
+ * instead of lyrics (localized: "La letra no está disponible", "Lyrics not available").
+ * Both are a genuine absence; network/parser failures stay retryable.
+ */
+export function missingYouTubeLyrics(error: unknown, videoId: string) {
+  if (!(error instanceof Error)) return false
+  // A lyrics page made of a Message renderer is thrown with the video id as its info.
+  if ((error as { info?: unknown }).info === videoId) return true
+  return /Could not find target tab|lyrics (?:are |is )?not available|letras? no (?:est[áa]n? )?disponibles?/i.test(error.message)
 }
 
 export interface LyricsDependencies {

@@ -1,7 +1,7 @@
 import { BIG_PICTURE, nextCardBounds } from '../../shared/utils/immersive'
 
 /** Keep the dock slots stationary: the next-song card is anchored to them, not to the enlarged scene. */
-export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefined>, enabled: Ref<boolean>, idle: Ref<boolean>, hasCard: Ref<boolean>, morphing: Ref<boolean>, viewLayout: Ref<string>, slides: Ref<boolean>) {
+export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefined>, enabled: Ref<boolean>, idle: Ref<boolean>, hasCard: Ref<boolean>, morphing: Ref<boolean>, viewLayout: Ref<string>, slides: Ref<boolean>, avoid: Ref<{ right: number, bottom: number } | null> = ref(null)) {
   const appearance = useAppearanceStore()
   const animations = new Map<HTMLElement, Animation>()
   const positioned = new Set<HTMLElement>()
@@ -30,6 +30,7 @@ export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefine
         for (const name of ['position', 'left', 'top', 'width', 'max-width', 'margin', 'transform-origin', 'transform', 'height']) element.style.removeProperty(name)
       }
       positioned.clear()
+      avoid.value = null
       return
     }
     const art = dialog.querySelector<HTMLElement>('.immersive-artwork'), info = dialog.querySelector<HTMLElement>('.immersive-info')
@@ -41,7 +42,10 @@ export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefine
     const header = dialog.querySelector('header')?.getBoundingClientRect()
     const dockElement = dialog.querySelector<HTMLElement>('.immersive-seek')
     const dock = dockElement?.getBoundingClientRect()
-    if (!art || !info || !artSlot?.width || !infoSlot || !content || !header || !dock) return
+    if (!art || !info || !artSlot?.width || !infoSlot || !content || !header || !dock) {
+      avoid.value = null
+      return
+    }
     // The dock fades down by 8px. Its reserved layout position remains the card's anchor.
     const dockTop = dock.top - new DOMMatrixReadOnly(getComputedStyle(dockElement!).transform).m42
     const split = dialog.querySelector('[data-layout="split"]') !== null
@@ -56,7 +60,14 @@ export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefine
     place(art, x, y, artSlot.width, artSlot.height, scale, motion, duration)
     const infoY = column ? y + side + 22 * scale : infoSlot.y
     const infoX = column ? x : Math.max(content.left, infoSlot.x - infoSlot.width * (scale - 1) / 2)
-    place(info, infoX, infoY, Math.min(infoSlot.width, (content.right - infoX) / scale), undefined, scale, motion, duration)
+    const infoWidth = Math.min(infoSlot.width, (content.right - infoX) / scale)
+    place(info, infoX, infoY, infoWidth, undefined, scale, motion, duration)
+    if (column && !split) {
+      const nextAvoid = { right: Math.max(x + side, infoX + infoWidth * scale), bottom: infoY + infoSlot.height * scale }
+      if (avoid.value?.right !== nextAvoid.right || avoid.value?.bottom !== nextAvoid.bottom) avoid.value = nextAvoid
+    } else {
+      avoid.value = null
+    }
     const lyrics = dialog.querySelector<HTMLElement>('.immersive-lyrics-slot:not(.lyrics-pane-leave-active) .immersive-lyrics')
     if (lyrics && lyricsSlot) {
       // The enlarged artwork keeps the full-size gap; the lyrics shift into the empty outer margin instead of narrowing.
@@ -65,7 +76,7 @@ export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefine
       const right = split ? Math.max(content.right, Math.min(innerWidth - BIG_PICTURE.sideMargin, content.right + left - lyricsSlot.x)) : content.right
       const top = split ? y + side * BIG_PICTURE.lyricsTop : Math.max(lyricsSlot.top, infoY + infoSlot.height * scale + 48)
       // Docked above the controls or in the compact corner, the lyrics end 16 px before the card.
-      const cardTop = hasCard.value ? nextCardBounds(innerWidth, innerHeight, content.right, content.width, dockTop, idle.value).y - 16 : Infinity
+      const cardTop = hasCard.value ? nextCardBounds(innerWidth, innerHeight, content.right, content.width, dockTop, idle.value, avoid.value).y - 16 : Infinity
       const bottom = Math.min(idle.value ? innerHeight - 24 : dockTop - 20, cardTop)
       // A column that has just appeared is placed directly; its own fade reveals it once the song has moved aside.
       place(lyrics, left, top, Math.max(1, right - left) / scale, Math.max(48, bottom - top) / scale, scale, motion && duration === BIG_PICTURE.compactMs, duration)
@@ -83,5 +94,6 @@ export function useBigPicturePresentation(root: Ref<HTMLDialogElement | undefine
   }, { flush: 'post' })
   watch(() => appearance.effects, () => { for (const animation of animations.values()) animation.cancel(); layout() })
   onMounted(() => { observer = new ResizeObserver(schedule); if (root.value) observer.observe(root.value); root.value?.addEventListener('picture-settle', settle); schedule() })
-  onBeforeUnmount(() => { cancelAnimationFrame(queued); observer?.disconnect(); root.value?.removeEventListener('picture-settle', settle); for (const animation of animations.values()) animation.cancel() })
+  onBeforeUnmount(() => { cancelAnimationFrame(queued); observer?.disconnect(); root.value?.removeEventListener('picture-settle', settle); for (const animation of animations.values()) animation.cancel(); avoid.value = null })
+  return avoid
 }

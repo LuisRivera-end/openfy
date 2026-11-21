@@ -123,8 +123,8 @@ internal fun LazyListScope.skeletons(keyPrefix: String = "loading") {
     }
 }
 
-@Composable internal fun ActionIcon(icon: ImageVector,label: String,tint: Color = TextColor,action: ()->Unit) {
-    IconButton(onClick=action,modifier=Modifier.sizeIn(minWidth=48.dp,minHeight=48.dp)) { Icon(icon,label,tint=tint) }
+@Composable internal fun ActionIcon(icon: ImageVector,label: String,tint: Color = TextColor,modifier: Modifier = Modifier,action: ()->Unit) {
+    IconButton(onClick=action,modifier=modifier.sizeIn(minWidth=48.dp,minHeight=48.dp)) { Icon(icon,label,tint=tint) }
 }
 @Composable internal fun Confirm(title: String,body: String,dismiss: ()->Unit,confirm: ()->Unit) {
     AlertDialog(onDismissRequest=dismiss,title={ Text(title) },text={ Text(body) },
@@ -135,6 +135,14 @@ private val PlayCountEndPadding=4.dp
 
 @Composable internal fun PlayCountHeading() {
     Text("Reprod.",Modifier.padding(end=PlayCountEndPadding),color=Muted,style=MaterialTheme.typography.labelSmall)
+}
+
+internal fun formatTrackDuration(durationMs: Long): String {
+    if (durationMs <= 0) return ""
+    val totalSeconds = durationMs / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format("%d:%02d", minutes, seconds)
 }
 
 @Composable internal fun SongRow(
@@ -149,19 +157,35 @@ private val PlayCountEndPadding=4.dp
     status: (@Composable ()->Unit)? = null,
     actions: (@Composable ()->Unit)? = null,
     menu: (@Composable ()->Unit)? = null,
-    artistColors: ArtistPageColors? = null
+    artistColors: ArtistPageColors? = null,
+    albumTint: AlbumTintColors? = null,
+    albumArtist: String? = null
 ) {
     val isCurrent=current==song.id
     val rowShape = RoundedCornerShape(Radii.row)
     var focused by remember { mutableStateOf(false) }
-    val accent = if (artistColors == null) Green else Color.White
-    val secondary = if (artistColors == null) Muted else ArtistSecondaryText
-    val artistRow = if (artistColors == null) Modifier else Modifier
-        .background(if (isCurrent) artistColors.surface else Color.Transparent)
-        .border(2.dp, if (focused) Color.White else Color.Transparent, rowShape)
-        .onFocusChanged { focused = it.isFocused }
+    val accent = when {
+        artistColors != null -> Color.White
+        else -> Green
+    }
+    val secondary = when {
+        albumTint != null -> albumTint.mutedColor
+        artistColors != null -> ArtistSecondaryText
+        else -> Muted
+    }
+    val rowModifier = when {
+        albumTint != null -> Modifier
+            .background(if (isCurrent) albumTint.surfaceColor else Color.Transparent)
+            .border(2.dp, if (focused) Color(0xFF6DED9A) else Color.Transparent, rowShape)
+            .onFocusChanged { focused = it.isFocused }
+        artistColors != null -> Modifier
+            .background(if (isCurrent) artistColors.surface else Color.Transparent)
+            .border(2.dp, if (focused) Color.White else Color.Transparent, rowShape)
+            .onFocusChanged { focused = it.isFocused }
+        else -> Modifier
+    }
     Row(
-        Modifier.fillMaxWidth().heightIn(min=64.dp).clip(rowShape).then(artistRow)
+        Modifier.fillMaxWidth().heightIn(min=56.dp).clip(rowShape).then(rowModifier)
             .combinedClickable(onClickLabel="Reproducir",onLongClickLabel="Abrir opciones",
                 onClick=play,onLongClick=more)
             .semantics { if(isCurrent) stateDescription="Canción actual" },
@@ -186,7 +210,8 @@ private val PlayCountEndPadding=4.dp
                     Icon(Icons.Default.Download,"Disponible sin conexión",Modifier.size(12.dp),tint=accent)
                     Spacer(Modifier.width(4.dp))
                 }
-                if(song.artist.isNotBlank()) {
+                val showArtist = song.artist.isNotBlank() && (albumArtist.isNullOrBlank() || !song.artist.equals(albumArtist, ignoreCase = true))
+                if(showArtist) {
                     Text(song.artist,color=secondary,style=MaterialTheme.typography.bodySmall,maxLines=1,
                         overflow=TextOverflow.Ellipsis)
                 }
@@ -196,6 +221,15 @@ private val PlayCountEndPadding=4.dp
         if(showFavorite && song.favorite) {
             Spacer(Modifier.width(8.dp))
             Icon(Icons.Default.Favorite,"Favorita",Modifier.size(14.dp),tint=accent)
+        }
+        if(song.duration > 0 && albumTint != null) {
+            Text(
+                formatTrackDuration(song.duration),
+                color = secondary,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier.padding(end = 4.dp)
+            )
         }
         actions?.invoke()
         Box {
@@ -293,17 +327,19 @@ internal val FavoriteArtworkColor=Color(0xff1c3528)
     modifier: Modifier = Modifier,
     height: Dp = 48.dp,
     clearLabel: String = "Borrar",
-    artistColors: ArtistPageColors? = null
+    artistColors: ArtistPageColors? = null,
+    surfaceColor: Color? = null
 ) {
-    val fieldStyle=MaterialTheme.typography.bodyLarge.copy(color=TextColor,fontSize=16.sp)
+    val fieldStyle=MaterialTheme.typography.bodyLarge.copy(color=if (surfaceColor != null || artistColors != null) Color.White else TextColor,fontSize=16.sp)
     val keyboard=LocalSoftwareKeyboardController.current
     var focused by remember { mutableStateOf(false) }
-    val accent = if (artistColors == null) Green else Color.White
-    val secondary = if (artistColors == null) Muted else ArtistSecondaryText
+    val accent = if (artistColors == null && surfaceColor == null) Green else Color.White
+    val secondary = if (artistColors == null && surfaceColor == null) Muted else ArtistSecondaryText
     val focusBorder=if(focused) Modifier.border(2.dp,accent,CircleShape) else Modifier
+    val pillBg = surfaceColor ?: artistColors?.deep ?: Raised
     BasicTextField(
         value=query,onValueChange=onQuery,
-        modifier=modifier.heightIn(min=height).clip(CircleShape).background(artistColors?.deep ?: Raised).then(focusBorder)
+        modifier=modifier.heightIn(min=height).clip(CircleShape).background(pillBg).then(focusBorder)
             .onFocusChanged { focused=it.isFocused }.semantics { contentDescription=placeholder },
         textStyle=fieldStyle,singleLine=true,cursorBrush=SolidColor(accent),
         keyboardOptions=KeyboardOptions(autoCorrectEnabled=false,imeAction=ImeAction.Search),
@@ -327,23 +363,24 @@ internal val FavoriteArtworkColor=Color(0xff1c3528)
 internal fun LazyListScope.collectionFilterItem(
     key: String,query: String,onQuery: (String)->Unit,onFilters: ()->Unit,
     filtersActive: Boolean,filteredCount: Int? = null,placeholder: String = "Buscar en esta colección",
-    artistColors: ArtistPageColors? = null
+    artistColors: ArtistPageColors? = null,surfaceColor: Color? = null
 ) {
     gutterItem(key) {
         Row(verticalAlignment=Alignment.CenterVertically) {
-            SearchPill(query,onQuery,placeholder,Modifier.weight(1f),artistColors=artistColors)
+            SearchPill(query,onQuery,placeholder,Modifier.weight(1f),artistColors=artistColors,surfaceColor=surfaceColor)
             Spacer(Modifier.width(4.dp))
             IconButton(onClick=onFilters,modifier=Modifier.size(48.dp)) {
                 Box {
-                    Icon(Icons.Default.Tune,if(filtersActive) "Filtros y orden, filtros activos" else "Filtros y orden")
+                    Icon(Icons.Default.Tune,if(filtersActive) "Filtros y orden, filtros activos" else "Filtros y orden",
+                        tint = if (surfaceColor != null || artistColors != null) Color.White else LocalContentColor.current)
                     if(filtersActive) Box(Modifier.align(Alignment.TopEnd).size(7.dp)
-                        .background(if (artistColors == null) Green else Color.White,CircleShape))
+                        .background(if (artistColors == null && surfaceColor == null) Green else Color.White,CircleShape))
                 }
             }
         }
         if(filteredCount!=null) {
             Text(if(filteredCount==1) "1 coincidencia" else "$filteredCount coincidencias",
-                Modifier.padding(start=14.dp,top=8.dp,bottom=4.dp),color=if (artistColors == null) Muted else ArtistSecondaryText,
+                Modifier.padding(start=14.dp,top=8.dp,bottom=4.dp),color=if (artistColors == null && surfaceColor == null) Muted else ArtistSecondaryText,
                 style=MaterialTheme.typography.bodySmall)
         }
     }
@@ -352,7 +389,8 @@ internal fun LazyListScope.collectionFilterItem(
 internal fun LazyListScope.songItems(tracks: List<Song>,songMap: Map<String,Song>,currentId: String?,play: (Song)->Unit,
     onSongActions: (Song)->Unit,stats: Map<String,List<ListeningRow>> = emptyMap(),
     keyPrefix: String = "songs",trackNumbers: Map<String,Int> = emptyMap(),showFavorite: Boolean = true,
-    artworkSize: Dp = 48.dp,artistColors: ArtistPageColors? = null) {
+    artworkSize: Dp = 48.dp,artistColors: ArtistPageColors? = null,
+    albumTint: AlbumTintColors? = null,albumArtist: String? = null) {
     val occurrences=mutableMapOf<String,Int>()
     val rows=tracks.map { song ->
         val occurrence=(occurrences[song.id] ?: 0)+1
@@ -364,7 +402,11 @@ internal fun LazyListScope.songItems(tracks: List<Song>,songMap: Map<String,Song
         SongRow(
             song.copy(favorite=saved?.favorite ?: song.favorite,offlineReady=saved?.offlineReady ?: song.offlineReady),
             currentId,{ play(song) },{ onSongActions(song) },stats[song.id]?.sumOf { it.plays },
-            trackNumber=trackNumbers[song.id],showFavorite=showFavorite,artworkSize=artworkSize,artistColors=artistColors
+            trackNumber=trackNumbers[song.id],showFavorite=showFavorite,artworkSize=artworkSize,artistColors=artistColors,
+            albumTint=albumTint,albumArtist=albumArtist
         )
+        if(albumTint != null) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(albumTint.surfaceColor))
+        }
     }
 }

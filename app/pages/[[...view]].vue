@@ -8,12 +8,15 @@ async function selectSession(event: Event) {
 const updates = useUpdatesStore()
 const releaseNotes = useReleaseNotesStore()
 const release = useRuntimeConfig().public.release
+/** A precise pointer stands for a keyboard; phones and tablets do not get the shortcut list. */
+const finePointer = useMediaQuery('(hover: hover) and (pointer: fine)')
 import { formatBytes, formatTime } from '../../shared/utils/media'
 import type { Track, LibraryItem } from '../../shared/types/music'
 import type { LibrarySort, ListeningContext } from '../../shared/types/telemetry'
 import { filterLibrary } from '../../shared/utils/library-filters'
 import { playbackKey } from '../../shared/utils/playback'
 import { countLabel, songCount } from '../../shared/utils/text'
+import { useAlbumPresentation, type AlbumPresentationIdentity } from '../composables/useAlbumPresentation'
 const library = useLibraryStore()
 const player = usePlayerStore()
 const downloads = useDownloadsStore()
@@ -69,6 +72,41 @@ const listeningContext = computed<ListeningContext | undefined>(() => {
   if (section.value === 'search') return { kind: 'song' }
 })
 const detail = computed(() => ['album', 'artist', 'playlist', 'favorites'].includes(section.value))
+const isAlbumSection = computed(() => section.value === 'album')
+const albumYear = computed(() => {
+  if (!isAlbumSection.value || !unfilteredItems.value.length) return null
+  const localTracks = unfilteredItems.value
+    .map(item => library.trackMap.get(item.id))
+    .filter((t): t is Track => !!t)
+  if (!localTracks.length) return null
+  const years = new Set(localTracks.map(t => t.year).filter((y): y is number => y != null && y > 0))
+  return years.size === 1 ? [...years][0]! : null
+})
+const albumIdentity = computed<AlbumPresentationIdentity | undefined>(() => {
+  if (!isAlbumSection.value || !unfilteredItems.value.length) return undefined
+  const first = unfilteredItems.value[0]!
+  if (first.entry.source === 'local') {
+    return {
+      source: 'local',
+      trackId: first.entry.trackId,
+      artwork: collectionArtwork.value,
+      key: `local:${selectedAlbum.value?.id || itemId.value}`,
+    }
+  }
+  return {
+    source: 'youtube',
+    albumId: first.entry.song.albumId || undefined,
+    artists: first.entry.song.artists,
+    album: first.entry.song.album || selectedAlbum.value?.title || '',
+    artwork: collectionArtwork.value,
+    key: `youtube:${selectedAlbum.value?.id || itemId.value}`,
+  }
+})
+const { tint: albumTintState, description: albumDescription, motionUrl: albumMotionUrl, motionFailed: onAlbumMotionFailed } = useAlbumPresentation(
+  () => albumIdentity.value,
+  () => collectionArtwork.value
+)
+useProvidePageChrome(() => isAlbumSection.value && unfilteredItems.value.length ? albumTintState.value : null)
 const downloadEntries = computed(() => Object.values(downloads.records).sort((a, b) => b.updatedAt - a.updatedAt))
 const preparing = computed(() => library.tracks.filter(track => track.conversion !== 'ready'))
 watch(() => route.path, () => { tab.value = 'songs' })
@@ -93,7 +131,21 @@ async function copyAddress() {
 </script>
 
 <template>
-  <div class="page-content" :class="{ 'library-artist-page': libraryArtist }" :style="libraryArtist ? { '--artist-base': libraryArtistTheme.base, '--artist-deep': libraryArtistTheme.deep, '--artist-surface': libraryArtistTheme.surface } : undefined">
+  <div
+    class="page-content"
+    :class="{ 'library-artist-page': libraryArtist, 'album-page': isAlbumSection }"
+    :style="isAlbumSection ? {
+      '--album-bg': albumTintState.background,
+      '--album-surface': albumTintState.surface,
+      '--album-muted': albumTintState.muted,
+      '--album-edge': albumTintState.edge,
+      backgroundColor: albumTintState.background,
+    } : libraryArtist ? {
+      '--artist-base': libraryArtistTheme.base,
+      '--artist-deep': libraryArtistTheme.deep,
+      '--artist-surface': libraryArtistTheme.surface,
+    } : undefined"
+  >
     <HomePage v-if="section === 'home'" />
 
     <template v-else-if="section === 'downloads'">
@@ -104,7 +156,8 @@ async function copyAddress() {
       <div class="page-heading"><div><p class="greeting">A tu manera</p><h1>Ajustes</h1></div></div>
       <section class="settings-panel"><h2>Actualizaciones</h2><div class="setting-row"><div><h3>Openfy {{ release.version }} · {{ release.build }}</h3><p role="status">{{ updates.status }}</p></div><div class="setting-actions"><button class="button subtle" @click="releaseNotes.history">Novedades</button><button class="button subtle" :disabled="updates.checking" @click="updates.check">Buscar actualizaciones</button></div></div></section>
       <section class="settings-panel"><h2>Tu biblioteca personal</h2><div class="setting-row"><div><h3>Conexión con tu PC</h3><p>{{ library.connected ? 'Disponible para importar, editar y escuchar.' : 'Las canciones descargadas siguen disponibles.' }}</p></div><button class="button subtle" @click="library.refresh"><OIcon name="refresh" :size="17" />Actualizar</button></div><div class="setting-row"><div><h3>Añadir música</h3><p>Los originales se conservan. Los FLAC tienen una versión AAC para el iPhone.</p></div><button class="button subtle" :disabled="!library.connected" @click="importOpen = true">Importar</button></div><div class="setting-row"><div><h3>Dirección de esta biblioteca</h3><p>Abre la misma dirección HTTPS en tus dispositivos.</p></div><button class="button subtle" @click="copyAddress">{{ copying ? 'Copiada' : 'Copiar dirección' }}</button></div></section>
-      <section class="settings-panel"><h2>Reproducción y apariencia</h2><div class="setting-row"><div><h3>Movimiento ambiental</h3><p>Activa los fondos del reproductor y el movimiento de las cabeceras.</p></div><label class="switch"><input v-model="motion" type="checkbox" switch aria-label="Activar movimiento ambiental"><span></span></label></div><div class="setting-row"><div><h3>Portadas animadas</h3><p>Muestra vídeos en las cabeceras de artistas y en el reproductor compatible. El ahorro de datos mantiene la imagen fija cuando el navegador lo indica.</p></div><label class="switch"><input v-model="appearance.motionArt" type="checkbox" switch aria-label="Activar portadas animadas"><span></span></label></div><div class="setting-row"><div><h3>Descargas en este dispositivo</h3><p>{{ downloads.persistent ? 'El navegador ha concedido almacenamiento persistente.' : 'El navegador administra el espacio. Conserva siempre los originales en tu PC.' }}</p></div><NuxtLink class="button subtle" to="/downloads">Administrar</NuxtLink></div></section>
+      <section class="settings-panel"><h2>Reproducción y apariencia</h2><div class="setting-row"><div><h3>Movimiento ambiental</h3><p>Activa los fondos del reproductor y el movimiento de las cabeceras.</p></div><label class="switch"><input v-model="motion" type="checkbox" switch aria-label="Activar movimiento ambiental"><span></span></label></div><div class="setting-row"><div><h3>Portadas animadas</h3><p>Muestra vídeos en las cabeceras de artistas y en el reproductor compatible. El ahorro de datos mantiene la imagen fija cuando el navegador lo indica.</p></div><label class="switch"><input v-model="appearance.motionArt" type="checkbox" switch aria-label="Activar portadas animadas"><span></span></label></div><div class="setting-row"><div><h3>Efectos de transparencia</h3><p>El reproductor, la cola y las letras dejan ver el color de la página como cristal. Predeterminado sigue el ajuste de transparencia del sistema.</p></div><select v-model="appearance.transparency" class="period-select setting-select" aria-label="Efectos de transparencia"><option value="default">Predeterminado</option><option value="on">Activados</option><option value="off">Desactivados</option></select></div><div class="setting-row"><div><h3>Descargas en este dispositivo</h3><p>{{ downloads.persistent ? 'El navegador ha concedido almacenamiento persistente.' : 'El navegador administra el espacio. Conserva siempre los originales en tu PC.' }}</p></div><NuxtLink class="button subtle" to="/downloads">Administrar</NuxtLink></div></section>
+      <ShortcutGuide v-if="finePointer" />
       <section v-if="preparing.length" class="settings-panel"><div class="section-heading"><h2>Preparando para tu iPhone</h2><button class="button subtle" :disabled="!library.connected || player.playing" @click="resumeConversions">Reanudar / reintentar</button></div><p v-if="library.conversionPaused" class="muted">Las conversiones están en pausa por reproducción. Si ya terminaste de escuchar en el otro dispositivo, puedes reanudarlas.</p><div v-for="track in preparing" :key="track.id" class="conversion-row"><strong>{{ track.title }}</strong><span>{{ track.conversion === 'failed' ? track.conversionError : track.conversion === 'running' ? `Convirtiendo ${track.conversionProgress} %` : 'En espera' }}</span></div></section>
       <section v-if="library.jobs.length" class="settings-panel"><h2>Últimas importaciones</h2><div v-for="job in library.jobs.slice(0, 20)" :key="job.id" class="conversion-row"><strong>{{ job.filename }}</strong><span>{{ job.state === 'complete' ? 'Importada' : job.state === 'duplicate' ? 'Ya estaba en tu biblioteca' : job.state === 'processing' ? 'Procesando' : job.error }}</span></div></section>
       <section class="settings-panel"><h2>Aplicación para Windows</h2><div class="setting-row"><div><h3>Sesión de escritorio</h3><p>Exporta la cola, la posición, el volumen y la preferencia de movimiento para importarlos en Openfy nativo. Tus descargas permanecen en este dispositivo.</p></div><div class="setting-actions"><button class="button subtle" @click="player.exportDesktopSession">Exportar sesión de escritorio</button><button class="button subtle" @click="sessionFile?.click()">Importar sesión</button></div></div><input ref="sessionFile" type="file" hidden accept=".json,application/json" @change="selectSession"></section>
@@ -112,8 +165,8 @@ async function copyAddress() {
     </template>
 
     <template v-else-if="['library', 'search', 'album', 'artist', 'playlist', 'favorites'].includes(section)">
-      <DetailBar v-if="detail" phone-only :title="title" fallback="/library" />
-      <CollectionHeader v-if="detail" :context="listeningContext" :title="title" :kind="section === 'playlist' ? 'Playlist personal' : section === 'favorites' ? 'Hecha por ti' : section === 'artist' ? 'Artista en tu biblioteca' : 'Álbum'" :items="unfilteredItems" :results="collectionItems" :artwork="collectionArtwork" :favorite="section === 'favorites'" :artist="section === 'artist'" :artist-theme="libraryArtist ? libraryArtistTheme : undefined" :subtitle="section === 'album' ? selectedAlbum?.artist : undefined">
+      <DetailBar v-if="detail" phone-only :title="title" fallback="/library" :tint="isAlbumSection ? albumTintState.background : undefined" />
+      <CollectionHeader v-if="detail" :context="listeningContext" :title="title" :kind="section === 'playlist' ? 'Playlist personal' : section === 'favorites' ? 'Hecha por ti' : section === 'artist' ? 'Artista en tu biblioteca' : 'Álbum'" :items="unfilteredItems" :results="collectionItems" :artwork="collectionArtwork" :favorite="section === 'favorites'" :artist="section === 'artist'" :artist-theme="libraryArtist ? libraryArtistTheme : undefined" :subtitle="section === 'album' ? selectedAlbum?.artist : undefined" :album="isAlbumSection" :year="albumYear" :artist-name="selectedAlbum?.artist" :description="albumDescription" :motion-url="albumMotionUrl" @motion-failed="onAlbumMotionFailed">
         <DownloadCollectionButton v-if="section === 'playlist' && selectedPlaylist" kind="playlist" :id="selectedPlaylist.id" :title="selectedPlaylist.name" :entries="unfilteredItems.map(item => item.entry)" :artwork="collectionArtwork" />
         <DownloadCollectionButton v-else-if="section === 'album'" kind="album" :id="itemId" :title="title" :entries="unfilteredItems.map(item => item.entry)" :artwork="collectionArtwork" />
         <button v-else-if="section === 'favorites'" class="button subtle" aria-label="Descargar favoritas" :disabled="!unfilteredItems.length" @click="downloads.downloadEntries(unfilteredItems.map(item => item.entry))"><OIcon name="download" :size="18" /><span class="button-label">Descargar favoritas</span></button>

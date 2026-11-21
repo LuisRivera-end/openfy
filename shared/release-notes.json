@@ -1,6 +1,44 @@
 {
   "releases": [
     {
+      "version": "0.6.1",
+      "date": "2026-11-21",
+      "summary": "Reproductor de cristal más amplio, cabecera de artista renovada en el teléfono y varios arreglos.",
+      "items": [
+        { "type": "new", "text": "Ajustes → Reproducción y apariencia incluye «Efectos de transparencia»: Predeterminado sigue a Windows o al sistema, Activados mantiene el cristal siempre y Desactivados usa un fondo sólido con el color de la página." },
+        { "type": "improved", "text": "En Windows y en la web de escritorio, el reproductor flotante es más grande y espaciado, y el botón de reproducir ya no lleva círculo blanco." },
+        { "type": "improved", "text": "La línea de tiempo del reproductor es una línea fina; al acercar el cursor se ensancha, difumina la portada y el título y muestra el tiempo transcurrido y el restante." },
+        { "type": "improved", "text": "La cola y el panel de letras son de cristal translúcido con el tono de la página." },
+        { "type": "improved", "text": "En el teléfono, la cabecera del artista se centra: foto, nombre y, debajo, información, reproducir y aleatorio." },
+        { "type": "improved", "text": "En Android, la imagen del artista llega hasta arriba de la pantalla y la barra superior toma el color de la página al desplazarte." },
+        { "type": "improved", "text": "Android usa la misma tipografía que la web, la barra de pestañas flota y se compacta al desplazarte, y el minirreproductor tiene un borde de cristal." },
+        { "type": "improved", "text": "El acceso a Ajustes de la barra superior es ahora un engrane." },
+        { "type": "fixed", "text": "En Windows, el catálogo ya no se queda vacío o cargando al salir de la página de un artista." },
+        { "type": "fixed", "text": "En Windows, la biografía del artista se abre centrada en la ventana." },
+        { "type": "fixed", "text": "En Android, los álbumes ya no se quedan cargando sin fin y la lista sigue cargando más canciones al volver a una página." },
+        { "type": "fixed", "text": "Las canciones sin letra en YouTube Music ya no se vuelven a consultar cada minuto." },
+        { "type": "fixed", "text": "El panel de letras ya no muestra una caja sólida que se salía de sus bordes." }
+      ]
+    },
+    {
+      "version": "0.6.0",
+      "date": "2026-11-20",
+      "summary": "Cada álbum tiene ahora su propio color, su portada animada y su descripción.",
+      "items": [
+        { "type": "new", "text": "La página de cada álbum se tiñe con el color de su portada, de arriba abajo, en Windows, la web y Android." },
+        { "type": "new", "text": "Si el álbum tiene portada animada en Apple Music, se reproduce en bucle y sin sonido en la cabecera. Se desactiva con «Portadas animadas», con el movimiento reducido o con datos limitados." },
+        { "type": "new", "text": "Los álbumes muestran su descripción cuando existe, con «Más» para leerla completa. Primero se usa la de Apple Music y, si no hay, la de YouTube Music." },
+        { "type": "new", "text": "En los álbumes y artistas, el color llega a toda la ventana: la barra lateral, la barra superior, el reproductor y, en el teléfono, la barra de pestañas." },
+        { "type": "improved", "text": "Los colores de los álbumes conservan el tono de la portada en lugar de apagarse, y los textos secundarios toman ese mismo tono." },
+        { "type": "improved", "text": "En Windows y en la web de escritorio, el reproductor es una cápsula flotante centrada y la barra lateral es translúcida." },
+        { "type": "improved", "text": "La biografía del artista se abre desde el botón de información de la cabecera y ya no se repite al final de la página." },
+        { "type": "fixed", "text": "«Último lanzamiento» vuelve a aparecer en su columna, junto a las canciones populares, en la web de escritorio." },
+        { "type": "new", "text": "Atajos de teclado en Windows y en la web: Espacio o K para reproducir o pausar, Ctrl + flechas para cambiar de canción y el volumen, Mayús + flechas para avanzar 10 s, y M, A, R, F, C y L para silenciar, aleatorio, repetir, favorito, cola y letra. La lista completa está en Ajustes." },
+        { "type": "new", "text": "En Windows, los botones laterales del mouse y Alt + flechas vuelven a la página anterior o van a la siguiente. B o F11 abren Big Picture, y Esc o el botón trasero lo cierran." },
+        { "type": "improved", "text": "En la web, Esc cierra también el panel de letras, y el botón trasero del mouse cierra el reproductor ampliado sin salir de la página." }
+      ]
+    },
+    {
       "version": "0.5.5",
       "date": "2026-11-20",
       "summary": "Cada artista tiene ahora su propio color en Windows, la web y Android.",
@@ -12,10 +50,24 @@
       ]
     },
     {
+      "version": "0.5.4",
+      "date": "2026-11-18",
+      "summary": "Big Picture llega al teléfono con portada, fondo ambiental y letras sincronizadas.",
+      "items": [
+        { "type": "new", "text": "En Android y en la PWA instalada, gira el teléfono con el reproductor ampliado abierto o pulsa «Abrir Big Picture». La pantalla permanece encendida mientras suena la música y el reproductor está visible." },
+        { "type": "new", "text": "En Android puedes elegir el fondo animado de Openfy desde Ajustes. El selector del sistema decide en qué pantallas se puede aplicar." },
+        { "type": "improved", "text": "Android renueva Inicio, la biblioteca y el reproductor, con portadas animadas en los álbumes compatibles." },
+        { "type": "new", "text": "En el teléfono, la PWA también muestra la portada animada en el reproductor ampliado cuando el álbum tiene una. Se puede desactivar en Ajustes → Portadas animadas." },
+        { "type": "improved", "text": "En Windows y en la web, la tarjeta «A continuación» entra desde la derecha y se integra con el fondo ambiental." },
+        { "type": "fixed", "text": "En Windows y en la PWA, la cola vuelve a mezclarse al iniciar otra vuelta con aleatorio y «Repetir todo» activos." }
+      ]
+    },
+    {
       "version": "0.5.3",
       "date": "2026-11-17",
       "items": [
-        { "type": "fixed", "text": "En Android, buscar canciones ya no cierra la aplicación al aparecer los resultados." }
+        { "type": "fixed", "text": "En Android, buscar canciones ya no cierra la aplicación al aparecer los resultados." },
+        { "type": "fixed", "text": "En Windows y en la PWA, el modo aleatorio vuelve a mezclar toda la cola al terminar cada vuelta de «Repetir todo»." }
       ]
     },
     {

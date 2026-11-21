@@ -12,7 +12,8 @@ function move(direction: number) {
   el?.scrollBy({ left: direction * Math.max(200, el.clientWidth * .85), behavior: 'instant' })
 }
 function navigate(event: KeyboardEvent) {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  // Modified arrows are app shortcuts (previous/next, seek, Back/Forward).
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey) return
   const cards = [...rail.value!.querySelectorAll<HTMLElement>('[data-home-card]')]
   const current = cards.indexOf(document.activeElement as HTMLElement)
   if (current < 0) return

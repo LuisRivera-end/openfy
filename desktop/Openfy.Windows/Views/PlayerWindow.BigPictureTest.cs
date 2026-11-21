@@ -1,4 +1,5 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Media;
 using Openfy.Core;
 
 namespace Openfy.Windows.Views;
@@ -58,7 +59,23 @@ public sealed partial class PlayerWindow
         await Until(() => model.Position > 7, "El audio no avanzó después de buscar desde la barra.");
         Require(Math.Abs(dockSeek.Value - model.Position) < .5, $"La barra de Big Picture dejó de seguir la reproducción después de buscar: {dockSeek.Value:0.0} s frente a {model.Position:0.0} s.");
         model.Engine.Pause(); model.Tick(); PictureActivity();
-        await model.SeekAsync(Math.Max(0, model.Duration - 7)); model.Tick(); UpdatePicture();
+        async Task RequireEntry(bool compact) {
+            var frames = new List<Immersive.CardBounds>();
+            void Sample(object? sender, object args) { if (cardEntering) frames.Add(VisibleCardBounds()); }
+            CompositionTarget.Rendering += Sample;
+            try {
+                await model.SeekAsync(Math.Max(0, model.Duration - 7)); model.Tick(); UpdatePicture();
+                await Until(() => nextCard?.Visibility == Visibility.Visible && !cardMoving, "La entrada no terminó.", 1000);
+            }
+            finally { CompositionTarget.Rendering -= Sample; }
+            var target = CardTarget();
+            Require(pictureIdle == compact && frames.Count > 0, $"No hubo fotogramas de entrada (compacto: {pictureIdle}, movimiento: {PictureMotion}).");
+            Require(Math.Abs(frames[0].X - pictureRoot!.ActualWidth) < 1 && frames[0].Y == target.Y, $"La entrada partió de {frames[0]} con ancho {pictureRoot.ActualWidth:0.0} y destino {target}.");
+            Require(frames.Any(frame => frame.X < frames[0].X - 1 && frame.X > target.X + 1), "Faltó una posición intermedia en la entrada.");
+            Require(frames.All(frame => frame.Y == target.Y), "La tarjeta se desplazó verticalmente durante la entrada.");
+            Require(VisibleCardBounds() == target, "La entrada no terminó en las coordenadas previstas.");
+        }
+        await RequireEntry(false);
         await Until(() => nextCard?.Visibility == Visibility.Visible && nextCover?.Source != null, "Faltó la tarjeta o su portada precargada.");
         Require(previewSong?.Entry.QueueId == model.Queue[1].Entry.QueueId, "Se anunció otra aparición de la cola.");
         Require(nextCard!.Background == null && surface?.Failed == false, "La tarjeta perdió el fondo ambiental compartido.");
@@ -69,11 +86,14 @@ public sealed partial class PlayerWindow
         Require(cardScale == 1 && previewBounds.Height == Immersive.CardHeight, "La tarjeta con controles no conserva su tamaño.");
         // Compact mode moves the card to the larger bottom-right corner version; activity brings it back above the dock.
         void RequireCorner() {
-            var corner = Immersive.NextCardBounds(pictureRoot!.ActualWidth, pictureRoot.ActualHeight, 0, 0, 0, true);
+            var corner = Immersive.NextCardBounds(pictureRoot!.ActualWidth, pictureRoot.ActualHeight, 0, 0, 0, true, presentationColumnBounds?.Right, presentationColumnBounds?.Bottom);
             Require(Math.Abs(previewBounds.X - corner.X) < 1 && Math.Abs(previewBounds.Y - corner.Y) < 1 && Math.Abs(previewBounds.Width - corner.Width) < 1 && Math.Abs(cardScale - corner.Scale) < .001,
                 $"La tarjeta compacta no ocupa la esquina inferior derecha: {previewBounds} frente a {corner}.");
             Require(Math.Abs(pictureRoot.ActualWidth - previewBounds.Right - Immersive.CornerMargin) < 1 && Math.Abs(pictureRoot.ActualHeight - previewBounds.Bottom - Immersive.CornerMargin) < 1, "La tarjeta compacta no respeta el margen de la esquina.");
             if (layout == Immersive.Split) Require(presentationLyricsBounds.Bottom <= previewBounds.Top - 15, "Las letras ampliadas invaden la tarjeta compacta.");
+            // Without synced lyrics the card narrows (or shrinks) to keep AvoidGap beside the centred song; below 315 px an overlap is accepted.
+            if (layout == Immersive.Cover && presentationColumnBounds is { } column && previewBounds.Top < column.Bottom && previewBounds.Width > Immersive.CardWidth * .75 + 1)
+                Require(previewBounds.Left >= column.Right + Immersive.AvoidGap - 1, $"La tarjeta compacta invade la portada centrada: {previewBounds} frente a {column}.");
         }
         lastInteraction = Environment.TickCount64 - Immersive.IdleMilliseconds - 1; PictureTick(pictureTimer!, EventArgs.Empty);
         await Until(() => pictureIdle && !cardMoving && cardScale > 1, "La tarjeta no pasó a la esquina en reposo.");
@@ -82,6 +102,11 @@ public sealed partial class PlayerWindow
         PictureActivity();
         await Until(() => !pictureIdle && !cardMoving && cardScale == 1, "La tarjeta no volvió sobre el dock con actividad.");
         Require(previewBounds == originalCard, "La tarjeta no recuperó su posición sobre el dock.");
+        await model.SeekAsync(5); model.Tick(); UpdatePicture();
+        Require(!cardMoving && nextCard.Visibility == Visibility.Collapsed, "La búsqueda dejó una tarjeta activa fuera del intervalo.");
+        lastInteraction = Environment.TickCount64 - Immersive.IdleMilliseconds - 1; PictureTick(pictureTimer!, EventArgs.Empty);
+        await RequireEntry(true);
+        RequireCorner();
         await model.ToggleAsync(); PictureActivity();
         await Until(() => pictureIdle, "El dock no entró en reposo antes del cambio.", 5500);
         await Until(() => !cardMoving || promoting, "La tarjeta no terminó de moverse a la esquina.", 1000);
@@ -94,6 +119,7 @@ public sealed partial class PlayerWindow
         model.Settings.Effects = false;
         await model.PlayCollectionAsync(songs); model.Engine.Pause(); model.Tick(); ResetBigPicture();
         await model.SeekAsync(Math.Max(0, model.Duration - 1)); model.Tick(); UpdatePicture();
+        Require(!cardMoving && nextCard.Visibility == Visibility.Visible && VisibleCardBounds() == CardTarget(), "La tarjeta no apareció directamente con los efectos desactivados.");
         await Until(() => nextCover?.Source != null, "No se preparó la portada con movimiento reducido.");
         await model.ToggleAsync();
         await Until(() => visualQueueId == model.Queue[1].Entry.QueueId, "El movimiento reducido bloqueó el cambio de escena.");
@@ -102,7 +128,7 @@ public sealed partial class PlayerWindow
         Require(!pictureIdle && previewSong == null, "La reapertura conservó el estado de reposo o una tarjeta obsoleta.");
         object? followup = null;
         if (Environment.GetCommandLineArgs().Contains("--big-picture-followup")) followup = await VerifyBigPictureFollowupAsync(directory);
-        return new { layout = split ? Immersive.Split : Immersive.Cover, idleWhilePaused = true, keyboardFocus = true, heldPointer = true, movementRestores = true, previewMatchesQueue = true, promotion = true, audioContinues = true, compactPreserved = true, reducedMotion = true, reopenResets = true, followup, renderer = Diagnostics };
+        return new { layout = split ? Immersive.Split : Immersive.Cover, idleWhilePaused = true, keyboardFocus = true, heldPointer = true, movementRestores = true, previewMatchesQueue = true, cardEntry = true, promotion = true, audioContinues = true, compactPreserved = true, reducedMotion = true, reopenResets = true, followup, renderer = Diagnostics };
     }
 
     private async Task<object> VerifyBigPictureFollowupAsync(string directory)

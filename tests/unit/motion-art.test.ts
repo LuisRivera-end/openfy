@@ -24,7 +24,7 @@ const playlist = [
   '#EXTINF:2.9,', '#EXT-X-BYTERANGE:5', 'clip.mp4', '#EXT-X-ENDLIST',
 ].join('\n')
 const signature: MotionSignature = { artists: ['IVE'], album: 'REVIVE+' }
-const found = (albumId: number): MotionLookup => ({ status: 'ready', source: { albumId, master: `${HOST}master.m3u8` } })
+const found = (albumId: number): Extract<MotionLookup, { status: 'ready' }> => ({ status: 'ready', source: { albumId, master: `${HOST}master.m3u8` } })
 
 describe('motion playlists', () => {
   it('chooses the largest H.264 rendition up to 1080 px at a moderate bitrate', () => {
@@ -45,25 +45,35 @@ describe('motion playlists', () => {
 })
 
 const jwt = (kid: string, exp: number) => [{ alg: 'ES256', kid }, { exp }].map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).join('.') + '.signature'
-function provider(options: { results?: object[]; appleResults?: object[]; video?: object | null; videos?: Record<string, object | null>; unauthorized?: number; itunesStatus?: number; appleStatus?: number; malformedSearch?: boolean } = {}) {
+function provider(options: { results?: { wrapperType: string; collectionId: number; collectionName: string; artistName: string }[];
+  appleResults?: { id: string; type: string; attributes: { name: string; artistName: string } }[];
+  video?: object | null; videos?: Record<string, object | null>; unauthorized?: number; itunesStatus?: number; appleStatus?: number;
+  malformedSearch?: boolean; detail?: (locale: string | null, id: string) => object | Response } = {}) {
   let unauthorized = options.unauthorized || 0, issued = 0
   const calls: { url: string; headers: Record<string, string> }[] = []
-  const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input), headers = (init?.headers || {}) as Record<string, string>
-    calls.push({ url, headers })
-    if (url.startsWith('https://itunes.apple.com/search')) return Response.json({ results: options.results ?? [
+  const results = options.results ?? [
       { wrapperType: 'collection', collectionId: 11, collectionName: 'REVIVE+ (Deluxe)', artistName: 'IVE' },
       { wrapperType: 'collection', collectionId: 12, collectionName: 'Revive+', artistName: 'Another Band' },
       { wrapperType: 'collection', collectionId: 13, collectionName: 'REVIVE+ - EP', artistName: 'IVE' },
-    ] }, { status: options.itunesStatus || 200 })
+  ]
+  const request = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input), headers = (init?.headers || {}) as Record<string, string>
+    calls.push({ url, headers })
+    if (url.startsWith('https://itunes.apple.com/search')) return Response.json({ results }, { status: options.itunesStatus || 200 })
     if (url === 'https://music.apple.com/us/browse') return new Response('<script type="module" crossorigin src="/assets/index~abc.js"></script>')
     if (url === 'https://music.apple.com/assets/index~abc.js') return new Response(`x="${jwt('Other', 1)}";y="${jwt('WebPlayKid', 4102444800 + issued++)}"`)
     if (url.startsWith('https://amp-api.music.apple.com/')) {
       if (unauthorized-- > 0) return new Response('', { status: 401 })
       if (new URL(url).pathname.endsWith('/search')) return Response.json(options.malformedSearch ? { results: { albums: {} } } : { results: { albums: { data: options.appleResults || [] } } }, { status: options.appleStatus || 200 })
-      const id = new URL(url).pathname.split('/').pop()!
+      const detailUrl = new URL(url), id = detailUrl.pathname.split('/').pop()!
       const video = options.videos && Object.hasOwn(options.videos, id) ? options.videos[id] : options.video
-      return Response.json({ data: [{ attributes: { editorialVideo: video === undefined ? { motionDetailSquare: { video: `${HOST}master.m3u8` } } : video } }] })
+      const collection = results.find(row => String(row.collectionId) === id)
+      const attributes = options.appleResults?.find(row => row.id === id)?.attributes
+        ?? { name: collection?.collectionName, artistName: collection?.artistName }
+      const detail = options.detail?.(detailUrl.searchParams.get('l'), id)
+      if (detail instanceof Response) return detail
+      return Response.json({ data: [{ id, attributes: { ...attributes,
+        editorialVideo: video === undefined ? { motionDetailSquare: { video: `${HOST}master.m3u8` } } : video, ...detail } }] })
     }
     if (url === `${HOST}master.m3u8`) return new Response(master)
     if (url === `${HOST}v1080-mid.m3u8`) return new Response(playlist)
@@ -91,7 +101,8 @@ describe('Apple motion provider', () => {
     expect(await client.find(signature)).toEqual(found(13))
     expect(await client.find({ artists: ['IVE'], album: 'Revive' })).toEqual(found(13))
     const catalog = calls.filter(call => call.url.includes('amp-api'))
-    expect(catalog.map(call => call.url)).toEqual(Array(2).fill('https://amp-api.music.apple.com/v1/catalog/us/albums/13?extend=editorialVideo'))
+    expect(catalog.map(call => call.url)).toEqual(['es-MX', 'en-US', 'es-MX', 'en-US']
+      .map(locale => `https://amp-api.music.apple.com/v1/catalog/us/albums/13?extend=editorialVideo&l=${locale}`))
     expect(catalog[0]!.headers.Authorization).toMatch(/^Bearer eyJ/)
     expect(calls.filter(call => call.url.endsWith('/us/browse'))).toHaveLength(1)
     expect(new URL(calls[0]!.url).searchParams.get('term')).toBe('IVE REVIVE+')
@@ -103,7 +114,8 @@ describe('Apple motion provider', () => {
     expect(unmatched.calls.some(call => call.url.includes('/albums/'))).toBe(false)
     expect(await provider({ video: null }).client.find(signature)).toEqual({ status: 'none', albumIds: [13] })
     expect(await provider({ video: { motionDetailTall: { video: `${HOST}tall.m3u8` } } }).client.find(signature)).toEqual({ status: 'none', albumIds: [13] })
-    await expect(provider({ video: { motionDetailSquare: { video: 'https://example.com/master.m3u8' } } }).client.find(signature)).rejects.toThrow(MotionProviderError)
+    expect(await provider({ video: { motionDetailSquare: { video: 'https://example.com/master.m3u8' } } }).client.find(signature))
+      .toEqual({ status: 'none', albumIds: [13], motionRetryAfterMs: 900_000 })
   })
   it('renews a rejected token once and reports a provider failure after that', async () => {
     const renewed = provider({ unauthorized: 1 })
@@ -122,19 +134,20 @@ describe('Apple motion provider', () => {
     expect(search.searchParams.get('types')).toBe('albums')
   })
 
-  it('tries a different Apple candidate after an iTunes album without video, checking each ID once', async () => {
+  it('keeps the first verified Apple ID even when a later edition has video', async () => {
     const { client, calls } = provider({ videos: { '13': null }, appleResults: [
       { id: '13', type: 'albums', attributes: { name: 'REVIVE+', artistName: 'IVE' } },
       { id: '14', type: 'albums', attributes: { name: 'REVIVE+', artistName: 'IVE' } },
     ] })
-    expect(await client.find(signature)).toEqual(found(14))
-    expect(calls.filter(call => call.url.includes('/albums/13?'))).toHaveLength(1)
+    expect(await client.find(signature)).toEqual({ status: 'none', albumIds: [13] })
+    expect(calls.filter(call => call.url.includes('/albums/13?'))).toHaveLength(2)
+    expect(calls.some(call => call.url.includes('/albums/14?') || call.url.includes('/us/search?'))).toBe(false)
   })
 
   it('recovers from an iTunes error with Apple and never records an incomplete search as an absence', async () => {
     const appleResults = [{ id: '14', type: 'albums', attributes: { name: 'REVIVE+', artistName: 'IVE' } }]
     expect(await provider({ itunesStatus: 429, appleResults }).client.find(signature)).toEqual(found(14))
-    await expect(provider({ video: null, appleStatus: 503 }).client.find(signature)).rejects.toThrow(MotionProviderError)
+    await expect(provider({ results: [], appleStatus: 503 }).client.find(signature)).rejects.toThrow(MotionProviderError)
     await expect(provider({ results: [], malformedSearch: true }).client.find(signature)).rejects.toThrow(MotionProviderError)
     await expect(provider({ itunesStatus: 503 }).client.find(signature)).rejects.toThrow(MotionProviderError)
   })
@@ -146,6 +159,40 @@ describe('Apple motion provider', () => {
     ]
     expect(await provider({ results: [], appleResults }).client.find(signature)).toEqual({ status: 'unmatched' })
     await expect(provider({ results: [], appleResults: [{ id: 'bad-id', type: 'albums', attributes: { name: 'REVIVE+', artistName: 'IVE' } }] }).client.find(signature)).rejects.toThrow(MotionProviderError)
+  })
+
+  it('parses Spanish editorial notes and Apple colors alongside the video master', async () => {
+    const { client, calls } = provider({ detail: () => ({ editorialNotes: {
+      standard: '<p>  Uno &amp; dos&nbsp; &eacute;xitos.</p><p><em>Tres</em><br/>cuatro &#x1f3b5; &#39;&#8212;</p>', short: 'ignored',
+    }, artwork: { bgColor: '590019', textColor1: '#ffbeef', textColor2: '123', textColor3: { value: 'ffffff' } } }) })
+    expect(await client.find(signature)).toEqual({ ...found(13), editorial: 'Uno & dos éxitos.\nTres\ncuatro 🎵 \'—',
+      colors: { background: '#590019', text1: '#FFBEEF', text2: null, text3: null, text4: null } })
+    expect(calls.some(call => call.url.includes('l=en-US'))).toBe(false)
+  })
+
+  it('uses English short notes for a no-video album and keeps the first valid background', async () => {
+    const { client, calls } = provider({ video: null, detail: locale => locale === 'es-MX'
+      ? { editorialNotes: { standard: '<p>&nbsp;</p>' }, artwork: { bgColor: '#adaDAc' } }
+      : { editorialNotes: { standard: ' ', short: 'English text' }, artwork: { bgColor: '999999' } } })
+    expect(await client.find(signature)).toEqual({ status: 'none', albumIds: [13], editorial: 'English text',
+      colors: { background: '#ADADAC', text1: null, text2: null, text3: null, text4: null } })
+    expect(calls.filter(call => call.url.includes('/albums/')).map(call => new URL(call.url).searchParams.get('l'))).toEqual(['es-MX', 'en-US'])
+  })
+
+  it('retries a locale rejected by the storefront and drops invalid backgrounds', async () => {
+    const { client } = provider({ detail: locale => locale === 'es-MX' ? new Response(null, { status: 400 })
+      : { editorialNotes: { short: 'a'.repeat(4001) }, artwork: { bgColor: 'red', textColor1: 'ffffff' } } })
+    expect(await client.find(signature)).toEqual({ ...found(13), editorial: 'a'.repeat(4000) })
+  })
+
+  it('checks credits on the detail from each locale before using its fields', async () => {
+    const { client } = provider({ detail: () => ({ name: 'REVIVE+ (Deluxe)', editorialNotes: { short: 'Wrong edition' } }) })
+    expect(await client.find(signature)).toEqual({ status: 'unmatched' })
+    const partial = provider({ detail: locale => locale === 'en-US'
+      ? new Response(null, { status: 429, headers: { 'Retry-After': '1200' } })
+      : { artwork: { bgColor: '390611' } } })
+    expect(await partial.client.find(signature)).toEqual({ ...found(13), metadataRetryAfterMs: 1_200_000,
+      colors: { background: '#390611', text1: null, text2: null, text3: null, text4: null } })
   })
   it('downloads the chosen rendition by range into one file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'openfy-motion-download-'))
@@ -321,7 +368,7 @@ describe('motion cache', () => {
     const source = fake(), find = vi.fn(async (value: MotionSignature) => { if (!online) throw new MotionProviderError('offline'); return source.find(value) })
     const cache = new MotionCache(root, staging, () => new Set(), { find, download: source.download }, remux)
     await expect(cache.resolve(signature)).rejects.toThrow(MotionProviderError)
-    expect(await readdir(root)).toEqual([])
+    await expect(stat(join(root, motionKey(signature), 'metadata.json'))).rejects.toMatchObject({ code: 'ENOENT' })
     online = true
     await expect(cache.resolve(signature)).rejects.toThrow(MotionProviderError)
     expect(find).toHaveBeenCalledTimes(1)
@@ -330,7 +377,23 @@ describe('motion cache', () => {
     const broken = new MotionCache(root, staging, () => new Set(), source, async () => { throw new Error('ffmpeg') })
     await expect(broken.resolve(album(9))).rejects.toThrow(MotionProviderError)
     expect(await readdir(staging)).toEqual([])
-    expect(await readdir(root)).toEqual([motionKey(signature)])
+    await expect(broken.file(motionKey(album(9)))).resolves.toBeNull()
+  })
+
+  it('logs a staging failure by code without including the filesystem path', async () => {
+    const blockedStaging = join(staging, 'blocked-staging')
+    await writeFile(blockedStaging, '')
+    vi.stubEnv('OPENFY_SESSION_LOG_DIR', staging)
+    try {
+      const cache = new MotionCache(root, blockedStaging, () => new Set(), fake(), remux)
+      await expect(cache.resolve(signature)).rejects.toThrow('Motion storage')
+      const log = await readFile(join(staging, 'backend.jsonl'), 'utf8')
+      const failure = log.trim().split('\n').map(line => JSON.parse(line)).find(event => event.outcome === 'failed')
+      expect(failure).toMatchObject({ operation: 'motion.resolve', errorType: 'Error', code: 'EEXIST' })
+      expect(failure).not.toHaveProperty('error')
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('keeps pinned albums when evicting the least recently shown ones over the budget', async () => {
@@ -357,6 +420,104 @@ describe('motion cache', () => {
     expect(await cache.resolve(album(2))).toBeNull()
     expect(source.find).toHaveBeenCalledTimes(1)
     expect(motionArtDelay()).toBeNull()
+  })
+
+  it('stores no-video presentation data, deduplicates catalog work and reads stale metadata with Apple disabled', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const { client, request } = provider({ video: null, detail: () => ({ editorialNotes: { short: 'Notas' }, artwork: { bgColor: '590019' } }) })
+    const cache = new MotionCache(root, staging, () => new Set(), client, remux)
+    const [metadata, motion] = await Promise.all([
+      cache.albumPresentation(signature, { motion: false }), cache.albumPresentation(signature, { motion: true }),
+    ])
+    expect(metadata).toEqual({ presentation: { motion: { status: 'none' }, description: { text: 'Notas', source: 'apple' },
+      colors: { background: '#590019', text1: null, text2: null, text3: null, text4: null } }, retryAfterMs: 0 })
+    expect(motion.presentation).toEqual({ ...metadata.presentation, motion: { status: 'none', retryAfterMs: 30 * 86_400_000 } })
+    expect(request.mock.calls.filter(([url]) => String(url).includes('/albums/13?'))).toHaveLength(1)
+    vi.setSystemTime(Date.now() + 8 * 86_400_000)
+    process.env.OPENFY_MOTION_ART = 'off'
+    request.mockClear()
+    const reopened = new MotionCache(root, staging, () => new Set(), client, remux)
+    expect(await reopened.albumPresentation(signature, { motion: false })).toEqual(metadata)
+    expect(await reopened.albumPresentation(album(0), { motion: true })).toMatchObject({ presentation: { motion: { status: 'unmatched' } } })
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('keeps metadata-only requests out of the video cache and honors the negative metadata TTL', async () => {
+    const day = 86_400_000
+    let now = 1000
+    const source = fake(() => false), cache = new MotionCache(root, staging, () => new Set(), source, remux, undefined, () => now)
+    expect(await cache.albumPresentation(signature, { motion: false })).toEqual({ presentation: { motion: { status: 'none' } }, retryAfterMs: 0 })
+    expect(await cache.nextAttempt(motionKey(signature))).toBe(0)
+    now += day - 1
+    await cache.albumPresentation(signature, { motion: false })
+    expect(source.find).toHaveBeenCalledTimes(1)
+    now++
+    await cache.albumPresentation(signature, { motion: false })
+    expect(source.find).toHaveBeenCalledTimes(2)
+    expect(source.download).not.toHaveBeenCalled()
+  })
+
+  it('keeps valid fields for a failed revalidation and persists the longer provider retry', async () => {
+    const day = 86_400_000
+    let now = 1000
+    const source = fake(), find = vi.fn<MotionProvider['find']>()
+      .mockResolvedValueOnce({ ...found(7), editorial: 'Cached notes' })
+      .mockResolvedValueOnce({ ...found(7), metadataRetryAfterMs: 1_200_000 })
+      .mockResolvedValueOnce({ ...found(7), editorial: 'Updated notes' })
+    const open = () => new MotionCache(root, staging, () => new Set(), { ...source, find }, remux, undefined, () => now)
+    const cache = open()
+    const initial = await cache.albumPresentation(signature, { motion: false })
+    now += 7 * day - 1
+    expect(await cache.albumPresentation(signature, { motion: false })).toEqual(initial)
+    expect(find).toHaveBeenCalledTimes(1)
+    now++
+    expect(await cache.albumPresentation(signature, { motion: false })).toEqual({ ...initial, retryAfterMs: 1_200_000 })
+    now += 1000
+    expect(await open().albumPresentation(signature, { motion: false })).toEqual({ ...initial, retryAfterMs: 1_199_000 })
+    expect(find).toHaveBeenCalledTimes(2)
+    now += 1_199_000
+    expect((await cache.albumPresentation(signature, { motion: false })).presentation.description?.text).toBe('Updated notes')
+  })
+
+  it('uses the chosen Apple edition for motion even when a legacy video belongs to another edition', async () => {
+    const source = fake(), cache = new MotionCache(root, staging, () => new Set(), source, remux)
+    await cache.lookup(signature)
+    const directory = join(root, motionKey(signature)), metadataPath = join(directory, 'metadata.json')
+    const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
+    await writeFile(metadataPath, JSON.stringify({ ...metadata, albumId: 8 }))
+    expect((await cache.albumPresentation(signature, { motion: true })).presentation.motion).toMatchObject({ status: 'ready' })
+    expect(source.find).toHaveBeenLastCalledWith(signature, 7)
+    expect(source.download).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(await readFile(metadataPath, 'utf8')).albumId).toBe(7)
+  })
+
+  it('returns the same new edition notes to concurrent callers sharing a video resolution', async () => {
+    const started = Promise.withResolvers<void>(), proceed = Promise.withResolvers<void>()
+    const source = fake(), find = vi.fn<MotionProvider['find']>()
+      .mockResolvedValueOnce({ ...found(7), editorial: 'Old edition' })
+      .mockImplementationOnce(async () => { started.resolve(); await proceed.promise; return { ...found(8), editorial: 'New edition' } })
+    const cache = new MotionCache(root, staging, () => new Set(), { ...source, find }, remux)
+    await cache.albumPresentation(signature, { motion: false })
+    const first = cache.albumPresentation(signature, { motion: true })
+    await started.promise
+    const second = cache.albumPresentation(signature, { motion: true })
+    proceed.resolve()
+    for (const result of await Promise.all([first, second])) {
+      expect(result.presentation).toMatchObject({ description: { text: 'New edition' }, motion: { status: 'ready' } })
+    }
+    expect(find).toHaveBeenCalledTimes(2)
+    expect(source.download).toHaveBeenCalledOnce()
+  })
+
+  it('returns a usable video and Apple colors while English notes are on retry', async () => {
+    const source = fake()
+    const find = vi.fn<MotionProvider['find']>().mockResolvedValue({ ...found(7), metadataRetryAfterMs: 1_200_000,
+      colors: { background: '#590019', text1: null, text2: null, text3: null, text4: null } })
+    const cache = new MotionCache(root, staging, () => new Set(), { ...source, find }, remux)
+    const result = await cache.albumPresentation(signature, { motion: true })
+    expect(result.presentation).toMatchObject({ colors: { background: '#590019' }, motion: { status: 'ready' } })
+    expect(result.retryAfterMs).toBeGreaterThan(0)
+    expect(source.download).toHaveBeenCalledOnce()
   })
 
   it('deduplicates artist downloads, uses the remuxed dimensions and checks album overlap on reuse', async () => {

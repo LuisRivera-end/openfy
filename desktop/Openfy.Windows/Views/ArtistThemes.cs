@@ -16,6 +16,7 @@ internal static class ArtistThemes
 {
     private static readonly Dictionary<string, ArtistThemeColors> Known = [];
     private static readonly Dictionary<string, Task<ArtistThemeColors>> Pending = [];
+    private static readonly Dictionary<string, ((string Path, string Key, long Revision) Artwork, Task<string?> Dominant)> AlbumDominants = [];
 
     public static ArtistThemeColors? Cached(string? key) => key != null && Known.TryGetValue(key, out var theme) ? theme : null;
     private static void Remember(string? key, ArtistThemeColors theme)
@@ -59,6 +60,45 @@ internal static class ArtistThemes
             var transform = new BitmapTransform { ScaledWidth = ArtistTheme.Sample, ScaledHeight = ArtistTheme.Sample, InterpolationMode = BitmapInterpolationMode.Fant };
             var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, transform, ExifOrientationMode.RespectExifOrientation, ColorManagementMode.DoNotColorManage);
             return ArtistTheme.From(data.DetachPixelData(), 4, bgra: true);
+        } catch { return null; }
+    }
+
+    public static string? CachedAlbumDominant(string? source)
+    {
+        if (source == null || !AlbumDominants.TryGetValue(source, out var entry) || !entry.Dominant.IsCompletedSuccessfully) return null;
+        return ArtworkRevision(entry.Artwork.Path) == entry.Artwork.Revision ? entry.Dominant.Result : null;
+    }
+
+    public static Task<string?> LoadAlbumDominantAsync(string source, ArtworkResult prepared)
+    {
+        if (ArtworkRevision(prepared.Path) is not { } revision) return Task.FromResult<string?>(null);
+        var key = (prepared.Path, prepared.Key, revision);
+        if (AlbumDominants.TryGetValue(source, out var entry) && entry.Artwork == key) return entry.Dominant;
+        if (AlbumDominants.Count >= 96) AlbumDominants.Remove(AlbumDominants.Keys.First());
+        var work = DecodeAlbumDominantAsync(prepared.Path);
+        AlbumDominants[source] = (key, work);
+        return work;
+    }
+
+    private static long? ArtworkRevision(string path)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            return file.Exists ? file.LastWriteTimeUtc.Ticks : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    private static async Task<string?> DecodeAlbumDominantAsync(string path)
+    {
+        try {
+            var file = await StorageFile.GetFileFromPathAsync(path);
+            using IRandomAccessStream stream = await file.OpenReadAsync();
+            var decoder = await BitmapDecoder.CreateAsync(stream);
+            var data = await decoder.GetPixelDataAsync(BitmapPixelFormat.Rgba8, BitmapAlphaMode.Straight,
+                new BitmapTransform(), ExifOrientationMode.RespectExifOrientation, ColorManagementMode.ColorManageToSRgb);
+            return AlbumTint.Dominant(data.DetachPixelData(), (int)decoder.OrientedPixelWidth, (int)decoder.OrientedPixelHeight, 4);
         } catch { return null; }
     }
 

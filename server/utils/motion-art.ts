@@ -1,20 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import ffmpegPath from 'ffmpeg-static'
 import { dataPaths, getDatabase } from '../database'
 import { tracks, youtubeAudio, youtubeSongs } from '../database/schema'
-import { AppleMotion, MotionProviderError, artistAlbumKey, motionMetadataKey, type ArtistMotionSignature, type MotionKind, type MotionProvider, type MotionSignature } from './apple-motion'
+import { AppleMotion, MotionProviderError, artistAlbumKey, motionMetadataKey, type AppleAlbumMetadata, type ArtistMotionSignature, type MotionKind, type MotionLookup, type MotionProvider, type MotionSignature } from './apple-motion'
 import { diagnosticError, sessionDiagnostic } from './session-diagnostics'
-import type { Track, YouTubeSong } from '../../shared/types/music'
+import type { AlbumPresentation, Track, YouTubeSong } from '../../shared/types/music'
 
 export interface MotionArt { key: string; path: string; bytes: number; width: number; height: number }
 export type MotionResolution = { status: 'ready'; art: MotionArt } | { status: 'none' | 'unmatched'; retryAfterMs: number }
 type MotionArtSignature = MotionSignature | ArtistMotionSignature
-type CacheResolution = MotionResolution & { artistAlbumKeys?: string[] }
+type CacheResolution = MotionResolution & { artistAlbumKeys?: string[]; albumCatalog?: AlbumCatalog }
 interface Metadata { version: 1; resolverRevision?: number; status: 'ready' | 'none' | 'unmatched'; kind?: 'artist'; albumId?: number; albumIds?: number[]; artistId?: number; artistIds?: number[]; artistAlbumKeys?: string[]; bytes?: number; width?: number; height?: number; checkedAt: number; accessed: number }
+interface CachedAlbumMetadata extends AppleAlbumMetadata { version: 1; fetchedAt?: number; retryAt?: number; albumId?: number }
+interface AlbumCatalog { metadata?: CachedAlbumMetadata; lookup?: MotionLookup }
+interface AlbumSelection { id?: number; retryAfterMs: number; load: () => Promise<AlbumCatalog> }
 type VideoSize = Pick<MotionArt, 'width' | 'height'>
 type Remux = (raw: string, output: string) => Promise<void | VideoSize>
 
@@ -22,7 +25,11 @@ const ABSENT_FOR = 30 * 24 * 3_600_000
 const UNMATCHED_FOR = 24 * 3_600_000
 const RETRY_AFTER = 15 * 60_000
 const RESOLVER_REVISION = 2
+const ALBUM_RESOLVER_REVISION = 3
 const MAX_RETRY = 6 * 3_600_000
+const ALBUM_METADATA_FOR = 7 * 24 * 3_600_000
+
+function providerDelay(error: unknown) { return error instanceof MotionProviderError ? Math.max(RETRY_AFTER, error.retryAfterMs) : RETRY_AFTER }
 
 /** Tests and isolated runs opt out of every request to the provider. */
 export const motionArtEnabled = () => process.env.OPENFY_MOTION_ART !== 'off'
@@ -74,6 +81,7 @@ export async function remuxMotion(raw: string, output: string, kind: MotionKind 
 /** One writer per key, atomic files, permanent album entries for the library and a budget for the rest. */
 export class MotionCache {
   private pending = new Map<string, Promise<CacheResolution>>()
+  private pendingAlbums = new Map<string, Promise<AlbumCatalog>>()
   private retry = new Map<string, number>()
   private failures = new Map<string, number>()
   private cleaning: Promise<void> = Promise.resolve()
@@ -93,6 +101,92 @@ export class MotionCache {
         && Number.isFinite(value.checkedAt) && Number.isFinite(value.accessed) ? value : undefined
     } catch { return undefined }
   }
+
+  private albumMetadataPath(key: string) {
+    const store = this.provider.albumStorefront
+    return join(this.root, key, `album-es-mx-en-us-${store && /^[a-z]{2}$/.test(store) ? store : 'default'}.json`)
+  }
+
+  private async readAlbumMetadata(key: string): Promise<CachedAlbumMetadata | undefined> {
+    try {
+      const value = JSON.parse(await readFile(this.albumMetadataPath(key), 'utf8'))
+      return value?.version === 1 && (Number.isFinite(value.fetchedAt) || Number.isFinite(value.retryAt)) ? value : undefined
+    } catch { return undefined }
+  }
+
+  private albumRetry(metadata: CachedAlbumMetadata | undefined) {
+    return Math.max(0, (metadata?.retryAt ?? 0) - this.now())
+  }
+
+  private async refreshAlbum(signature: MotionSignature, key: string, needSource: boolean): Promise<AlbumCatalog> {
+    const pending = this.pendingAlbums.get(key)
+    if (pending) {
+      const result = await pending
+      if (!needSource || result.lookup || this.albumRetry(result.metadata) || !motionArtEnabled()) return result
+      return this.refreshAlbum(signature, key, true)
+    }
+    const work = (async (): Promise<AlbumCatalog> => {
+      const previous = await this.readAlbumMetadata(key)
+      if (!motionArtEnabled() || this.albumRetry(previous)) return { metadata: previous }
+      const ttl = previous?.editorial || previous?.colors ? ALBUM_METADATA_FOR : UNMATCHED_FOR
+      if (!needSource && previous?.fetchedAt !== undefined && previous.fetchedAt + ttl > this.now()) return { metadata: previous }
+
+      let lookup: MotionLookup | undefined, metadata: CachedAlbumMetadata
+      try {
+        // Revalidate the search after TTL expiry. A video request for a fresh album can go straight to its selected ID.
+        const albumIdHint = previous?.fetchedAt !== undefined && previous.fetchedAt + ttl > this.now() ? previous.albumId : undefined
+        lookup = await this.provider.find(signature, albumIdHint)
+        const now = this.now()
+        if (lookup.status === 'unmatched') metadata = { version: 1, fetchedAt: now }
+        else {
+          const albumId = lookup.status === 'ready' ? lookup.source.albumId : lookup.albumIds[0]
+          const retryAt = lookup.metadataRetryAfterMs ? now + Math.max(RETRY_AFTER, lookup.metadataRetryAfterMs) : undefined
+          const stale = retryAt && previous?.albumId === albumId ? previous : undefined
+          metadata = { version: 1, albumId, fetchedAt: retryAt ? stale?.fetchedAt : now, retryAt,
+            editorial: lookup.editorial ?? stale?.editorial, colors: lookup.colors ?? stale?.colors }
+        }
+      } catch (error) {
+        metadata = { ...previous, version: 1, retryAt: this.now() + providerDelay(error) }
+      }
+      // A cache write failure must not discard the valid provider response.
+      await mkdir(join(this.root, key), { recursive: true }).then(() => this.atomic(this.albumMetadataPath(key), JSON.stringify(metadata))).catch(() => {})
+      return { metadata, lookup }
+    })().finally(() => { this.pendingAlbums.delete(key) })
+    this.pendingAlbums.set(key, work)
+    return work
+  }
+
+  async albumPresentation(signature: MotionSignature, { motion }: { motion: boolean }): Promise<{ presentation: AlbumPresentation; retryAfterMs: number }> {
+    const key = motionKey(signature)
+    let catalog = await this.refreshAlbum(signature, key, false)
+    const presentation: AlbumPresentation = { motion: { status: 'none' } }
+    let motionRetryAfterMs = 0
+    if (motion) {
+      const selected = catalog.metadata
+      if (selected?.fetchedAt !== undefined && selected.albumId === undefined && !this.albumRetry(selected)) {
+        presentation.motion = { status: 'unmatched', retryAfterMs: Math.max(0, selected.fetchedAt + UNMATCHED_FOR - this.now()) }
+      } else {
+        try {
+          const result = await this.lookupMotion(signature, { id: selected?.albumId, retryAfterMs: catalog.lookup ? 0 : this.albumRetry(selected), load: async () => {
+            if (!catalog.lookup) catalog = await this.refreshAlbum(signature, key, true)
+            return catalog
+          } })
+          catalog = result.albumCatalog ?? catalog
+          presentation.motion = result.status === 'ready'
+            ? { status: 'ready', url: `/api/motion/${result.art.key}.mp4`, width: result.art.width, height: result.art.height }
+            : { status: result.status, retryAfterMs: result.retryAfterMs }
+        } catch (error) {
+          motionRetryAfterMs = error instanceof MotionProviderError ? error.retryAfterMs : RETRY_AFTER
+          presentation.motion = { status: 'none', retryAfterMs: motionRetryAfterMs }
+        }
+      }
+    }
+    const { editorial, colors } = catalog.metadata ?? {}
+    if (editorial) presentation.description = { text: editorial, source: 'apple' }
+    if (colors) presentation.colors = colors
+    return { presentation, retryAfterMs: Math.max(this.albumRetry(catalog.metadata), motionRetryAfterMs) }
+  }
+
   private async ready(key: string, meta: Metadata | undefined): Promise<MotionArt | null> {
     if (meta?.status !== 'ready' || !meta.bytes || !meta.width || !meta.height) return null
     const path = join(this.root, key, 'motion.mp4')
@@ -104,7 +198,7 @@ export class MotionCache {
   async file(key: string) { return /^[a-f0-9]{64}$/.test(key) ? this.ready(key, await this.metadata(key)) : null }
   private async keys() { return (await readdir(this.root).catch(() => [] as string[])).filter(name => /^[a-f0-9]{64}$/.test(name)) }
   private expires(meta: Metadata | undefined) {
-    if (meta?.resolverRevision !== RESOLVER_REVISION) return 0
+    if (meta?.resolverRevision !== (meta?.kind === 'artist' ? RESOLVER_REVISION : ALBUM_RESOLVER_REVISION)) return 0
     return meta.status === 'none' ? meta.checkedAt + ABSENT_FOR : meta.status === 'unmatched' ? meta.checkedAt + UNMATCHED_FOR : 0
   }
   /** Infinity means a valid video; zero means it needs a lookup, not merely a folder on disk. */
@@ -128,13 +222,19 @@ export class MotionCache {
 
   /** Distinguishes a verified absence from a search without a confirmed match. */
   async lookup(signature: MotionArtSignature): Promise<MotionResolution> {
+    const result = await this.lookupMotion(signature)
+    return result.status === 'ready' ? { status: 'ready', art: result.art } : { status: result.status, retryAfterMs: result.retryAfterMs }
+  }
+
+  private async lookupMotion(signature: MotionArtSignature, album?: AlbumSelection): Promise<CacheResolution> {
     const albums = 'kind' in signature ? new Set(signature.albums.map(artistAlbumKey).filter(Boolean)) : undefined
     const unmatched = { status: 'unmatched', retryAfterMs: UNMATCHED_FOR } as const
     if (albums?.size === 0) return unmatched
     // A name can identify several artists. Require album overlap even when reusing a video.
     const verified = (keys: string[] | undefined) => !albums || keys?.some(key => albums.has(key))
     const key = motionKey(signature), stored = await this.metadata(key)
-    const meta = stored?.kind === ('kind' in signature ? signature.kind : undefined) ? stored : undefined
+    const sameAlbum = album?.id === undefined || stored?.albumId === album.id || stored?.albumIds?.includes(album.id)
+    const meta = sameAlbum && stored?.kind === ('kind' in signature ? signature.kind : undefined) ? stored : undefined
     const existing = await this.ready(key, meta)
     if (existing) {
       if (!verified(meta?.artistAlbumKeys)) return unmatched
@@ -144,11 +244,11 @@ export class MotionCache {
     const expires = this.expires(meta)
     if (expires > this.now() && (meta?.status === 'none' || meta?.status === 'unmatched')) return { status: meta.status, retryAfterMs: expires - this.now() }
     if (!motionArtEnabled()) return unmatched
-    const retry = this.retry.get(key) || 0
-    if (retry > this.now()) throw new MotionProviderError('Motion retry later', retry - this.now())
+    const retryAfterMs = Math.max(album?.retryAfterMs ?? 0, (this.retry.get(key) ?? 0) - this.now())
+    if (retryAfterMs > 0) throw new MotionProviderError('Motion retry later', retryAfterMs)
     let work = this.pending.get(key)
     if (!work) {
-      work = this.fetch(signature, key)
+      work = this.fetch(signature, key, album)
       this.pending.set(key, work)
       void work.catch(() => {}).finally(() => {
         if (this.pending.get(key) === work) this.pending.delete(key)
@@ -157,30 +257,35 @@ export class MotionCache {
     }
     const result = await work
     if (result.status !== 'ready') return result
-    return verified(result.artistAlbumKeys) ? { status: 'ready', art: result.art } : unmatched
+    return verified(result.artistAlbumKeys) ? result : unmatched
   }
 
-  private async fetch(signature: MotionArtSignature, key: string): Promise<CacheResolution> {
+  private async fetch(signature: MotionArtSignature, key: string, album?: AlbumSelection): Promise<CacheResolution> {
     const started = performance.now(), target = key.slice(0, 12)
     const raw = join(this.staging, `${key}.motion.part`), output = join(this.staging, `${key}.motion.mp4`)
     sessionDiagnostic('motion.resolve', 'started', { target })
     try {
       const directory = join(this.root, key)
-      const lookup = 'kind' in signature ? await this.provider.findArtist?.(signature) : await this.provider.find(signature)
-      if (!lookup) throw new MotionProviderError('Proveedor de vídeo de artista no disponible')
       const artist = 'kind' in signature
       const kind = artist ? { kind: 'artist' as const } : {}
+      const resolverRevision = artist ? RESOLVER_REVISION : ALBUM_RESOLVER_REVISION
+      const catalog = artist ? undefined : await (album?.load() ?? this.refreshAlbum(signature, key, true))
+      const lookup = artist ? await this.provider.findArtist?.(signature) : catalog?.lookup
+      if (!lookup) throw new MotionProviderError(artist ? 'Proveedor de vídeo de artista no disponible' : 'La portada animada no está disponible ahora.',
+        this.albumRetry(catalog?.metadata) || RETRY_AFTER)
+      if ('motionRetryAfterMs' in lookup && lookup.motionRetryAfterMs) throw new MotionProviderError('El vídeo del álbum no está disponible ahora.', lookup.motionRetryAfterMs)
+      if (!motionArtEnabled()) return { status: 'unmatched', retryAfterMs: UNMATCHED_FOR }
       const now = this.now()
       if (lookup.status !== 'ready') {
         await mkdir(directory, { recursive: true })
         await rm(join(directory, 'motion.mp4'), { force: true }).catch(() => {})
-        await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision: RESOLVER_REVISION,
+        await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision,
           status: lookup.status, ...kind, ...('albumIds' in lookup ? { albumIds: lookup.albumIds } : {}),
           ...('artistIds' in lookup ? { artistIds: lookup.artistIds } : {}), checkedAt: now, accessed: now } satisfies Metadata))
         this.retry.delete(key); this.failures.delete(key)
         const retryAfterMs = lookup.status === 'none' ? ABSENT_FOR : UNMATCHED_FOR
         sessionDiagnostic('motion.resolve', lookup.status, { target, retryAfterMs, elapsedMs: Math.round(performance.now() - started) })
-        return { status: lookup.status, retryAfterMs }
+        return { status: lookup.status, retryAfterMs, albumCatalog: catalog }
       }
       const source = lookup.source
       await mkdir(this.staging, { recursive: true })
@@ -192,17 +297,18 @@ export class MotionCache {
       await mkdir(directory, { recursive: true })
       await rename(output, join(directory, 'motion.mp4'))
       const identity = 'artistId' in source ? { artistId: source.artistId, artistAlbumKeys: source.albumKeys } : { albumId: source.albumId }
-      await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision: RESOLVER_REVISION,
+      await this.atomic(join(directory, 'metadata.json'), JSON.stringify({ version: 1, resolverRevision,
         status: 'ready', ...kind, ...identity, bytes, ...size, checkedAt: now, accessed: now } satisfies Metadata))
       this.retry.delete(key); this.failures.delete(key)
       sessionDiagnostic('motion.resolve', 'ready', { target, bytes, elapsedMs: Math.round(performance.now() - started) })
-      return { status: 'ready', art: { key, path: join(directory, 'motion.mp4'), bytes, ...size }, artistAlbumKeys: identity.artistAlbumKeys }
+      return { status: 'ready', art: { key, path: join(directory, 'motion.mp4'), bytes, ...size }, artistAlbumKeys: identity.artistAlbumKeys, albumCatalog: catalog }
     } catch (error) {
       const failures = (this.failures.get(key) || 0) + 1
       this.failures.set(key, failures)
-      const retryAfterMs = Math.min(MAX_RETRY, RETRY_AFTER * 2 ** Math.min(failures - 1, 5))
+      const retryAfterMs = Math.max(error instanceof MotionProviderError ? error.retryAfterMs : 0, Math.min(MAX_RETRY, RETRY_AFTER * 2 ** Math.min(failures - 1, 5)))
       this.retry.set(key, this.now() + retryAfterMs)
-      sessionDiagnostic('motion.resolve', 'failed', { target, retryAfterMs, ...diagnosticError(error), elapsedMs: Math.round(performance.now() - started) })
+      const { errorType, code } = diagnosticError(error)
+      sessionDiagnostic('motion.resolve', 'failed', { target, retryAfterMs, errorType, code, elapsedMs: Math.round(performance.now() - started) })
       throw new MotionProviderError(error instanceof MotionProviderError ? error.message : 'Motion storage', retryAfterMs)
     } finally {
       await rm(raw, { force: true }).catch(() => {})
@@ -212,6 +318,14 @@ export class MotionCache {
 
   /** Evicts the least recently shown videos outside the library once they exceed the budget. */
   prune(): Promise<void> {
+    const removeMotion = async (key: string) => {
+      if (this.pending.has(key)) return false
+      const directory = join(this.root, key)
+      await rm(join(directory, 'motion.mp4'), { force: true }).catch(() => {})
+      await rm(join(directory, 'metadata.json'), { force: true }).catch(() => {})
+      if (!this.pendingAlbums.has(key)) await rmdir(directory).catch(() => {})
+      return true
+    }
     const clean = async () => {
       const pinned = this.pins() // If the library cannot be read, do not evict anything.
       const candidates: { key: string; bytes: number; accessed: number }[] = []
@@ -219,15 +333,14 @@ export class MotionCache {
         if (this.pending.has(key)) continue
         const meta = await this.metadata(key)
         if (!meta || (meta.kind !== 'artist' && pinned.has(key))) continue
-        if (meta.status !== 'ready') { if (this.expires(meta) <= this.now()) await rm(join(this.root, key), { recursive: true, force: true }).catch(() => {}) }
+        if (meta.status !== 'ready') { if (this.expires(meta) <= this.now()) await removeMotion(key) }
         else candidates.push({ key, bytes: meta.bytes || 0, accessed: meta.accessed })
       }
       let total = candidates.reduce((sum, item) => sum + item.bytes, 0)
       for (const item of candidates.sort((a, b) => a.accessed - b.accessed)) {
         if (total <= this.budget) break
         if (this.now() - item.accessed < 120_000 || this.pending.has(item.key)) continue
-        await rm(join(this.root, item.key), { recursive: true, force: true }).catch(() => {})
-        total -= item.bytes
+        if (await removeMotion(item.key)) total -= item.bytes
       }
     }
     this.cleaning = this.cleaning.catch(() => {}).then(clean)

@@ -1,17 +1,29 @@
 import type { MotionArtResult, PlaybackEntry } from '../../shared/types/music'
+import { useMeteredNetwork } from './useMeteredNetwork'
 
 /** Positive answers are kept for the session; negative answers and failures have a deadline. */
 const known = new Map<string, { url?: string; retryAt: number }>()
 const ABSENT_FOR = 30 * 24 * 3_600_000, UNMATCHED_FOR = 24 * 3_600_000, RETRY_AFTER = 15 * 60_000
 
 /**
- * The looping cover of the album on screen, for the desktop Big Picture only.
- * Phones and the installed app never enable it, so they never send the request.
+ * Common gating for motion art:
+ * - appearance.motionArt enabled
+ * - appearance.effects enabled
+ * - prefers-reduced-motion false
+ * - metered network false
  */
+export function useMotionAllowed(): ComputedRef<boolean> {
+  const appearance = useAppearanceStore()
+  const reduced = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const metered = useMeteredNetwork()
+  return computed(() => appearance.motionArt && appearance.effects && !reduced.value && !metered.value)
+}
+
+/** The looping cover of the album on screen, loaded only while the expanded player shows a large cover. */
 export function useMotionArt(enabled: Ref<boolean>, entry: Ref<PlaybackEntry | undefined>) {
   const appearance = useAppearanceStore(), library = useLibraryStore()
-  const reduced = useMediaQuery('(prefers-reduced-motion: reduce)')
-  const active = computed(() => enabled.value && appearance.motionArt && appearance.effects && !reduced.value)
+  const allowed = useMotionAllowed()
+  const active = computed(() => enabled.value && allowed.value)
   const album = computed(() => {
     const value = entry.value
     if (!value) return

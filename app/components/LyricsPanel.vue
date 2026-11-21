@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { activeLyricsTime, activeLyricsWord } from '../../shared/utils/lyrics'
 import { formatTime } from '../../shared/utils/media'
+import { turnedPlayerKey } from '../composables/useMobileBigPicture'
 const props = withDefaults(defineProps<{ variant?: 'panel' | 'immersive'; anchor?: number; snapOnLoad?: boolean; depth?: boolean }>(), { variant: 'panel', anchor: .5, snapOnLoad: false, depth: false })
 const emit = defineEmits<{ retry: [] }>()
 const lyrics = useLyricsStore()
 const player = usePlayerStore()
 const downloads = useDownloadsStore()
 const viewport = ref<HTMLElement>()
+const turned = inject(turnedPlayerKey, undefined)
+const turnedScroll = useTurnedScroll(turned, () => viewport.value)
 const following = ref(true)
 // The clock follows timeupdate, and every animation frame while a line with word timing plays.
 const clock = ref(player.position)
@@ -49,13 +52,15 @@ async function follow() {
   const line = container?.querySelector<HTMLElement>('[aria-current="true"]')
   if (!container || !line) return
   const rect = line.getBoundingClientRect(), outer = container.getBoundingClientRect()
-  const scale = outer.height / container.clientHeight || 1
-  container.scrollTo({ top: container.scrollTop + (rect.top - outer.top + rect.height / 2) / scale - container.clientHeight * props.anchor,
+  const vertical = turned?.value ? outer.right - rect.right + rect.width / 2 : rect.top - outer.top + rect.height / 2
+  const scale = (turned?.value ? outer.width : outer.height) / container.clientHeight || 1
+  container.scrollTo({ top: container.scrollTop + vertical / scale - container.clientHeight * props.anchor,
     behavior: initialSync || matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
   initialSync = false
 }
 function resume() { following.value = true; void follow() }
 watch(activeTime, follow)
+if (turned) watch(turned, () => { initialSync = true; void follow() })
 watch(() => lyrics.result, () => {
   following.value = true
   if (props.snapOnLoad) { initialSync = true; clock.value = player.position; viewport.value?.scrollTo({ top: 0, behavior: 'instant' }) }
@@ -79,7 +84,7 @@ onBeforeUnmount(() => { resizeObserver?.disconnect(); cancelAnimationFrame(frame
     <div v-else-if="lyrics.result.status === 'instrumental'" class="lyrics-message" role="status"><OIcon name="music" :size="32" /><p>Esta canción es instrumental.</p></div>
     <template v-else>
       <div class="lyrics-mode"><span>{{ lyrics.result.status !== 'synced' ? 'Letra sin sincronización' : wordTimed ? 'Letra sincronizada por palabra' : 'Letra sincronizada' }}</span><span v-if="lyrics.offline">Sin conexión</span></div>
-      <div class="lyrics-scroll-shell" :class="{ 'has-depth': props.depth }"><div ref="viewport" class="lyrics-scroll" tabindex="0" aria-label="Versos de la canción" @wheel.passive="following = false" @touchstart.passive="following = false" @pointerdown="following = false" @keydown="manualKeys.has($event.key) && (following = false)">
+      <div class="lyrics-scroll-shell" :class="{ 'has-depth': props.depth }"><div ref="viewport" class="lyrics-scroll" v-bind="turnedScroll" tabindex="0" aria-label="Versos de la canción" @wheel.passive="following = false" @touchstart.passive="following = false" @pointerdown="following = false" @keydown="manualKeys.has($event.key) && (following = false)">
         <template v-if="lyrics.result.status === 'synced'">
           <template v-for="(line, index) in lyrics.result.lines" :key="index">
             <button v-if="line.text" class="lyrics-line" :class="{ current: line.time === activeTime, past: activeTime !== null && line.time < activeTime }" :style="{ '--d': distance(index) }" :aria-current="line.time === activeTime ? 'true' : undefined" :aria-label="`${line.text} · ${formatTime(line.time)}`" @click="player.seek(line.time)"><template v-if="line.words && line.time === activeTime"><span v-for="(word, w) in line.words" :key="w" class="lyrics-word" :class="{ sung: w < wordIndex, singing: w === wordIndex }">{{ word.text }}</span></template><template v-else>{{ line.text }}</template></button>

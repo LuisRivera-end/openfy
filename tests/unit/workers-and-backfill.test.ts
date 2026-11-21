@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeDatabase } from '../../server/database'
 import { conversionPaused, setPlaybackActivity } from '../../server/utils/workers'
-import { DownloadedLyricsBackfill } from '../../server/utils/downloaded-lyrics'
+import { backfillFailureDelay, DownloadedLyricsBackfill } from '../../server/utils/downloaded-lyrics'
 
 let root: string
 beforeAll(async () => {
@@ -96,5 +96,40 @@ describe('downloaded lyrics backfill retries pruning', () => {
     // Second step should pick v3
     expect(await backfill.step()).toBe(1000)
     expect(resolved).toEqual(['v2', 'v3'])
+  })
+})
+
+describe('downloaded lyrics backfill failure backoff', () => {
+  it('doubles the per-song wait after each failure, up to one day', () => {
+    expect([1, 2, 3, 4, 5].map(backfillFailureDelay)).toEqual([300_000, 600_000, 1_200_000, 2_400_000, 4_800_000])
+    expect(backfillFailureDelay(20)).toBe(86_400_000)
+  })
+
+  it('does not retry a persistently failing song every few minutes, and resets after success', async () => {
+    const { getDatabase } = await import('../../server/database')
+    const { lyrics, youtubeAudio, youtubeSongs } = await import('../../server/database/schema')
+    const db = getDatabase()
+    db.delete(lyrics).run(); db.delete(youtubeAudio).run(); db.delete(youtubeSongs).run()
+    let now = 10_000_000
+    const song = { videoId: 'fail0000001', title: 'Sin letra', artists: ['Openfy'], album: null, artwork: null, duration: 120 }
+    db.insert(youtubeSongs).values({ videoId: song.videoId, song, addedAt: now }).run()
+    db.insert(youtubeAudio).values({ videoId: song.videoId, assetId: 'af1', duration: 120, palette: [], downloadedAt: now }).run()
+    let fail = true
+    const resolver = vi.fn(async () => {
+      if (fail) throw new Error('No se pudieron consultar las letras. Vuelve a intentarlo.')
+      return { key: 'youtube:' + song.videoId, signature: {} as never, status: 'not_found' as const, source: null, lines: [], plainText: '', attribution: null, sourceUrl: null, fetchedAt: now, expiresAt: now, format: 2 }
+    })
+    const backfill = new DownloadedLyricsBackfill(resolver, () => now)
+    // Simulate the scheduler for six hours, one step per returned delay.
+    const end = now + 6 * 3_600_000
+    while (now < end) now += await backfill.step()
+    // Attempts at 0, 5, 15, 35, 75, 155 and 315 min: seven instead of one every 5 minutes (72).
+    expect(resolver).toHaveBeenCalledTimes(7)
+    const retries = (backfill as unknown as { retries: Map<string, number> }).retries
+    fail = false
+    now = retries.get(song.videoId)!
+    await backfill.step()
+    expect(resolver).toHaveBeenCalledTimes(8)
+    expect((backfill as unknown as { failures: Map<string, number> }).failures.has(song.videoId)).toBe(false)
   })
 })

@@ -27,6 +27,7 @@ internal sealed class LoopingVideo
     /// <summary>0 keeps the top of the frame, .5 the centre: the fraction of the overflow cropped above.</summary>
     public double VerticalAnchor { get; init; } = .3;
     public bool Fade { get; set; } = true;
+    public int FadeMilliseconds { get; init; } = 450;
     public FrameworkElement View => view;
     public bool Visible => shown;
     public bool Playing => player?.PlaybackSession.PlaybackState == MediaPlaybackState.Playing;
@@ -114,7 +115,7 @@ internal sealed class LoopingVideo
         if (Interlocked.Exchange(ref queued, 1) != 0) return;
         if (!dispatcher.TryEnqueue(() => {
             Interlocked.Exchange(ref queued, 0);
-            if (released || own != generation || sender != player) return;
+            if (released || !wantPlaying || own != generation || sender != player) return;
             pending = true; view.Invalidate();
         })) Interlocked.Exchange(ref queued, 0);
     }
@@ -126,7 +127,7 @@ internal sealed class LoopingVideo
             var session = player.PlaybackSession;
             uint width = session.NaturalVideoWidth, height = session.NaturalVideoHeight;
             if (width == 0 || height == 0 || sender.ActualWidth <= 0 || sender.ActualHeight <= 0) return;
-            if (pending) {
+            if (pending && wantPlaying) {
                 if (frame == null || frame.SizeInPixels.Width != width || frame.SizeInPixels.Height != height) {
                     frame?.Dispose();
                     frame = new CanvasRenderTarget(sender, width, height, 96, global::Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized, CanvasAlphaMode.Ignore);
@@ -142,7 +143,7 @@ internal sealed class LoopingVideo
             args.DrawingSession.DrawImage(frame, new global::Windows.Foundation.Rect(0, 0, sender.ActualWidth, sender.ActualHeight), source);
             // Reveal only after a decoded frame has actually been drawn, never on PlaybackState alone.
             if (!shown) {
-                sender.OpacityTransition = Fade ? new ScalarTransition { Duration = TimeSpan.FromMilliseconds(450) } : null;
+                sender.OpacityTransition = Fade ? new ScalarTransition { Duration = TimeSpan.FromMilliseconds(FadeMilliseconds) } : null;
                 sender.Opacity = 1;
                 SetVisible(true);
             }

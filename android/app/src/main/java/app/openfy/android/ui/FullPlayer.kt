@@ -36,6 +36,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -44,6 +45,8 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,10 +66,6 @@ import androidx.media3.common.Player
 import app.openfy.android.data.Song
 import app.openfy.android.lyrics.LyricsLine
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlin.math.roundToLong
 
 private val playerModes = listOf("Portada", "Letras", "Cola")
@@ -74,6 +73,8 @@ private val playerListFade = 32.dp
 private const val ModePillAlpha = 0.12f
 private const val SelectedModeAlpha = 0.20f
 private val lyricsJson = Json { ignoreUnknownKeys = true }
+internal fun decodePlayerLyrics(lines: String): List<LyricsLine> =
+    runCatching { lyricsJson.decodeFromString<List<LyricsLine>>(lines) }.getOrDefault(emptyList())
 
 @Composable
 internal fun FullPlayer(
@@ -87,16 +88,39 @@ internal fun FullPlayer(
     actions: () -> Unit,
     contextTitle: String? = null,
     upcomingIndices: List<Int>? = null,
-    queueOccurrenceKeys: List<String>? = null
+    queueOccurrenceKeys: List<String>? = null,
+    overlayOpen: Boolean = false
 ) {
     var mode by rememberSaveable { mutableStateOf("Portada") }
-    Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+    val picture = rememberMobilePicture()
+    var pictureQueue by rememberSaveable { mutableStateOf(false) }
+    fun back() {
+        when {
+            pictureQueue -> pictureQueue = false
+            picture.active -> picture.leave()
+            else -> dismiss()
+        }
+    }
+    LaunchedEffect(picture.active) { if (!picture.active) pictureQueue = false }
+    Dialog(::back, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         ExpandedMotionArtworkScope {
-            Box(Modifier.fillMaxSize().background(Ink)) {
+            if (picture.active) {
+                MobilePictureWindow(state.playing)
+                if (pictureQueue) Box(Modifier.fillMaxSize().background(Ink)) {
+                    // The queue keeps the cover's tint, as in the portrait player, instead of a flat panel.
+                    AmbientBackground(song.artwork, state.playing, Modifier.matchParentSize(), enabled = effects)
+                    Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp)) {
+                        PlayerHeader("Cola de reproducción", ::back, actions)
+                        PlayerQueue(vm, song, state, library, upcomingIndices, queueOccurrenceKeys,
+                            Modifier.weight(1f).fillMaxWidth())
+                    }
+                } else MobileBigPicture(vm, song, state, library, effects, motion, overlayOpen,
+                    picture.leave, actions) { pictureQueue = true }
+            } else Box(Modifier.fillMaxSize().background(Ink)) {
                 AmbientBackground(song.artwork, state.playing, Modifier.matchParentSize(), enabled = effects)
                 val reduced = rememberReducedMotion()
                 Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp)) {
-                    PlayerHeader(contextTitle, dismiss, actions)
+                    PlayerHeader(contextTitle, dismiss, actions, openPicture = picture.enter.takeIf { picture.available })
                     ModeSelector(mode, onSelect = { mode = it }, Modifier.align(Alignment.CenterHorizontally))
                     if (mode != "Letras") Spacer(Modifier.height(12.dp))
                     BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -142,7 +166,7 @@ internal fun FullPlayer(
 }
 
 @Composable
-private fun PlayerHeader(context: String?, dismiss: () -> Unit, actions: () -> Unit) {
+private fun PlayerHeader(context: String?, dismiss: () -> Unit, actions: () -> Unit, openPicture: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().playerSwipe(down = true, onSwipe = dismiss), verticalAlignment = Alignment.CenterVertically) {
         ActionIcon(Icons.Default.KeyboardArrowDown, "Cerrar reproductor", action = dismiss)
         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -152,6 +176,7 @@ private fun PlayerHeader(context: String?, dismiss: () -> Unit, actions: () -> U
                     fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
+        if (openPicture != null) ActionIcon(Icons.Default.Fullscreen, "Abrir Big Picture", action = openPicture)
         ActionIcon(Icons.Default.MoreVert, "Opciones de la canción", action = actions)
     }
 }
@@ -178,28 +203,26 @@ private fun ModeSelector(mode: String, onSelect: (String) -> Unit, modifier: Mod
 }
 
 @Composable
-private fun PlayerArtwork(
+internal fun PlayerArtwork(
     song: Song,
     playing: Boolean,
     motion: Boolean,
-    dismiss: () -> Unit,
+    dismiss: (() -> Unit)?,
     modifier: Modifier,
     alignment: Alignment,
-    reduced: Boolean
+    reduced: Boolean,
+    onArtworkPositioned: ((Rect) -> Unit)? = null
 ) {
     val scale by animateFloatAsState(if (playing || reduced) 1f else 0.92f,
         if (reduced) snap() else tween(300), label = "player artwork scale")
     val shape = RoundedCornerShape(Radii.player)
     val shadow = Color.Black.copy(alpha = 0.5f)
-    val mainArtist = remember(song.metadata, song.artist) {
-        runCatching {
-            Json.parseToJsonElement(song.metadata).jsonObject["artists"]?.jsonArray?.firstOrNull()
-                ?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
-        }.getOrNull() ?: song.artist
-    }
+    val mainArtist = remember(song.metadata, song.artist) { song.motionArtist() }
     BoxWithConstraints(modifier, contentAlignment = alignment) {
         val side = minOf(maxWidth, maxHeight)
-        val artwork = Modifier.size(side).playerSwipe(down = true, onSwipe = dismiss)
+        val artwork = Modifier.size(side)
+            .then(if (dismiss != null) Modifier.playerSwipe(down = true, onSwipe = dismiss) else Modifier)
+            .then(if (onArtworkPositioned != null) Modifier.onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) } else Modifier)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -212,13 +235,13 @@ private fun PlayerArtwork(
 }
 
 @Composable
-private fun PlayerMetadata(vm: OpenfyViewModel, song: Song, reduced: Boolean) {
+internal fun PlayerMetadata(vm: OpenfyViewModel, song: Song, reduced: Boolean, compact: Boolean = false) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             val marquee = if (reduced) Modifier else Modifier.basicMarquee()
-            Text(song.title, Modifier.fillMaxWidth().then(marquee), color = TextColor, fontSize = 22.sp,
-                lineHeight = 27.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(song.artist, color = PlayerSecondaryText, fontSize = 15.sp, lineHeight = 21.sp,
+            Text(song.title, Modifier.fillMaxWidth().then(marquee), color = TextColor, fontSize = if (compact) 18.sp else 22.sp,
+                lineHeight = if (compact) 21.sp else 27.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.artist, color = PlayerSecondaryText, fontSize = if (compact) 13.sp else 15.sp, lineHeight = if (compact) 16.sp else 21.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         ActionIcon(if (song.favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
@@ -228,17 +251,17 @@ private fun PlayerMetadata(vm: OpenfyViewModel, song: Song, reduced: Boolean) {
 }
 
 @Composable
-private fun PlayerTransport(vm: OpenfyViewModel, song: Song, state: PlayerState) {
+internal fun PlayerTransport(vm: OpenfyViewModel, song: Song, state: PlayerState, compact: Boolean = false) {
     Column(Modifier.fillMaxWidth()) {
-        PlayerProgress(vm, song.id, state.duration)
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp), horizontalArrangement = Arrangement.SpaceBetween,
+        PlayerProgress(vm, song.id, state.duration, compact)
+        Row(Modifier.fillMaxWidth().padding(top = if (compact) 0.dp else 8.dp, bottom = if (compact) 0.dp else 12.dp), horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically) {
             TransportMode(Icons.Default.Shuffle, "Aleatorio", state.shuffle, vm::shuffle)
             TransportSkip(Icons.Default.SkipPrevious, "Anterior", vm::previous)
-            FilledIconButton(onClick = vm::toggle, modifier = Modifier.size(72.dp), shape = CircleShape,
+            FilledIconButton(onClick = vm::toggle, modifier = Modifier.size(if (compact) 48.dp else 72.dp), shape = CircleShape,
                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = Color.Black)) {
                 Icon(if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    if (state.playing) "Pausar" else "Reproducir", Modifier.size(38.dp))
+                    if (state.playing) "Pausar" else "Reproducir", Modifier.size(if (compact) 27.dp else 38.dp))
             }
             TransportSkip(Icons.Default.SkipNext, "Siguiente", vm::next)
             TransportMode(if (state.repeat == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
@@ -267,7 +290,7 @@ private fun TransportMode(icon: ImageVector, label: String, active: Boolean, act
 }
 
 @Composable
-private fun PlayerProgress(vm: OpenfyViewModel, songId: String, duration: Long) {
+private fun PlayerProgress(vm: OpenfyViewModel, songId: String, duration: Long, compact: Boolean) {
     val position by vm.position.collectAsStateWithLifecycle()
     val end = duration.coerceAtLeast(1L).toFloat()
     var provisional by remember(songId) { mutableStateOf<Float?>(null) }
@@ -281,7 +304,7 @@ private fun PlayerProgress(vm: OpenfyViewModel, songId: String, duration: Long) 
             provisional?.let { vm.seek(it.roundToLong()) }
             provisional = null
         }, valueRange = 0f..end, enabled = duration > 0, interactionSource = interaction,
-            modifier = Modifier.fillMaxWidth().height(48.dp).onFocusChanged { focused = it.isFocused }
+            modifier = Modifier.fillMaxWidth().height(if (compact) 28.dp else 48.dp).onFocusChanged { focused = it.isFocused }
                 .semantics { contentDescription = "Posición de reproducción" },
             thumb = {
                 Box(Modifier.size(12.dp).then(if (engaged) Modifier.background(Color.White, CircleShape) else Modifier))
@@ -304,7 +327,7 @@ private fun PlayerProgress(vm: OpenfyViewModel, songId: String, duration: Long) 
     }
 }
 
-private fun playerTime(ms: Long): String {
+internal fun playerTime(ms: Long): String {
     val seconds = ms.coerceAtLeast(0) / 1000
     return "${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}"
 }
@@ -317,9 +340,7 @@ private fun PlayerLyrics(vm: OpenfyViewModel, songId: String, modifier: Modifier
         if (lyrics == null) {
             CircularProgressIndicator()
         } else {
-            val lines = remember(lyrics.lines) {
-                runCatching { lyricsJson.decodeFromString<List<LyricsLine>>(lyrics.lines) }.getOrDefault(emptyList())
-            }
+            val lines = remember(lyrics.lines) { decodePlayerLyrics(lyrics.lines) }
             if (lines.isNotEmpty()) {
                 key(songId) { TimedLyrics(vm, lines, reduced) }
             } else {
@@ -343,7 +364,7 @@ private fun PlayerLyrics(vm: OpenfyViewModel, songId: String, modifier: Modifier
 }
 
 @Composable
-private fun TimedLyrics(vm: OpenfyViewModel, lines: List<LyricsLine>, reduced: Boolean) {
+internal fun TimedLyrics(vm: OpenfyViewModel, lines: List<LyricsLine>, reduced: Boolean, compact: Boolean = false) {
     val position = vm.position.collectAsStateWithLifecycle()
     val active by remember(lines) {
         derivedStateOf { lines.indexOfLast { it.time * 1000 <= position.value } }
@@ -366,9 +387,9 @@ private fun TimedLyrics(vm: OpenfyViewModel, lines: List<LyricsLine>, reduced: B
                 top = anchor,
                 bottom = if (active >= 0) (maxHeight - anchor - 48.dp).coerceAtLeast(playerListFade) else playerListFade
             ),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 14.dp)
         ) {
-            itemsIndexed(lines) { index, line -> LyricVerse(line, index == active, position, vm::seek) }
+            itemsIndexed(lines) { index, line -> LyricVerse(line, index == active, position, vm::seek, compact) }
         }
         if (!follow) {
             FilledTonalButton(onClick = { follow = true }, modifier = Modifier.align(Alignment.BottomCenter)) {
@@ -379,9 +400,10 @@ private fun TimedLyrics(vm: OpenfyViewModel, lines: List<LyricsLine>, reduced: B
 }
 
 @Composable
-private fun LyricVerse(line: LyricsLine, active: Boolean, position: State<Long>, seek: (Long) -> Unit) {
+private fun LyricVerse(line: LyricsLine, active: Boolean, position: State<Long>, seek: (Long) -> Unit, compact: Boolean) {
     val modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { seek((line.time * 1000).toLong()) }
-    val style = LocalTextStyle.current.copy(fontSize = 26.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold)
+    val style = LocalTextStyle.current.copy(fontSize = if (compact) 21.sp else 26.sp,
+        lineHeight = if (compact) 26.sp else 34.sp, fontWeight = FontWeight.Bold)
     if (active && line.words.isNotEmpty()) {
         val at = position.value
         val text = buildAnnotatedString {
