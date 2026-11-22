@@ -1,0 +1,15 @@
+[Unit]
+Description=Openfy, tu biblioteca musical personal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@OPENFY_ROOT@/openfy
+Restart=on-failure
+RestartSec=5
+# The library lock allows a single server per data directory; give it time to close SQLite.
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

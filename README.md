@@ -6,6 +6,8 @@ Biblioteca musical personal para Windows, Android e iPhone. Windows dispone de u
 
 **Escritorio nativo:** ejecuta `scripts/package-desktop.ps1` para generar el instalador indicado en `output/desktop/openfy-update.json`. Node arranca con la aplicación; cerrar la ventana la envía a la bandeja. Consulta [instalación, desarrollo y arquitectura nativa](docs/windows-native.md) y [resultados de validación](docs/windows-validation.md). Para desarrollar: `scripts/setup-desktop.ps1`, `scripts/start-desktop.ps1` y `scripts/package-desktop.ps1`.
 
+**Linux:** cada release incluye un paquete `.tar.gz` (x64 y arm64) con el servidor y la PWA, Node y FFmpeg incluidos, que se instala como servicio de systemd del usuario. No hay aplicación nativa para Linux. Consulta [instalación y publicación en Linux](docs/linux.md).
+
 **Estado:** primera implementación funcional. Importación, biblioteca, favoritos, playlists, cola, reproductor ampliado, letras, conversiones y descargas están implementados. **El usuario confirmó en su iPhone la descarga y la reproducción con pantalla bloqueada y en modo avión.** Las pruebas prolongadas, de controles e interrupciones y la aceptación física de letras permanecen en [el protocolo de validación](docs/iphone-validation.md).
 
 ## Servidor y PWA en Windows
