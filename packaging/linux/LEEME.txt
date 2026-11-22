@@ -15,6 +15,10 @@ Fedora 32+, RHEL/Rocky 9+ y equivalentes). No hace falta instalar Node.
    Abre http://127.0.0.1:3000 en este equipo. Ctrl+C lo detiene.
 3. Déjalo como servicio de tu usuario (systemd):
      ~/.local/opt/Openfy-*/openfy install-service
+   Desde entonces se inicia solo cada vez que inicias sesión. Para que arranque
+   también al encender el equipo, sin una sesión abierta:
+     loginctl enable-linger "$USER"
+   "openfy status" indica si el inicio automático está activo y si el servidor responde.
 4. Publícalo en tu red privada con Tailscale Serve y guarda esa dirección en la configuración:
      sudo tailscale serve --bg 3000
      ~/.local/opt/Openfy-*/openfy config     (muestra el archivo; añade OPENFY_ORIGIN=https://...ts.net)

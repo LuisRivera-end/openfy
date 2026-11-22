@@ -16,9 +16,51 @@ Uso: openfy [orden]
   (sin orden)        Inicia Openfy en primer plano.
   install-service    Instala e inicia un servicio de systemd para tu usuario.
   uninstall-service  Detiene y elimina ese servicio. La biblioteca no se toca.
+  status             Indica si el servicio arranca solo y si el servidor responde.
   config             Muestra la ruta del archivo de configuración y lo crea si falta.
   version            Muestra la versión.
 USAGE
+}
+
+load_config() {
+  if [[ -f "$config_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    . "$config_file"
+    set +a
+  fi
+  export OPENFY_DATA_DIR="${OPENFY_DATA_DIR:-$data_home/data}"
+  export NITRO_PORT="${NITRO_PORT:-3000}"
+}
+
+# Autostart is the systemd user service: enabled means it starts at sign-in, and with
+# lingering it also starts at boot without a session.
+status() {
+  load_config
+  if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+    local enabled active linger
+    enabled="$(systemctl --user is-enabled openfy.service 2>/dev/null || true)"
+    active="$(systemctl --user is-active openfy.service 2>/dev/null || true)"
+    linger="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"
+    case "$enabled" in
+      enabled) echo "Inicio automático: activado (al iniciar sesión)." ;;
+      ""|not-found) echo "Inicio automático: no instalado. Usa 'openfy install-service'." ;;
+      disabled) echo "Inicio automático: desactivado. Vuelve a ejecutar 'openfy install-service'." ;;
+      *) echo "Inicio automático: $enabled." ;;
+    esac
+    echo "Servicio: ${active:-desconocido}."
+    if [[ "$enabled" == "enabled" ]]; then
+      if [[ "$linger" == "yes" ]]; then echo "Al encender el equipo: también arranca, sin una sesión abierta (enable-linger)."
+      else echo "Al encender el equipo: espera a que inicies sesión. Para que arranque antes: loginctl enable-linger \"$USER\""; fi
+    fi
+  else
+    echo "systemd de usuario no está disponible: el inicio automático depende de tu gestor de servicios."
+  fi
+  if [[ -x "$node" ]] && "$node" -e "fetch('http://127.0.0.1:' + process.argv[1] + '/api/status', { signal: AbortSignal.timeout(3000) }).then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))" "$NITRO_PORT"; then
+    echo "Servidor: responde en http://127.0.0.1:$NITRO_PORT."
+  else
+    echo "Servidor: no responde en http://127.0.0.1:$NITRO_PORT."
+  fi
 }
 
 ensure_config() {
@@ -36,15 +78,18 @@ case "${1:-}" in
     sed "s#@OPENFY_ROOT@#$root#g" "$root/openfy.service" > "$unit_dir/openfy.service"
     systemctl --user daemon-reload
     systemctl --user enable --now openfy.service
-    echo "Servicio instalado. Estado: systemctl --user status openfy"
-    echo "Para que siga activo sin una sesión abierta: loginctl enable-linger \"$USER\""
+    echo "Servicio instalado: Openfy se iniciará solo cada vez que inicies sesión."
+    echo "Para que arranque también al encender el equipo, sin una sesión abierta: loginctl enable-linger \"$USER\""
+    echo "Comprobar: openfy status"
     exit 0 ;;
   uninstall-service)
+    load_config
     systemctl --user disable --now openfy.service 2>/dev/null || true
     rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/openfy.service"
     systemctl --user daemon-reload 2>/dev/null || true
-    echo "Servicio eliminado. Tu biblioteca sigue en ${OPENFY_DATA_DIR:-$data_home/data}."
+    echo "Servicio eliminado. Tu biblioteca sigue en $OPENFY_DATA_DIR."
     exit 0 ;;
+  status) status; exit 0 ;;
   config) ensure_config; echo "$config_file"; exit 0 ;;
   version) cat "$root/VERSION"; exit 0 ;;
   -h|--help|help) usage; exit 0 ;;
@@ -52,14 +97,7 @@ case "${1:-}" in
 esac
 
 # Settings: the user's file first, then defaults that follow the XDG directories.
-if [[ -f "$config_file" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  . "$config_file"
-  set +a
-fi
-export OPENFY_DATA_DIR="${OPENFY_DATA_DIR:-$data_home/data}"
-export NITRO_PORT="${NITRO_PORT:-3000}"
+load_config
 mkdir -p "$OPENFY_DATA_DIR"
 
 [[ -x "$node" ]] || { echo "No se encuentra el Node incluido en $node." >&2; exit 1; }

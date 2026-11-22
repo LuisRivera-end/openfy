@@ -20,6 +20,8 @@ for image in "${images[@]}"; do
     probe /
     probe /sw.js
     probe /api/library
+    ./openfy status | tee /tmp/status.txt
+    grep -q "Servidor: responde en http://127.0.0.1:4321" /tmp/status.txt
     app/.output/server/node_modules/ffmpeg-static/ffmpeg -hide_banner -loglevel error -f lavfi -i sine=d=1 -c:a aac -f mp4 -y /tmp/check.m4a
     echo "aac $(stat -c %s /tmp/check.m4a) bytes"
     kill $server; wait $server || true

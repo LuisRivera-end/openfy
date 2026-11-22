@@ -35,7 +35,7 @@ internal static partial class Program
             using var gate = new FileStream(Path.Combine(Control, "setup.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             Recover();
             if (args.Contains("--recover") && Isolated) return 0;
-            if (args.Contains("--launch")) { Launch(); return 0; }
+            if (args.Contains("--launch")) { Launch(background: args.Contains(LaunchAtLogin.BackgroundFlag)); return 0; }
             if (args.Contains("--uninstall")) Uninstall(); else InstallTransaction(args);
             if (!silent) MessageBox(0, args.Contains("--uninstall") ? "Openfy se ha desinstalado. Tu biblioteca y configuración se conservan." : "Openfy está instalado. Ábrelo desde el menú Inicio.", "Openfy", 0x40);
             return 0;
@@ -73,6 +73,9 @@ internal static partial class Program
         string desktop = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Openfy.lnk");
         if (File.Exists(desktop)) File.Delete(desktop);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\Openfy", false);
+        // "Start with Windows" entry and its Task Manager approval.
+        using (var run = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true)) run?.DeleteValue(LaunchAtLogin.EntryName, false);
+        using (var approval = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", true)) approval?.DeleteValue(LaunchAtLogin.EntryName, false);
     }
     private static bool Owned() => File.Exists(Path.Combine(Destination, ".openfy-installation")) && File.ReadAllText(Path.Combine(Destination, ".openfy-installation")) == Identity;
     private static void StopApplication(string stateRoot)

@@ -61,10 +61,13 @@ internal static partial class Program
         foreach (string arg in arguments) info.ArgumentList.Add(arg);
         return info;
     }
-    private static void Launch(Profile? chosen = null) {
+    private static void Launch(Profile? chosen = null, bool background = false) {
         if (!Owned()) throw new IOException("No se encontró la instalación de Openfy.");
         var profile = chosen ?? ReadProfile(); ValidateProfile(profile);
-        using var app = Process.Start(StartInfo(Path.Combine(Destination, "Openfy.exe"), "--state-dir", profile.StateRoot, "--data-dir", profile.DataRoot, "--port", profile.Port.ToString()));
+        var info = StartInfo(Path.Combine(Destination, "Openfy.exe"), "--state-dir", profile.StateRoot, "--data-dir", profile.DataRoot, "--port", profile.Port.ToString());
+        // The "Start with Windows" entry opens Openfy straight into the tray.
+        if (background) info.ArgumentList.Add(LaunchAtLogin.BackgroundFlag);
+        using var app = Process.Start(info);
     }
 
     private static void BootstrapReady(Profile profile) {
