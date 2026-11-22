@@ -1,0 +1,91 @@
+name: Release Linux
+
+# Builds the Linux server archives for an existing GitHub release and attaches them to it.
+# Native modules are per platform, so they are built on Linux runners, never on Windows.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Etiqueta del release, por ejemplo v0.6.3-build.1795300000'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-linux-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Paquete ${{ matrix.arch }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Comprobar la etiqueta
+        id: tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-build\.([0-9]+)$ ]] || { echo "Etiqueta no válida: $TAG" >&2; exit 1; }
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "build=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.22.3
+          cache: npm
+      - name: Comprobar la versión
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: test "$(node -p "require('./package.json').version")" = "$VERSION"
+      - run: npm ci --no-audit --no-fund
+      - name: Crear el paquete
+        run: scripts/package-linux.sh "${{ steps.tag.outputs.build }}" dist
+      - name: Probar el paquete en distribuciones antiguas y actuales
+        run: scripts/check-linux-package.sh dist/*.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publicar en el release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: linux-*
+          path: dist
+          merge-multiple: true
+      - name: Subir los paquetes y actualizar SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd dist
+          gh release download "$TAG" -R "$REPO" -p SHA256SUMS.txt -O SHA256SUMS.txt 2>/dev/null || touch SHA256SUMS.txt
+          for archive in *.tar.gz; do
+            awk -v name="*$archive" '$2 != name' SHA256SUMS.txt > sums.tmp
+            sha256sum -b "$archive" >> sums.tmp
+            mv sums.tmp SHA256SUMS.txt
+          done
+          cat SHA256SUMS.txt
+          gh release upload "$TAG" -R "$REPO" --clobber *.tar.gz SHA256SUMS.txt
