@@ -51,7 +51,7 @@ export const useTelemetryStore = defineStore('telemetry', () => {
     if (refreshing) return refreshing
     if (!library.connected) return Promise.resolve()
     return refreshing = (async () => {
-      try { stats.value = await $fetch<ListeningStats>('/api/telemetry/stats', { query: { period: 'all' }, retry: 0 }); hasCachedStats.value = true; await writeLocal('listening-stats', stats.value) }
+      try { stats.value = await $fetch<ListeningStats>('/api/telemetry/stats', { query: { period: 'all' }, timeout: 10000, retry: 0 }); hasCachedStats.value = true; await writeLocal('listening-stats', stats.value) }
       catch { /* Keep the last synchronized statistics. */ }
       finally { refreshing = undefined }
     })()
@@ -63,7 +63,7 @@ export const useTelemetryStore = defineStore('telemetry', () => {
       while (library.connected && navigator.onLine) {
         const sessions = await localDatabase().listening.orderBy('updatedAt').limit(100).toArray()
         if (!sessions.length) break
-        const response = await $fetch<ListeningAcknowledgement>('/api/telemetry/listening', { method: 'POST', body: { sessions }, retry: 0 })
+        const response = await $fetch<ListeningAcknowledgement>('/api/telemetry/listening', { method: 'POST', body: { sessions }, timeout: 15000, retry: 0 })
         await localDatabase().transaction('rw', localDatabase().listening, async () => {
           for (const acknowledgement of response.accepted) {
             const current = await localDatabase().listening.get(acknowledgement.id)

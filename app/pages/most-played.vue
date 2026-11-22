@@ -16,7 +16,7 @@ async function loadSummary() {
   summary.value = cached || null
   if (!library.connected) return
   try {
-    const result = await $fetch<ListeningStats>('/api/telemetry/stats', { query: { period: period.value }, retry: 0 })
+    const result = await $fetch<ListeningStats>('/api/telemetry/stats', { query: { period: period.value }, timeout: 10000, retry: 0 })
     if (own !== summaryGeneration) return
     summary.value = result; await writeLocal(key, result).catch(() => {})
   } catch { /* Keep the synchronized period summary. */ }
@@ -33,7 +33,7 @@ async function load(more = false) {
   if (!more) page.value = cached || { items: [], total: 0, offset: 0, limit: 50 }
   if (!library.connected) { busy.value = false; return }
   try {
-    const result = await $fetch<MostPlayedPage>('/api/telemetry/top', { query: { ...filters.value, favorite: String(filters.value.favorite), period: period.value, sort: sort.value, offset: more ? page.value.items.length : 0, limit: 50 }, retry: 0 })
+    const result = await $fetch<MostPlayedPage>('/api/telemetry/top', { query: { ...filters.value, favorite: String(filters.value.favorite), period: period.value, sort: sort.value, offset: more ? page.value.items.length : 0, limit: 50 }, timeout: 10000, retry: 0 })
     if (own !== generation) return
     page.value = { ...result, items: more ? [...page.value.items, ...result.items] : result.items }
     await writeLocal(key, page.value)
