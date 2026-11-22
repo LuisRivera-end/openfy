@@ -119,7 +119,7 @@
   "download": {
     "kicker": "Downloads",
     "title": "Start listening today",
-    "body": "Download official, free and open-source builds for Windows and Android directly from GitHub Releases. No signups, no subscriptions.",
+    "body": "Download official, free and open-source builds for Windows, Linux and Android directly from GitHub Releases. No signups, no subscriptions.",
     "latest": "Version {version}",
     "published": "Released on {date}",
     "checksums": "SHA-256 checksums",
@@ -129,6 +129,11 @@
     "windowsReq": "Windows 11 (x64)",
     "windowsCta": "Download installer (.exe)",
     "windowsNote": "Self-contained 64-bit installer. Includes the native WinUI application and local server.",
+    "linuxName": "Openfy for Linux",
+    "linuxReq": "glibc 2.31 or later · x64 and ARM64",
+    "linuxCta": "Download package (.tar.gz)",
+    "linuxNote": "Server and PWA with bundled Node and FFmpeg, run as a systemd user service. No native desktop app.",
+    "linuxArm64": "ARM64 build ({size})",
     "androidName": "Openfy for Android",
     "androidReq": "Android 10 or later · ARM64",
     "androidCta": "Download package (.apk)",
@@ -137,7 +142,7 @@
     "webReq": "Safari on iPhone or any modern browser",
     "webCta": "Setup guide",
     "webSteps": [
-      "Install and launch Openfy on your Windows PC.",
+      "Install and launch Openfy on your Windows or Linux PC.",
       "Enable Tailscale Serve to generate a private HTTPS address.",
       "Open that private address in Safari on your iPhone.",
       "Tap Share and select 'Add to Home Screen'."

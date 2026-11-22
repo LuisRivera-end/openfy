@@ -15,10 +15,10 @@
   max-width: 46ch;
 }
 
-/* 3-Card Grid: desktop 3 columns, stacked on mobile */
+/* 4-Card Grid: 2×2 on desktop, 4 columns on very wide screens, stacked on mobile */
 .download-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: clamp(18px, 2.4vw, 28px);
   align-items: stretch;
 }
@@ -335,6 +335,10 @@
   }
 }
 
+@media (min-width: 1360px) {
+  .download-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 /* Responsive Breakpoints */
 @media (max-width: 960px) {
   .download-grid {
@@ -366,11 +370,11 @@
   }
 }
 
-/* Wide screens: the three cards share rows (header, body, button, release info), so every
+/* Wide screens: the cards of a row share rows (header, body, button, release info), so every
    call to action sits on the same line whatever the length of the text above it. */
 @media (min-width: 961px) {
   .download-grid { grid-template-rows: auto; row-gap: 0; }
-  .download-card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
+  .download-card { display: grid; grid-row: span 4; grid-template-rows: subgrid; row-gap: 0; align-content: start; margin-bottom: clamp(18px, 2.4vw, 28px); }
   .download-card-action { display: contents; }
   .download-card-note, .download-steps { align-self: start; margin-bottom: 28px; }
   .download-btn { align-self: end; position: relative; z-index: 1; }

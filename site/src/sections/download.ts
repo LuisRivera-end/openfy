@@ -5,11 +5,11 @@ import { CONDITIONS, EASE, gsap } from '../lib/motion'
 import { loadRelease, formatDate, formatSize, LATEST_URL, RELEASES_URL, type ReleaseInfo } from '../lib/releases'
 import './download.css'
 
-export type Platform = 'windows' | 'android' | 'web' | null
+export type Platform = 'windows' | 'linux' | 'android' | 'web' | null
 
 /**
  * Detects visitor platform to provide a highlighted state on the corresponding card.
- * /Android/ -> android; iPhone/iPad/iPod or macOS with touch -> web; /Windows/ -> windows.
+ * /Android/ -> android; iPhone/iPad/iPod or macOS with touch -> web; /Windows/ -> windows; /Linux/ -> linux.
  */
 export function detectPlatform(): Platform {
   if (typeof navigator === 'undefined') return null
@@ -17,6 +17,7 @@ export function detectPlatform(): Platform {
   if (/Android/i.test(ua)) return 'android'
   if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints ?? 0) > 1)) return 'web'
   if (/Windows/i.test(ua)) return 'windows'
+  if (/Linux/i.test(ua)) return 'linux'
   return null
 }
 
@@ -41,6 +42,24 @@ export const download: SectionModule = {
                 <span>${t('download.windowsCta')}</span>
               </a>
               <div class="download-card-meta download-card-meta-windows" aria-live="polite"></div>
+            </div>
+          </div>
+
+`,
+      linux: `          <!-- Linux Card -->
+          <div class="download-card download-card-linux${platform === 'linux' ? ' is-highlighted' : ''}">
+            <div class="download-card-header">
+              <div class="download-card-icon" aria-hidden="true">${icon('linux')}</div>
+              <h3 class="download-card-title">${t('download.linuxName')}</h3>
+              <p class="download-card-req">${t('download.linuxReq')}</p>
+            </div>
+            <p class="download-card-note">${t('download.linuxNote')}</p>
+            <div class="download-card-action">
+              <a class="btn btn-primary download-btn download-btn-linux" href="${LATEST_URL}" rel="noopener">
+                ${icon('download')}
+                <span>${t('download.linuxCta')}</span>
+              </a>
+              <div class="download-card-meta download-card-meta-linux" aria-live="polite"></div>
             </div>
           </div>
 
@@ -91,7 +110,7 @@ export const download: SectionModule = {
         </div>
 
         <div class="download-grid">
-${(['windows', 'android', 'web'] as const).slice().sort((x, y) => Number(y === platform) - Number(x === platform)).map(id => cards[id]).join('')}
+${(['windows', 'linux', 'android', 'web'] as const).slice().sort((x, y) => Number(y === platform) - Number(x === platform)).map(id => cards[id]).join('')}
         </div>
 
         <div class="download-footer center">
@@ -109,7 +128,7 @@ ${(['windows', 'android', 'web'] as const).slice().sort((x, y) => Number(y === p
     const unavailable = `<p class="download-unavailable">${t('download.unavailable')}</p>`
     const apply = (release: ReleaseInfo | null) => {
       if (!root.isConnected) return
-      for (const id of ['windows', 'android'] as const) {
+      for (const id of ['windows', 'linux', 'android'] as const) {
         const button = root.querySelector<HTMLAnchorElement>(`.download-btn-${id}`)
         const meta = root.querySelector<HTMLElement>(`.download-card-meta-${id}`)
         if (!button || !meta) continue
@@ -132,6 +151,7 @@ ${(['windows', 'android', 'web'] as const).slice().sort((x, y) => Number(y === p
             <span class="download-dot" aria-hidden="true">·</span><span class="download-size">${escapeHtml(formatSize(asset.size, locale))}</span>
           </div>
           <div class="download-date">${t('download.published', { date: formatDate(release.date, locale) })}</div>
+          ${id === 'linux' && release.linuxArm64 ? `<a class="download-checksums download-arm64" href="${escapeHtml(release.linuxArm64.url)}" rel="noopener">${t('download.linuxArm64', { size: escapeHtml(formatSize(release.linuxArm64.size, locale)) })}</a>` : ''}
           ${checksums}`
       }
     }

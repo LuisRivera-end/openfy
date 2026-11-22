@@ -8,6 +8,8 @@ const release = {
     { name: 'Openfy-9.8.7-123-release.apk', size: 52428800, browser_download_url: 'https://example.test/Openfy-9.8.7-123-release.apk' },
     { name: 'openfy-android-update.json', size: 900, browser_download_url: 'https://example.test/openfy-android-update.json' },
     { name: 'Openfy-Setup-9.8.7-123-x64.exe', size: 157286400, browser_download_url: 'https://example.test/Openfy-Setup-9.8.7-123-x64.exe' },
+    { name: 'Openfy-9.8.7-123-linux-x64.tar.gz', size: 104857600, browser_download_url: 'https://example.test/Openfy-9.8.7-123-linux-x64.tar.gz' },
+    { name: 'Openfy-9.8.7-123-linux-arm64.tar.gz', size: 99614720, browser_download_url: 'https://example.test/Openfy-9.8.7-123-linux-arm64.tar.gz' },
     { name: 'SHA256SUMS.txt', size: 300, browser_download_url: 'https://example.test/SHA256SUMS.txt' }
   ]
 }
@@ -38,6 +40,8 @@ test('download buttons resolve the latest release assets', async ({ page }) => {
   const download = page.locator('#download')
   await expect(download.locator('a[href="https://example.test/Openfy-Setup-9.8.7-123-x64.exe"]')).toHaveCount(1)
   await expect(download.locator('a[href="https://example.test/Openfy-9.8.7-123-release.apk"]')).toHaveCount(1)
+  await expect(download.locator('.download-btn-linux')).toHaveAttribute('href', 'https://example.test/Openfy-9.8.7-123-linux-x64.tar.gz')
+  await expect(download.locator('a[href="https://example.test/Openfy-9.8.7-123-linux-arm64.tar.gz"]')).toHaveCount(1)
   await expect(download.locator('a[href="https://example.test/SHA256SUMS.txt"]').first()).toBeAttached()
   await expect(download).toContainText('9.8.7')
 })
@@ -46,7 +50,7 @@ test('download buttons fall back to the releases page when GitHub is unreachable
   await page.route(API, route => route.abort())
   await page.goto('/')
   const download = page.locator('#download')
-  await expect(download.locator('a[href="https://github.com/LuisRivera-end/openfy/releases/latest"]')).toHaveCount(2)
+  await expect(download.locator('a[href="https://github.com/LuisRivera-end/openfy/releases/latest"]')).toHaveCount(3)
   await expect(download).toContainText('No se pudo conectar con GitHub')
 })
 
