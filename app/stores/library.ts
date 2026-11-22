@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { readLocal, writeLocal } from '../lib/local'
 import type { Album, Artist, ImportJob, Library, Playlist, SavedYouTubeSong, YouTubeSong } from '../../shared/types/music'
 import { collectionMap as buildCollectionMap } from '../../shared/utils/collections'
+import { deadlineSignal, REACHABILITY_TIMEOUT, REQUEST_TIMEOUT } from '../../shared/utils/startup'
 
 export const useLibraryStore = defineStore('library', () => {
   const tracks = ref<Library['tracks']>([])
@@ -51,12 +52,23 @@ export const useLibraryStore = defineStore('library', () => {
     return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name))
   })
 
-  async function refreshWithSignal(signal?: AbortSignal) {
+  let refreshing: Promise<void> | undefined
+  /** One request set at a time: polling, foregrounding and the retry button share it. */
+  function refreshWithSignal(signal?: AbortSignal, timeout = REQUEST_TIMEOUT) {
+    if (refreshing && !signal) return refreshing
+    const task = request(signal, timeout)
+    if (!signal) refreshing = task.finally(() => { refreshing = undefined })
+    return task
+  }
+  async function request(signal: AbortSignal | undefined, timeout: number) {
+    // ofetch ignores `timeout` when a signal is passed; the deadline travels in the signal instead.
+    const deadline = deadlineSignal(timeout, signal)
+    const options = { retry: 0 as const, signal: deadline.signal, cache: 'no-store' as const }
     try {
       const [snapshot, importJobs, status] = await Promise.all([
-        $fetch<Library>('/api/library', { timeout: 8000, retry: 0, signal }),
-        $fetch<ImportJob[]>('/api/imports', { timeout: 8000, retry: 0, signal }),
-        $fetch<{ conversionPaused: boolean }>('/api/status', { timeout: 8000, retry: 0, signal }),
+        $fetch<Library>('/api/library', options),
+        $fetch<ImportJob[]>('/api/imports', options),
+        $fetch<{ conversionPaused: boolean }>('/api/status', options),
       ])
       signal?.throwIfAborted()
       tracks.value = snapshot.tracks
@@ -68,14 +80,23 @@ export const useLibraryStore = defineStore('library', () => {
       await writeLocal('library', snapshot).catch(() => { error.value = 'No se pudieron guardar los metadatos en este dispositivo.' })
       void useDownloadsStore().reconcile()
     } catch (failure) { if (signal?.aborted) throw failure; connected.value = false }
-    finally { loading.value = false }
+    finally { deadline.dispose(); loading.value = false }
   }
 
   async function refresh() { await refreshWithSignal() }
+  async function reachable(signal?: AbortSignal) {
+    const deadline = deadlineSignal(REACHABILITY_TIMEOUT, signal)
+    try { await $fetch('/api/status', { retry: 0, signal: deadline.signal, cache: 'no-store' }); return true }
+    catch (failure) { if (signal?.aborted) throw failure; return false }
+    finally { deadline.dispose() }
+  }
   async function initialize(signal?: AbortSignal) {
     const saved = await readLocal<Library>('library').catch(() => undefined)
     signal?.throwIfAborted()
     if (saved) { tracks.value = saved.tracks; playlists.value = saved.playlists; youtubeSongs.value = saved.youtubeSongs ?? [] }
+    // With music saved on this device, an unreachable PC must not hold the opening: a short probe
+    // decides, and the full synchronization only runs once the PC has answered.
+    if (saved && !await reachable(signal)) { connected.value = false; loading.value = false; return }
     await refreshWithSignal(signal)
   }
 

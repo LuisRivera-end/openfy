@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { songCount } from '../shared/utils/text'
+import { reconnectDelay } from '../shared/utils/startup'
 import type { PageChromeColors } from './composables/usePageChrome'
 import './assets/artist-chrome.css'
 import './assets/page-chrome.css'
@@ -74,7 +75,7 @@ watch(() => route.path, () => { compactDock.value = false; lastScroll = 0 })
 /** A tap on the shrunken tab bar restores it instead of navigating. */
 function expandDock(event: Event) { if (!compactDock.value) return; event.preventDefault(); event.stopPropagation(); compactDock.value = false }
 let polling: ReturnType<typeof setInterval> | undefined
-let lastPoll = 0
+let lastPoll = 0, reconnectAttempt = 0
 let refreshing = false
 function visibility() { hidden.value = document.hidden; document.documentElement.classList.toggle('motion-paused', hidden.value); if (!hidden.value) void library.refresh().then(() => useTelemetryStore().refresh()) }
 async function selectFiles(event: Event) {
@@ -105,6 +106,7 @@ async function revealed() {
   await nextTick()
   document.getElementById('main')?.focus({ preventScroll: true })
   if (!polling) {
+    lastPoll = Date.now()
     void updates.initialize()
     releaseNotes.initialize()
     document.addEventListener('visibilitychange', visibility)
@@ -114,9 +116,11 @@ async function revealed() {
       if (document.hidden || refreshing) return
       const active = library.jobs.some(job => job.state === 'processing') || library.tracks.some(track => ['pending', 'running'].includes(track.conversion))
         || Object.values(downloads.records).some(record => ['preparing', 'queued', 'downloading'].includes(record.state))
-      if (Date.now() - lastPoll < (active ? 2500 : 30000)) return
+      // An unreachable PC is retried quickly at first, so the app reconnects on its own when it returns.
+      const wait = !library.connected ? reconnectDelay(reconnectAttempt) : active ? 2500 : 30000
+      if (Date.now() - lastPoll < wait) return
       refreshing = true; lastPoll = Date.now()
-      void library.refresh().then(() => useTelemetryStore().refresh()).finally(() => { refreshing = false })
+      void library.refresh().then(() => { reconnectAttempt = library.connected ? 0 : reconnectAttempt + 1; return useTelemetryStore().refresh() }).finally(() => { refreshing = false })
     }, 2500)
   }
 }

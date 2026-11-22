@@ -16,6 +16,9 @@ La interfaz permanece fuera de la navegación con teclado durante la apertura. A
 
 - Un fallo esencial permite **Reintentar**; Windows ofrece **Salir** y web **Recargar**. Las etapas completadas y las tareas en curso se reutilizan para evitar duplicados.
 - Una desconexión web permite abrir los datos conservados y escuchar las copias locales. Los fallos opcionales conservan la presentación de error de su sección.
+- Si este dispositivo ya tiene la biblioteca guardada, web solo espera 3 segundos a que el PC conteste a `/api/status` antes de abrirse con esos datos. La sincronización completa empieza cuando el PC responde. Sirve para el caso de un PC apagado o un nodo de Tailscale sin conexión, en el que la red acepta la petición y nunca la contesta: no hace falta activar el modo avión.
+- Sin respuesta del PC, Openfy reintenta solo a los 3, 6 y 12 segundos y después cada 30, y quita el aviso de desconexión cuando vuelve a responder. Las comprobaciones automáticas de actualización esperan a que el PC esté disponible.
+- `ofetch` no aplica su `timeout` si recibe también un `signal`. Las peticiones que se pueden cancelar llevan el límite en la propia señal (`deadlineSignal` en `shared/utils/startup.ts`).
 - Salir durante el arranque cancela la preparación y detiene el backend propio. Un cierre anterior a la restauración de la sesión no guarda una cola vacía sobre la sesión anterior.
 - La activación de otra instancia se comunica mediante un evento de Windows asociado al perfil: activa la apertura o la ventana principal sin reiniciar la sesión. Volver de la bandeja o recuperar Node no repite la apertura.
 - `--verify-update` conserva una comprobación breve del backend y la ventana. `--startup-check <archivo>` comprueba la ventana principal revelada y añade `startup` y `splashClosed` al informe existente.
