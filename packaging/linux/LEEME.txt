@@ -1,0 +1,30 @@
+Openfy para Linux
+=================
+
+Este paquete contiene el servidor de Openfy con su propia copia de Node y de FFmpeg.
+Sirve la aplicación web (PWA) y la API a la que se conectan el iPhone, Android y el navegador.
+No incluye la aplicación nativa de Windows.
+
+Requisitos: Linux x64 o arm64 con glibc 2.31 o posterior (Debian 11+, Ubuntu 20.04+,
+Fedora 32+, RHEL/Rocky 9+ y equivalentes). No hace falta instalar Node.
+
+1. Extrae el archivo donde quieras guardar el programa, por ejemplo:
+     mkdir -p ~/.local/opt && tar -xzf Openfy-*-linux-x64.tar.gz -C ~/.local/opt
+2. Prueba que arranca:
+     ~/.local/opt/Openfy-*/openfy
+   Abre http://127.0.0.1:3000 en este equipo. Ctrl+C lo detiene.
+3. Déjalo como servicio de tu usuario (systemd):
+     ~/.local/opt/Openfy-*/openfy install-service
+4. Publícalo en tu red privada con Tailscale Serve y guarda esa dirección en la configuración:
+     sudo tailscale serve --bg 3000
+     ~/.local/opt/Openfy-*/openfy config     (muestra el archivo; añade OPENFY_ORIGIN=https://...ts.net)
+     systemctl --user restart openfy
+
+Biblioteca: ~/.local/share/openfy/data (o OPENFY_DATA_DIR).
+Configuración: ~/.config/openfy/openfy.env.
+Solo puede haber un servidor de Openfy por carpeta de biblioteca.
+
+Para actualizar, detén el servicio, extrae la versión nueva y vuelve a ejecutar
+"openfy install-service" desde la carpeta nueva. La biblioteca no se mueve.
+
+Guía completa: https://github.com/LuisRivera-end/openfy/blob/main/docs/linux.md

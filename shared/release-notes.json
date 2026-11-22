@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.6.3",
+      "date": "2026-11-21",
+      "summary": "La PWA se abre sin esperar cuando el PC no responde, y Openfy llega a Linux.",
+      "items": [
+        { "type": "fixed", "text": "Si el teléfono tiene datos o Wi-Fi pero no llega a tu PC, la PWA se abre en unos segundos con tu música guardada. Ya no hace falta activar el modo avión." },
+        { "type": "improved", "text": "Sin conexión con el PC, Openfy vuelve a intentarlo solo y quita el aviso de desconexión en cuanto el PC responde." },
+        { "type": "new", "text": "Openfy para Linux: el servidor con la aplicación web, para x64 y arm64, con Node y FFmpeg incluidos. Se puede instalar como servicio de tu usuario." }
+      ]
+    },
+    {
       "version": "0.6.2",
       "date": "2026-11-21",
       "summary": "La imagen del artista ocupa toda la cabecera en el teléfono y la barra de pestañas de Android se ajusta mejor.",
