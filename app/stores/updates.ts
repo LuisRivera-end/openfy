@@ -121,13 +121,15 @@ export const useUpdatesStore = defineStore('updates', () => {
     postponed = Number(localStorage.getItem('openfy-update-postponed')) || 0
     window.addEventListener('storage', event => { if (event.key === 'openfy-update-postponed') postponed = Number(event.newValue) || 0 })
     for (const type of ['pointerdown', 'keydown', 'wheel']) window.addEventListener(type, markActive, { passive: true, capture: true })
-    window.addEventListener('online', check)
-    window.addEventListener('pageshow', () => { if (Date.now() >= nextCheck) void check() })
-    void check()
+    // Automatic checks wait for the PC: against an unreachable host the update request only hangs.
+    const due = () => library.connected && Date.now() >= nextCheck
+    window.addEventListener('pageshow', () => { if (due()) void check() })
+    watch(() => library.connected, () => { if (due()) void check() })
+    if (due()) void check()
     setInterval(() => {
       if (document.hidden) return
       if (stale) { void reloadIfStale(); return }
-      if (Date.now() >= nextCheck) void check()
+      if (due()) void check()
       if (!registration?.waiting) return
       if (!available.value) { available.value = true; markActive(); status.value = 'Hay una actualización de Openfy.'; describe(registration.waiting) }
       if (busy()) { markActive(); return }

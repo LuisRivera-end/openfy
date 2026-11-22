@@ -112,6 +112,22 @@ test('opens cached music when the PC is disconnected', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Reproducir Al despertar', exact: true })).toBeVisible()
 })
 
+test('opens cached music at once when the PC never answers, then reconnects on its own', async ({ page }) => {
+  await fixtures(page); await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Reproducir Al despertar', exact: true })).toBeVisible()
+  // An offline Tailscale peer: requests are accepted by the network stack but never answered.
+  const pc = gate()
+  for (const path of ['**/api/status', '**/api/library', '**/api/imports']) await page.route(path, async route => { await pc.promise; await route.fallback() })
+  const started = Date.now()
+  await page.reload()
+  await expect(page.getByTestId('startup-screen')).toHaveCount(0, { timeout: 6000 })
+  expect(Date.now() - started).toBeLessThan(6000)
+  await expect(page.getByText('Tu PC está desconectado. Tu música descargada sigue contigo.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reproducir Al despertar', exact: true })).toBeVisible()
+  pc.release()
+  await expect(page.getByText('Tu PC está desconectado. Tu música descargada sigue contigo.')).toHaveCount(0, { timeout: 15000 })
+})
+
 test('respects reduced motion during the opening', async ({ page }) => {
   await fixtures(page); await page.emulateMedia({ reducedMotion: 'reduce' })
   const pending = gate()
