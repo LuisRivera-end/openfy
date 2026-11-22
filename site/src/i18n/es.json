@@ -119,7 +119,7 @@
   "download": {
     "kicker": "Descargas",
     "title": "Empieza a escuchar hoy",
-    "body": "Descarga las versiones oficiales gratuitas y de código abierto para Windows y Android. Sin registros ni pagos.",
+    "body": "Descarga las versiones oficiales gratuitas y de código abierto para Windows, Linux y Android. Sin registros ni pagos.",
     "latest": "Versión {version}",
     "published": "Publicada el {date}",
     "checksums": "Sumas de verificación SHA-256",
@@ -129,6 +129,11 @@
     "windowsReq": "Windows 11 (x64)",
     "windowsCta": "Descargar instalador (.exe)",
     "windowsNote": "Instalador autocontenido de 64 bits. Incluye la aplicación nativa WinUI y el servidor local.",
+    "linuxName": "Openfy para Linux",
+    "linuxReq": "glibc 2.31 o posterior · x64 y ARM64",
+    "linuxCta": "Descargar paquete (.tar.gz)",
+    "linuxNote": "Servidor y PWA con Node y FFmpeg incluidos, como servicio de systemd del usuario. Sin aplicación de escritorio nativa.",
+    "linuxArm64": "Versión ARM64 ({size})",
     "androidName": "Openfy para Android",
     "androidReq": "Android 10 o superior · ARM64",
     "androidCta": "Descargar paquete (.apk)",
@@ -137,7 +142,7 @@
     "webReq": "Safari en iPhone o cualquier navegador moderno",
     "webCta": "Guía de instalación",
     "webSteps": [
-      "Instala e inicia Openfy en tu equipo con Windows.",
+      "Instala e inicia Openfy en tu equipo con Windows o Linux.",
       "Activa Tailscale Serve para generar una dirección HTTPS privada.",
       "Abre esa dirección en Safari desde tu iPhone.",
       "Toca Compartir y selecciona «Añadir a pantalla de inicio»."

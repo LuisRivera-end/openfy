@@ -1,6 +1,7 @@
 /** Inline stroke icons (24×24, currentColor). Decorative unless the caller adds a label nearby. */
 const paths = {
   windows: '<path d="M3 5.5 10.5 4.5v7H3zM12 4.3 21 3v8.5h-9zM3 12.5h7.5v7L3 18.5zM12 12.5h9V21l-9-1.3z" fill="currentColor" stroke="none"/>',
+  linux: '<rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 10 3 2.5L7 15M12.5 15H17"/>',
   android: '<path d="M6 10h12v7a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2zM6 9a6 6 0 0 1 12 0M8.5 5 7 3M15.5 5 17 3"/><circle cx="9.5" cy="7.2" r=".6" fill="currentColor"/><circle cx="14.5" cy="7.2" r=".6" fill="currentColor"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
   phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/>',

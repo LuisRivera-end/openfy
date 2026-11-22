@@ -12,6 +12,8 @@ export interface ReleaseInfo {
   page: string
   windows?: ReleaseAsset
   android?: ReleaseAsset
+  linux?: ReleaseAsset
+  linuxArm64?: ReleaseAsset
   checksums?: ReleaseAsset
 }
 
@@ -20,6 +22,8 @@ interface GitHubRelease { tag_name: string; html_url: string; published_at: stri
 
 const WINDOWS = /^Openfy-Setup-.+-x64\.exe$/i
 const ANDROID = /^Openfy-.+-release\.apk$/i
+const LINUX = /^Openfy-.+-linux-x64\.tar\.gz$/i
+const LINUX_ARM64 = /^Openfy-.+-linux-arm64\.tar\.gz$/i
 const CHECKSUMS = /^SHA256SUMS\.txt$/i
 
 /** `v0.5.4-build.1794983913` → `0.5.4`. */
@@ -36,6 +40,8 @@ export function parseRelease(release: GitHubRelease): ReleaseInfo {
     page: release.html_url,
     windows: pick(WINDOWS),
     android: pick(ANDROID),
+    linux: pick(LINUX),
+    linuxArm64: pick(LINUX_ARM64),
     checksums: pick(CHECKSUMS)
   }
 }
