@@ -10,6 +10,38 @@ public sealed partial class MainWindow
 {
     private bool restoringStartupPlacement;
     public bool StartupRevealed { get; private set; }
+    /// <summary>
+    /// Completes the first time the window is visible with its content loaded. WinUI can raise
+    /// Loaded while the window is still hidden, so visibility is checked as well.
+    /// </summary>
+    public async Task FirstShownAsync(CancellationToken cancellation)
+    {
+        if (!AppWindow.IsVisible) {
+            var visible = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            global::Windows.Foundation.TypedEventHandler<Microsoft.UI.Windowing.AppWindow, Microsoft.UI.Windowing.AppWindowChangedEventArgs> changed = (sender, args) => { if (args.DidVisibilityChange && sender.IsVisible) visible.TrySetResult(); };
+            AppWindow.Changed += changed;
+            try { if (!AppWindow.IsVisible) await visible.Task.WaitAsync(cancellation); }
+            finally { AppWindow.Changed -= changed; }
+        }
+        if (root.IsLoaded) return;
+        var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        RoutedEventHandler handler = (_, _) => loaded.TrySetResult();
+        root.Loaded += handler;
+        try { if (!root.IsLoaded) await loaded.Task.WaitAsync(cancellation); }
+        finally { root.Loaded -= handler; }
+    }
+    /// <summary>
+    /// A sign-in launch prepares the window like any other, but leaves it hidden in the tray: no
+    /// show, no activation and no fade. The content loads the first time the user opens it.
+    /// </summary>
+    public void PrepareHiddenStartup(WindowPlacement? placement, Action handoff)
+    {
+        restoringStartupPlacement = true;
+        try { WindowsIntegration.Restore(this, placement); }
+        finally { restoringStartupPlacement = false; }
+        Title = "Openfy"; root.Opacity = 1; root.IsHitTestVisible = true;
+        handoff(); StartupRevealed = true;
+    }
     public async Task RevealStartupAsync(WindowPlacement? placement, Action handoff, CancellationToken cancellation)
     {
         restoringStartupPlacement = true;

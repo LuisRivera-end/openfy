@@ -1,6 +1,16 @@
 {
   "releases": [
     {
+      "version": "0.6.4",
+      "date": "2026-11-21",
+      "summary": "Openfy puede iniciarse con Windows y esperar en la bandeja, como Spotify o Discord.",
+      "items": [
+        { "type": "new", "text": "Ajustes → Aplicación para Windows incluye «Iniciar Openfy con Windows». Al iniciar sesión, Openfy se abre en la bandeja sin mostrar ventanas ni quitarte el foco, con tu biblioteca y el servidor del iPhone listos." },
+        { "type": "improved", "text": "El inicio automático respeta lo que elijas en el Administrador de tareas, y al desinstalar Openfy se elimina." },
+        { "type": "improved", "text": "En Linux, «openfy status» indica si el servidor se inicia solo al iniciar sesión o al encender el equipo, y si responde." }
+      ]
+    },
+    {
       "version": "0.6.3",
       "date": "2026-11-21",
       "summary": "La PWA se abre sin esperar cuando el PC no responde, y Openfy llega a Linux.",

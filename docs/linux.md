@@ -6,7 +6,7 @@ Cada release incluye `Openfy-<versión>-<compilación>-linux-x64.tar.gz` y `…-
 
 | Ruta | Contenido |
 | --- | --- |
-| `openfy` | Lanzador. Sin argumentos inicia el servidor en primer plano. |
+| `openfy` | Lanzador. Sin argumentos inicia el servidor en primer plano; `status` indica si arranca solo y si responde. |
 | `node/bin/node` | Node 22 oficial; no hace falta instalar Node. |
 | `app/.output` | Compilación de producción con `better-sqlite3`, `sharp` y FFmpeg para Linux. |
 | `app/scripts/serve.mjs` | El mismo arranque que `npm start`: solo escucha en `127.0.0.1`. |
@@ -24,7 +24,11 @@ tar -xzf Openfy-*-linux-x64.tar.gz -C ~/.local/opt
 ~/.local/opt/Openfy-*/openfy install-service
 ```
 
-`install-service` escribe `~/.config/systemd/user/openfy.service` apuntando a la carpeta extraída y lo activa. Para que siga funcionando sin una sesión iniciada: `loginctl enable-linger "$USER"`. `openfy uninstall-service` lo quita sin tocar la biblioteca.
+`install-service` escribe `~/.config/systemd/user/openfy.service` apuntando a la carpeta extraída y lo activa (`enable --now`, `WantedBy=default.target`).
+
+### Inicio automático
+
+Es el equivalente del ajuste «Iniciar Openfy con Windows»: con el servicio instalado, Openfy se inicia solo cada vez que inicias sesión. Con `loginctl enable-linger "$USER"` arranca también al encender el equipo, sin una sesión abierta, que es lo recomendable si el equipo solo sirve la música al teléfono. `openfy status` muestra si el servicio está activado y en marcha, si el arranque sin sesión está activo y si el servidor responde en su puerto. `openfy uninstall-service` quita el servicio y el inicio automático sin tocar la biblioteca.
 
 ## Carpetas y configuración
 

@@ -24,6 +24,9 @@ public partial class App : Application
     private RegisteredWaitHandle? quitRegistration;
     private EventWaitHandle? activationEvent;
     private RegisteredWaitHandle? activationRegistration;
+    // Started by the "Start with Windows" entry: open straight into the tray until the user asks for a window.
+    private bool background;
+    private bool playersDeferred;
     public App()
     {
         UnhandledException += (_, args) => LogNativeError(args.Exception);
@@ -46,20 +49,47 @@ public partial class App : Application
         { try { using var previous = EventWaitHandle.OpenExisting(quitName); previous.Set(); } catch (WaitHandleCannotBeOpenedException) { } Exit(); return; }
         activationEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Openfy.Native.Activate." + Environment.UserName + profile);
         instance = new Mutex(true, "Local\\Openfy.Native." + Environment.UserName + profile, out bool created);
-        if (!created) { activationEvent.Set(); activationEvent.Dispose(); Exit(); return; }
+        // A late sign-in entry (Windows delays Run entries) must not reopen a window the user already closed.
+        if (!created) { if (!LaunchAtLogin.StartedAtLogin(Environment.GetCommandLineArgs())) activationEvent.Set(); activationEvent.Dispose(); Exit(); return; }
         SessionLog.Begin(Path.Combine(MainViewModel.StateDirectory(), "session-logs"));
+        if (StartupEntry.Available) {
+            try { if (StartupEntry.Create().Repair()) SessionLog.Write("startup.entry", "repaired"); }
+            catch (Exception error) { SessionLog.Write("startup.entry", "failed", error: error); }
+        }
         var dispatch = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         activationRegistration = ThreadPool.RegisterWaitForSingleObject(activationEvent, (sender, timedOut) => dispatch.TryEnqueue(() => {
             if (exiting) return;
-            if (splash != null) { splash.AppWindow.Show(); splash.Activate(); }
-            else if (main != null) { main.AppWindow.Show(); main.Activate(); }
+            background = false;
+            if (splash != null || main == null) { var shown = Splash(); shown.AppWindow.Show(); shown.Activate(); }
+            else { main.AppWindow.Show(); main.Activate(); }
         }), null, Timeout.Infinite, false);
         quitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, quitName);
         quitRegistration = ThreadPool.RegisterWaitForSingleObject(quitEvent, (sender, timedOut) => dispatch.TryEnqueue(() => _ = ShutdownAsync()), null, Timeout.Infinite, false);
-        splash = new(() => _ = LaunchMainAsync(), () => _ = ShutdownAsync());
-        startup.Changed += () => { if (startup.Phase == StartupPhase.Error) splash?.Fail(startup.Error); };
-        splash.Activate();
+        background = LaunchAtLogin.StartedAtLogin(Environment.GetCommandLineArgs()) && !CheckRun;
+        // A failure is never silent: a sign-in launch that cannot open shows the usual retry screen.
+        startup.Changed += () => { if (startup.Phase == StartupPhase.Error && !exiting) { background = false; var failed = Splash(); failed.Fail(startup.Error); failed.Activate(); } };
+        // A sign-in launch creates no splash at all: even never shown, a new WinUI window takes the
+        // foreground (and the keyboard) from whatever the user is doing.
+        if (!background) Splash().Activate();
         await LaunchMainAsync();
+    }
+    private async Task AfterFirstShownAsync()
+    {
+        // In the tray, the release notes and the mini player/widget wait until the user first opens
+        // the window, so a sign-in launch never shows or focuses anything by itself.
+        try { await main!.FirstShownAsync(applicationLifetime.Token); }
+        catch (OperationCanceledException) { return; }
+        background = false;
+        if (playersDeferred) { playersDeferred = false; RestorePlayers(); }
+        await model!.RunAsync(main.ShowPendingReleaseNotesAsync);
+    }
+    private void RestorePlayers() { if (model!.Settings.MiniVisible) OpenPlayer("mini"); if (model.Settings.WidgetVisible) OpenPlayer("widget"); }
+    private StartupWindow Splash()
+    {
+        if (splash != null) return splash;
+        splash = new(() => _ = LaunchMainAsync(), () => _ = ShutdownAsync());
+        if (model != null) splash.SetMotion(model.Settings.Effects);
+        return splash;
     }
     private async Task LaunchMainAsync()
     {
@@ -79,8 +109,10 @@ public partial class App : Application
         if (exiting || startup.Phase != StartupPhase.Revealing) return;
         model.Settings.Windows.TryGetValue("main", out var placement);
         main = new(model, OpenPlayer) { Title = "Openfy · Preparando" };
-        await main.RevealStartupAsync(placement, () => { splash?.Finish(); splash = null; }, applicationLifetime.Token);
+        if (background) main.PrepareHiddenStartup(placement, () => { splash?.Finish(); splash = null; });
+        else await main.RevealStartupAsync(placement, () => { splash?.Finish(); splash = null; }, applicationLifetime.Token);
         startup.Complete();
+        SessionLog.Write("startup.window", background ? "tray" : "revealed");
         tray = new(main, command => { if (command == 1) { main.AppWindow.Show(); main.Activate(); } else if (command == 2) OpenPlayer("mini"); else if (command == 3) OpenPlayer("widget"); else if (command == 4) _ = ShutdownAsync(); });
         media = new(main, model);
         model.InitializeDiscord(CheckRun);
@@ -140,7 +172,7 @@ public partial class App : Application
                 await File.WriteAllTextAsync(arguments[startupCheck + 1], System.Text.Json.JsonSerializer.Serialize(new { passed = visible && model.Host.Connected, windowCreated = visible, startup = startup.Phase.ToString(), splashClosed = splash == null, backend = model.Host.Connected, installedDirectory = AppContext.BaseDirectory }, Contracts.Json));
                 await ShutdownAsync(); return;
             }
-            if (!arguments.Contains("--benchmark-mode")) { if (model.Settings.MiniVisible) OpenPlayer("mini"); if (model.Settings.WidgetVisible) OpenPlayer("widget"); }
+            if (!arguments.Contains("--benchmark-mode")) { if (background) playersDeferred = true; else RestorePlayers(); }
             int smoke = Array.IndexOf(arguments, "--smoke-test");
             if (smoke >= 0 && smoke + 1 < arguments.Length) await SmokeAsync(arguments[smoke + 1]);
             int listeningTest = Array.IndexOf(arguments, "--listening-test");
@@ -160,7 +192,8 @@ public partial class App : Application
                 finally { await ShutdownAsync(); }
             }
         });
-        if (!exiting && !CheckRun) _ = model.RunAsync(main.ShowPendingReleaseNotesAsync);
+        // In the tray the dialog waits until the window is first opened, so it never pops up at sign-in.
+        if (!exiting && !CheckRun) _ = AfterFirstShownAsync();
         if (!exiting && !Environment.GetCommandLineArgs().Any(arg => arg is "--workspace" || CheckModes.Contains(arg)) && File.Exists(Path.Combine(AppContext.BaseDirectory, ".openfy-installation"))) {
             model.Updates = new(model, ShutdownAsync);
             main.AttachUpdates(model.Updates);
@@ -171,8 +204,7 @@ public partial class App : Application
             SessionLog.Write("startup.window", "failed", error: error);
             if (!exiting && startup.Phase != StartupPhase.Ready) {
                 if (main != null) { main.Exiting = true; main.Close(); main = null; }
-                if (splash == null) { splash = new(() => _ = LaunchMainAsync(), () => _ = ShutdownAsync()); splash.Activate(); }
-                splash.Fail(error);
+                background = false; var failed = Splash(); failed.Fail(error); failed.Activate();
             }
         }
         finally { launching = false; }

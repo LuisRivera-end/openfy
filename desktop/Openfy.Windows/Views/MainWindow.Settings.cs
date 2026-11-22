@@ -89,6 +89,7 @@ public sealed partial class MainWindow
         System.ComponentModel.PropertyChangedEventHandler discordChanged = (_, args) => { if (args.PropertyName == nameof(model.DiscordStatus)) discordStatus.Text = model.DiscordStatus; };
         model.PropertyChanged += discordChanged;
         Ui.OnRelease(discordStatus, () => model.PropertyChanged -= discordChanged);
+        LaunchAtLoginSetting(diagnostics);
         var version = Openfy.Core.ReleaseInfo.Current;
         var updateStatus = Ui.Muted(model.Updates?.Status ?? $"Openfy {version.Version} · {version.Build}", 12);
         diagnostics.Children.Add(SettingRow("Actualizaciones", $"Versión {version.Version} · compilación {version.Build}", Ui.Row(Ui.AsyncButton("Novedades", model, ShowReleaseNotesHistoryAsync), Ui.Button("Buscar actualizaciones", async () => {
@@ -100,6 +101,42 @@ public sealed partial class MainWindow
         diagnostics.Children.Add(SettingRow("Diagnóstico", "Guarda un informe local sobre la reproducción y los efectos visuales.", Ui.AsyncButton("Exportar diagnóstico", model, ExportNativeDiagnosticsAsync)));
         diagnostics.Children.Add(Ui.Muted("Al cerrar la ventana, Openfy permanece en la bandeja. Usa Salir para cerrar la aplicación y el servidor del iPhone.", 12));
         foreach (string diagnostic in model.RenderDiagnostics()) diagnostics.Children.Add(Ui.Muted(diagnostic, 11));
+    }
+    private const string LaunchAtLoginLabel = "Iniciar Openfy con Windows";
+    private void LaunchAtLoginSetting(StackPanel section)
+    {
+        var toggle = new ToggleSwitch { OffContent = "", OnContent = "", MinWidth = 48 };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(toggle, LaunchAtLoginLabel);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(toggle, "launch-at-login");
+        var status = Ui.Muted("", 12);
+        section.Children.Add(SettingRow(LaunchAtLoginLabel, "Se abre en la bandeja al iniciar sesión, para que tu biblioteca y el servidor del iPhone estén listos sin abrir la ventana.", toggle));
+        section.Children.Add(status);
+        if (!Openfy.Windows.Services.StartupEntry.Available) { toggle.IsEnabled = false; status.Text = "Disponible en la aplicación instalada."; return; }
+        var entry = Openfy.Windows.Services.StartupEntry.Create();
+        bool updating = false;
+        void Show()
+        {
+            updating = true;
+            try {
+                var state = entry.State;
+                toggle.IsOn = state == Openfy.Core.LaunchAtLoginState.On;
+                status.Text = state == Openfy.Core.LaunchAtLoginState.DisabledBySystem ? "Desactivado desde el Administrador de tareas o la configuración de Windows. Actívalo aquí para volver a permitirlo." : "";
+                status.Visibility = status.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+            }
+            catch (Exception error) { Openfy.Core.SessionLog.Write("startup.entry", "failed", error: error); toggle.IsEnabled = false; status.Text = "No se pudo leer el inicio automático."; status.Visibility = Visibility.Visible; }
+            finally { updating = false; }
+        }
+        RoutedEventHandler toggled = (_, _) => {
+            if (updating) return;
+            try { entry.Set(toggle.IsOn); Openfy.Core.SessionLog.Write("startup.entry", toggle.IsOn ? "enabled" : "disabled"); }
+            catch (Exception error) { Openfy.Core.SessionLog.Write("startup.entry", "failed", error: error); }
+            Show();
+        };
+        // Task Manager or Windows Settings may change it while Ajustes stays open: re-read on return.
+        global::Windows.Foundation.TypedEventHandler<object, WindowActivatedEventArgs> activated = (_, args) => { if (args.WindowActivationState != WindowActivationState.Deactivated) Show(); };
+        toggle.Toggled += toggled; Activated += activated;
+        Ui.OnRelease(toggle, () => { toggle.Toggled -= toggled; Activated -= activated; });
+        Show();
     }
     private StackPanel SettingsSection(string title)
     {
